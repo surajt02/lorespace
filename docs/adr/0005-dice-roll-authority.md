@@ -1,9 +1,9 @@
-# 0005 — Who computes a dice roll
+# 0005 — Dice rolls are computed server-side
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-18
 - **Area:** game integrity
-- **Constraints:** `P4.4`, `P5.5`; open decision `D5` in `docs/tasks.md`
+- **Constraints:** `P3.1`, `P4.4`, `P4.6`, `P5.5`
 
 ## Context
 
@@ -13,30 +13,45 @@ classifies the outcome there, then writes the result to `roll-logs` via
 and narrate the consequence.
 
 That means the AI GM verifies nothing: it reads whatever the client wrote. A
-player can write any total they like, and the GM will narrate around it. For a
-friendly table this is invisible; for a shared campaign with an authoritative
-narrator it is a trust gap that the product copy should not overstate.
+capable client can submit any total, and the GM will narrate around it — so the
+product claim and the mechanics diverge. It also duplicates classification logic
+(roller and GM tools) and makes roll history untestable.
 
 ## Decision
 
-**Unresolved.** Options:
+**Every roll is computed and classified by the server.** A dedicated action
+(`rollSkillCheck` in `src/actions/index.ts`) takes
+`{ characterId, campaignId, statName }`, verifies the caller owns the character
+(per-record RBAC is off inside actions), rolls with `crypto.getRandomValues`,
+classifies through the pure helpers in `src/lib/d20.ts`, writes the
+`roll-logs` row, and returns the full payload
+`{ rawRoll, modifier, total, targetDc, outcome, rollLogId }`.
 
-1. **Client-computed (plan as written).** Simplest, instant, works offline-ish.
-   `roll-logs` is a shared record, not a trust boundary — and the code must say
-   so rather than implying verification.
-2. **Server-computed via an action.** `roll_dice` action rolls and writes in
-   one privileged call; presence broadcast becomes a notification. Removes
-   cheating, costs a round-trip and moves the ephemeral-path latency.
-3. **Server-witnessed.** Client rolls, server records `rawRoll` with its own
-   timestamp and a nonce; detect impossible sequences (three nat-20s in a row)
-   without blocking normal play.
+The client then broadcasts that authoritative payload over presence. The
+plan's dual path stays dual, but reordered: **durable before ephemeral**
+(Path B, then Path A). The browser never generates or supplies a result.
 
 ## Consequences
 
-Whichever wins: decide before `P4.4` writes the classification logic, because
-option 2 relocates it out of the component, and before `P5.5` promises the GM
-"verifies" rolls.
+- **Positive:** `roll-logs` is evidence rather than a claim, so the GM's
+  "verify the roll" step is real. One classification implementation, shared with
+  the GM tools. Deterministic tests: seed or inject the generator and assert
+  crit/fail boundaries in `src/lib/d20.ts`. Signed-out visitors cannot roll,
+  which is correct — the preview is sample data.
+- **Negative:** one round-trip before the banner instead of instant local
+  rendering (sub-200ms on a warm DO; acceptable). The action needs a bearer
+  token and a resolved campaign. If the presence broadcast fails after the write
+  succeeds, the feed shows the roll and peers miss the banner — that divergence
+  is accepted and must not trigger a retry, because a retry would roll twice.
+- **Follow-up:** `P4.4` is rewritten by this decision. `src/lib/d20.ts` must
+  stay DOM-free so worker code can import it. `P5.5` may now describe the GM as
+  verifying a server-computed roll.
 
 ## Alternatives considered
 
-Not yet — this ADR exists to force the choice at `P4.4`.
+- **Client-computed (the plan as written).** Rejected: makes the GM's
+  verification decorative, duplicates classification, and leaves history
+  forgeable.
+- **Server-witnessed nonce.** Client rolls, server records a nonce and flags
+  impossible sequences. Rejected: extra machinery that still leaves the roll
+  itself outside the record layer.

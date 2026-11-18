@@ -125,10 +125,12 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       instead of `createdAt` ([ADR 0003](./adr/0003-roll-log-timestamp-column.md)) —
       the SDK resolves `orderBy: 'createdAt'` to the system `_created_at`, so a
       custom column named `createdAt` is unsortable and redundant.
-- [ ] `P2a.5` Register all four in `src/schemas.ts`. Decide messaging drop-ins
-      (`CHANNELS_SCHEMA`, `MESSAGES_SCHEMA`, `REACTIONS_SCHEMA`,
-      `CHANNEL_MEMBERS_SCHEMA`, `READ_RECEIPTS_SCHEMA`): plan says register,
-      nothing reads them — see [open decisions](#open-decisions).
+- [ ] `P2a.5` Register the four domain schemas in `src/schemas.ts`. **Do not**
+      register the messaging drop-ins (`CHANNELS_SCHEMA`, `MESSAGES_SCHEMA`,
+      `REACTIONS_SCHEMA`, `CHANNEL_MEMBERS_SCHEMA`, `READ_RECEIPTS_SCHEMA`):
+      nothing reads them and they would widen RBAC plus AI/MCP reach for no
+      product benefit (`D2`, resolved). Deferring is free — 0.44.2 creates
+      tables on DO init, so adding them later is a one-line registry change.
 - [ ] `P2a.6` `lintSchema` clean for every schema (unit test in `P2a.7`).
 - [ ] `P2a.7` `src/schemas/__tests__/schemas.test.ts` asserting
       `lintSchema(schema)` is `[]` for each. Runs under Vitest (node env).
@@ -194,14 +196,20 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       Remember `ctx.tools` runs with per-record RBAC **off**: check ownership
       yourself. There are **no transactions** — ordered best-effort only, and
       say so in the code comment instead of claiming atomicity.
-- [ ] `P2.5` Call `ensureDefaultCampaign` on the path that lands a player in
-      `/home` (decide: action call from the client vs. a job/cron).
+- [ ] `P2.5` Wire `ensureDefaultCampaign` per
+      [ADR 0007](./adr/0007-default-campaign-trigger.md): from the app tier on
+      `/home` when `isSignedIn` && the `campaigns` query is empty && a `useRef`
+      guard is unset. Render a skeleton while it runs, not a "no campaign"
+      empty state; on failure toast and retry on the next mount.
 
 ## Phase 3 — Character sheet, d20 math, inventory
 
 - [ ] `P3.1` `src/lib/d20.ts` — `getModifier`, `formatModifier`,
       `calculateArmorClass`, `ARCHETYPE_PRESETS` (Vanguard/Shadowblade/
-      Arcanist/Cleric). Pure, no React, no DOM.
+      Arcanist/Cleric), plus the roll classifier. Pure: no React, no DOM, no
+      `Math.random` inside the classifier — worker code imports this module
+      ([ADR 0005](./adr/0005-dice-roll-authority.md)), so keep it safe for both
+      runtimes.
 - [ ] `P3.2` Unit tests for `src/lib/d20.ts` (Vitest node env; boundary cases
       at 1/10/11/20, AC clamping).
 - [ ] `P3.3` `src/components/CharacterSheetPanel.tsx` — `useQuery('characters',
@@ -221,21 +229,34 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 ## Phase 4 — Party presence, dice engine
 
 - [ ] `P4.1` `src/components/PartyPresenceBar.tsx` —
-      `usePresenceRoom('campaign:default-campaign')`, broadcast
-      `{characterId, characterName, archetype, lastRoll, isTypingAction}`.
-- [ ] `P4.2` Filter anonymous peers (`anon-<uuid>` ids never join to
-      `characters`) — otherwise ghosts in the roster. `/ws/presence/:scopeId`
-      has **no auth**: signed-out visitors can join any scope.
+      `usePresenceRoom('campaign:default-campaign')` (the scope is
+      membership-gated per [ADR 0006](./adr/0006-presence-room-authorization.md)),
+      broadcast `{characterId, characterName, archetype, lastRoll, isTypingAction}`.
+- [ ] `P4.2` Gate presence per
+      [ADR 0006](./adr/0006-presence-room-authorization.md): resolve app
+      membership in `src/server/realtime-routes.ts` `wsRoute`'s `extraIdentity`
+      for `/ws/presence/*` (canvas and cron already do this), keep
+      `campaign:preview` unauthenticated for sample data, and **still** filter
+      `anon-` peers client-side so a preview peer can never render as a party
+      member.
 - [ ] `P4.3` Roster join: presence peers × `useQuery('characters')` → avatar,
       name, archetype badge, online dot, `hp/maxHp`.
-- [ ] `P4.4` `src/components/DiceRoller.tsx` — dual path: (A) ephemeral
-      presence broadcast → animated banner on every client, (B) durable
-      `createConfirmed` on `roll-logs`. Classification: nat 20 crit success,
-      nat 1 crit failure, `total >= activeThreatDc` success, else failure.
+- [ ] `P4.4` Server-computed roll per
+      [ADR 0005](./adr/0005-dice-roll-authority.md): add `rollSkillCheck` to
+      `src/actions/index.ts` — bearer-auth, verify the caller owns the character
+      (RBAC is off inside actions), roll with `crypto.getRandomValues`,
+      classify through `src/lib/d20.ts` (nat 20 crit success, nat 1 crit
+      failure, `total >= activeThreatDc` success, else failure), write the
+      `roll-logs` row, return
+      `{rawRoll, modifier, total, targetDc, outcome, rollLogId}`. The client
+      then broadcasts that authoritative result over presence — durable before
+      ephemeral. `src/components/DiceRoller.tsx` never rolls.
 - [ ] `P4.5` Keep presence payloads small — `updateState` merges arbitrary keys
       with no size check and broadcasts to every peer.
-- [ ] `P4.6` Note in code: rolls are computed client-side, so `roll-logs` is a
-      shared record, not a trust boundary.
+- [ ] `P4.6` Note in code: the action is the only roll authority. If the
+      presence broadcast fails after the write, the feed shows the roll and
+      peers miss the banner — accepted, and must not trigger a retry (a retry
+      would roll twice).
 
 ## Phase 5 — AI Game Master
 
@@ -251,8 +272,11 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       30 KB tool-result cap), `modify_character_hp`, `grant_character_loot`,
       `update_campaign_scene`. Remember every tool in the `ToolSet` is
       auto-exposed over `/_deepspace/agent/*` HTTP **and MCP**, not just the panel.
-- [ ] `P5.4` Decide `records.delete` in `ALLOWED_TOOL_NAMES` (plan's allowlist
-      omits it; current file includes it).
+- [x] `P5.4` ~~Decide `records.delete`~~ **Resolved: drop it.** Remove
+      `records.delete` from `ALLOWED_TOOL_NAMES` (`src/ai/tools.ts:18-27`): the GM
+      never needs it, there is no soft delete or transaction to undo it, and
+      every tool in the set is auto-exposed over MCP. Re-add only as a narrow,
+      confirmed GM tool. — 2026-11-18 master
 - [ ] `P5.5` GM system prompt: snapshot-first, two-stage resolution (set DC →
       ask for the roll → never fabricate dice), verify in `roll-logs`, narrate
       2-4 paragraphs, then mutate.
@@ -344,20 +368,24 @@ in `styles.css`; new files are auto-scanned.
 and closes contexts automatically. No test accounts exist; Chromium is not
 cached. Vitest is node-only (no jsdom) and includes `src/**/*.{test,spec}.ts`.
 
-## Open decisions
+## Decisions
 
-- [ ] `D1` — **Resolved:** schemas first → [ADR 0001](./adr/0001-schemas-before-ui.md).
-      `P2a` precedes Phase 1's data wiring.
-- [ ] `D2` Register the messaging drop-in schemas
-      (`CHANNELS`/`MESSAGES`/`REACTIONS`/`CHANNEL_MEMBERS`/`READ_RECEIPTS`)
-      when nothing reads them, or drop them from the registration list?
-- [ ] `D3` When does `ensureDefaultCampaign` run — client action on `/home`
-      mount, worker-side on first record read, or a job?
-- [ ] `D4` Presence room auth → [ADR 0006](./adr/0006-presence-room-authorization.md)
-      (Proposed): accept anonymous peers and filter `anon-` ids client-side, or
-      gate `/ws/presence/*` behind membership?
-- [ ] `D5` Trust model for rolls → [ADR 0005](./adr/0005-dice-roll-authority.md)
-      (Proposed): client-computed `Math.random()` as the plan designs, or a
-      server action so `roll-logs` is authoritative for the AI GM?
-- [ ] `D6` `records.delete` in the AI allowlist: keep or drop? (write an ADR if
-      the answer is not obvious from Phase 5's prompt design)
+All resolved. See [§ ADR index](./adr/README.md). Add new questions at the
+bottom as `D<n>` with the ADR that settles them.
+
+- [x] `D1` Sequencing: **schemas first** →
+      [ADR 0001](./adr/0001-schemas-before-ui.md). `P2a` precedes Phase 1's data
+      wiring. — 2026-11-18
+- [x] `D2` Messaging drop-in schemas: **do not register** until a feature reads
+      them. They would widen RBAC and AI/MCP reach for no benefit, and 0.44.2's
+      auto-DDL makes deferring free. — 2026-11-18
+- [x] `D3` `ensureDefaultCampaign` trigger: **client-triggered action from
+      `/home`** → [ADR 0007](./adr/0007-default-campaign-trigger.md). —
+      2026-11-18
+- [x] `D4` Presence access: **membership-gated campaign scope**, with
+      `campaign:preview` reserved for sample data →
+      [ADR 0006](./adr/0006-presence-room-authorization.md). — 2026-11-18
+- [x] `D5` Roll authority: **server-computed** via a `rollSkillCheck` action →
+      [ADR 0005](./adr/0005-dice-roll-authority.md). — 2026-11-18
+- [x] `D6` `records.delete` in the AI allowlist: **dropped**, re-add only as a
+      narrow confirmed GM tool. — 2026-11-18

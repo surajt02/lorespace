@@ -28,5 +28,6 @@ an accident.
 | [0002](./0002-installed-sdk-is-authority.md) | Installed SDK is the authority, not the plan's version | Accepted | platform |
 | [0003](./0003-roll-log-timestamp-column.md) | `rolledAt`, not `createdAt`, on roll logs | Accepted | data model |
 | [0004](./0004-ai-chat-and-owner-billing.md) | Install `ai-chat` and bill the app owner | Accepted | AI |
-| [0005](./0005-dice-roll-authority.md) | Who computes a dice roll | Proposed | game integrity |
-| [0006](./0006-presence-room-authorization.md) | Campaign presence room access | Proposed | realtime |
+| [0005](./0005-dice-roll-authority.md) | Dice rolls are computed server-side | Accepted | game integrity |
+| [0006](./0006-presence-room-authorization.md) | Campaign presence room is membership-gated | Accepted | realtime |
+| [0007](./0007-default-campaign-trigger.md) | Default campaign seeded by a client-triggered action | Accepted | data model |
