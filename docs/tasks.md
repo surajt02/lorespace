@@ -48,7 +48,9 @@ document; this file stays the cross-phase index of what is done.
 8. **Any change of direction gets an ADR** in `docs/adr/` (copy
    `template.md`, next free number, link it here). Supersede, never rewrite.
 9. **A phase that finishes leaves an Outcome section** in its
-   `plans/phase-N-plan.md`: shipped, slipped, deviations, inherited assumptions.
+   `plans/phase-N-plan.md`: shipped, slipped, deviations, inherited assumptions,
+   and the **Next** line. The closing report ends by naming the next phase, its
+   status (ready, or blocked on a named task), and the command to start it.
 
 ## Current state
 

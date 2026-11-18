@@ -43,5 +43,11 @@ something the plan did not cover, stop and tell me instead of widening scope.
 When the phase is done: tick its tasks in `docs/tasks.md`, fill the plan's
 § Outcome (shipped, slipped, deviations, what the next phase inherits), record
 any decision change as an ADR, run the phase's full verification, commit with a
-`phase $1:` prefix, and report what shipped with the exact evidence. Do not
-start the next phase.
+`phase $1:` prefix, and report what shipped with the exact evidence.
+
+Close the report on the next phase, in the last lines I read: name it from the
+phase board, say whether it is **ready** or **blocked** (and on exactly which
+task, with that task's id), and give me the one command to start it —
+`/phase <next>`. If a later phase became ready or blocked as a side effect of
+this one, say so there too, so I never have to read the board to decide what to
+run. Do not start the next phase yourself.

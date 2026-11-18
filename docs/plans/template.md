@@ -105,3 +105,7 @@ Filled in at the end of the phase, never rewritten afterwards.
 - **Slipped:** <what moved, and to which task id>
 - **Deviations:** <ADR ids>
 - **Inherited by the next phase:** <assumptions now safe to make>
+- **Next:** `/phase <n>` — ready | blocked on `<task id>`: <what clears it>
+
+Also update the Status column of this phase and the next one on the phase board
+in [`../tasks.md`](../tasks.md), so the board and this file agree.
