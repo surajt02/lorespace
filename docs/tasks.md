@@ -95,6 +95,7 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 
 | Phase | Scope | Status |
 | --- | --- | --- |
+| 0 | Session prerequisites: two test accounts + warmed browser | todo — **unblocks 4 and 6**, no plan file |
 | 2a | Data model prelude: 4 schemas + registration + default campaign | todo — **prerequisite for 1 and 3** |
 | 1 | Theme, landing page, 3-column workspace shell | todo |
 | 2 | RBAC hardening, `ensureDefaultCampaign`, `applyGmMutation` | todo |
@@ -104,6 +105,47 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 | 6 | Grep gates, unit + multi-user E2E, deploy + live smoke | todo |
 
 ---
+
+## Phase 0 — Session prerequisites
+
+Three short tasks, once per machine. No plan file: nothing here is design, and
+`docs/plans/` would be ceremony. Do it before Phase 2a.
+
+Why it is hoisted: `tests/collab.spec.ts:32-41` skips its **entire** file while
+fewer than two usable accounts exist — including the two `/api-status` tests,
+which have nothing to do with a pool. So today the multi-user surface is
+silently untested, and Phase 4 (a server action plus a gated realtime route,
+neither reachable from the browser smoke test) would have no way to verify
+itself until Phase 6. `loadAllTestAccounts()` reads the local registry, so an
+account only counts on the machine that created it — another reason to do this
+early and once.
+
+- [ ] `P0.1` Create two accounts. Email must end with `@deepspace.test`; a
+      password must be at least 8 characters and is better piped than passed on
+      argv, where it lands in `ps` and shell history.
+      ```sh
+      openssl rand -base64 18 | npx deepspace test accounts create \
+        --email alice@deepspace.test --name Alice --label lorespace --password-stdin
+      openssl rand -base64 18 | npx deepspace test accounts create \
+        --email bob@deepspace.test --name Bob --label lorespace --password-stdin
+      npx deepspace test accounts list   # expect 2 rows
+      ```
+      Credentials land in `~/.deepspace/test-accounts.json`, outside the repo —
+      never commit them. Recovery on another machine is
+      `npx deepspace test accounts recover --all`, and never invent a password
+      to match a spec.
+- [ ] `P0.2` Prove the gate opened and warm the browser cache (the first run
+      downloads Chromium and boots vite + workerd, so allow minutes):
+      ```sh
+      npx deepspace test run tests/collab.spec.ts
+      ```
+      Expect **3 passing**: the identity test plus both `/api-status` tests. They
+      intercept `**/api/integrations`, so they need no real integration. If the
+      identity test fails, the fixture or sign-in is broken — fix it here, not in
+      Phase 6.
+- [ ] `P0.3` Note the outcome on the phase board: 2 accounts, `collab` green,
+      and the `~/.deepspace/playwright-states/` cache warm. Phase 4 and `P6.2`
+      both depend on this line being true.
 
 ## Phase 2a — Data model prelude (schemas only)
 
@@ -293,8 +335,9 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.
 - [ ] `P6.2` `collab.spec.ts` rewritten for campaigns/characters/roster/roll
       feed (current file tests `/api-status` identity — keep or replace
-      deliberately). Needs **2 test accounts**: `npx deepspace test accounts
-      create` — zero exist today, so the file is auto-skipped.
+      deliberately). The two accounts come from `P0.1` and the file should have
+      been green since `P0.2`; if it is skipping here, the local registry was
+      lost (`npx deepspace test accounts recover --all`).
 - [ ] `P6.3` Add `/home` H1 + preview-table assertions to `smoke.spec.ts`
       (plan requires them; nothing asserts them today).
 - [ ] `P6.4` Full pass: `npm run type-check`, `npm run lint`, `npm run
