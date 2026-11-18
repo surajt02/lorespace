@@ -5,6 +5,9 @@ tick completed tasks, add newly discovered ones, and leave the phase board
 honest. It is the only cross-session memory of what is done and what is next.
 
 - Plan of record: [`high-level-plan.md`](./high-level-plan.md)
+- Decisions and their rationale: [`adr/`](./adr/README.md). Read the relevant
+  ADR before re-litigating a choice; a decision that changes direction becomes
+  a new ADR, not a comment here.
 - One Pi session per phase. This file is the handoff between them.
 - Checkboxes: `- [ ]` todo, `- [x]` done. Append `— <date> <who>` when you tick.
 - Never delete a task. If it becomes wrong, tick it and add the replacement.
@@ -17,7 +20,8 @@ honest. It is the only cross-session memory of what is done and what is next.
    them (see `P2a`). Never wire a `useQuery` to a collection that
    `src/schemas.ts` does not register.
 2. **Verified against the installed SDK (0.44.2), not the plan's 0.43.0.**
-   See [§ Verified SDK facts](#verified-sdk-facts-0442). Re-read the `.d.ts`
+   See [§ Verified SDK facts](#verified-sdk-facts-0442) and
+   [ADR 0002](./adr/0002-installed-sdk-is-authority.md). Re-read the `.d.ts`
    before trusting any plan claim about an API.
 3. **Import boundaries** (plan §Architectural Guardrails): `deepspace/schema`
    for schemas, `deepspace` for browser hooks, `deepspace/worker` for worker
@@ -33,6 +37,8 @@ honest. It is the only cross-session memory of what is done and what is next.
    prerequisite, not a nicety.
 7. **No emoji in UI chrome, no purple/indigo gradients, no placeholder copy.**
    Icons come from `lucide-react`.
+8. **Any change of direction gets an ADR** in `docs/adr/` (copy
+   `template.md`, next free number, link it here). Supersede, never rewrite.
 
 ## Current state
 
@@ -92,8 +98,9 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 ## Phase 2a — Data model prelude (schemas only)
 
 Sequencing decision: schemas land before the UI that reads them, so the
-workspace is built data-driven once instead of rewritten. This is the schema
-half of Phase 2; RBAC hardening and the GM actions stay in Phase 2.
+workspace is built data-driven once instead of rewritten
+([ADR 0001](./adr/0001-schemas-before-ui.md)). This is the schema half of
+Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 
 - [ ] `P2a.1` `src/schemas/campaigns-schema.ts` — 8 columns per plan; `'*'`/`viewer`
       read-only, `member` create+update, `admin` all.
@@ -105,9 +112,9 @@ half of Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       no FK — join client-side).
 - [ ] `P2a.4` `src/schemas/roll-logs-schema.ts` — roll columns + `ownerField:'userId'`.
       **Deviation:** use `rolledAt` with `timestampTrigger: { field: 'summary' }`
-      instead of `createdAt` — the SDK resolves `orderBy: 'createdAt'` to the
-      system `_created_at`, so a custom column named `createdAt` is unsortable
-      and redundant.
+      instead of `createdAt` ([ADR 0003](./adr/0003-roll-log-timestamp-column.md)) —
+      the SDK resolves `orderBy: 'createdAt'` to the system `_created_at`, so a
+      custom column named `createdAt` is unsortable and redundant.
 - [ ] `P2a.5` Register all four in `src/schemas.ts`. Decide messaging drop-ins
       (`CHANNELS_SCHEMA`, `MESSAGES_SCHEMA`, `REACTIONS_SCHEMA`,
       `CHANNEL_MEMBERS_SCHEMA`, `READ_RECEIPTS_SCHEMA`): plan says register,
@@ -222,7 +229,8 @@ half of Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 
 ## Phase 5 — AI Game Master
 
-- [ ] `P5.1` Install the chat surface: `npx deepspace add ai-chat` (adds
+- [ ] `P5.1` Install the chat surface ([ADR 0004](./adr/0004-ai-chat-and-owner-billing.md)):
+      `npx deepspace add ai-chat` (adds
       `ChatPanel`, `ChatPanel.messages`, `ChatPanel.stream`, `pages/assistant.tsx`,
       `schemas/ai-chat-schema.ts`, react-markdown + highlight deps). Registering
       `AI_CHATS_SCHEMA` flips `inApp` in `worker.ts:144` and **creates
@@ -238,7 +246,7 @@ half of Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 - [ ] `P5.5` GM system prompt: snapshot-first, two-stage resolution (set DC →
       ask for the roll → never fabricate dice), verify in `roll-logs`, narrate
       2-4 paragraphs, then mutate.
-- [ ] `P5.6` Owner billing = **delete** `authToken: jwt` from
+- [ ] `P5.6` Owner billing ([ADR 0004](./adr/0004-ai-chat-and-owner-billing.md)) = **delete** `authToken: jwt` from
       `makeDefaultSummarizer` and `streamDeepSpaceAgent` in
       `src/ai/chat-routes.ts` so `APP_OWNER_JWT` is used. There is no config flag.
       Locally `dev start` must mint `APP_OWNER_JWT` or the call throws.
@@ -328,15 +336,18 @@ cached. Vitest is node-only (no jsdom) and includes `src/**/*.{test,spec}.ts`.
 
 ## Open decisions
 
-- [ ] `D1` — **Resolved:** schemas first. `P2a` precedes Phase 1's data wiring.
+- [ ] `D1` — **Resolved:** schemas first → [ADR 0001](./adr/0001-schemas-before-ui.md).
+      `P2a` precedes Phase 1's data wiring.
 - [ ] `D2` Register the messaging drop-in schemas
       (`CHANNELS`/`MESSAGES`/`REACTIONS`/`CHANNEL_MEMBERS`/`READ_RECEIPTS`)
       when nothing reads them, or drop them from the registration list?
 - [ ] `D3` When does `ensureDefaultCampaign` run — client action on `/home`
       mount, worker-side on first record read, or a job?
-- [ ] `D4` Presence room auth: accept anonymous peers and filter `anon-` ids
-      client-side, or gate `/ws/presence/*` behind membership?
-- [ ] `D5` Trust model for rolls: client-computed `Math.random()` is the plan's
-      design. Accept, or move the roll into a server action so `roll-logs` is
-      authoritative for the AI GM?
-- [ ] `D6` `records.delete` in the AI allowlist: keep or drop?
+- [ ] `D4` Presence room auth → [ADR 0006](./adr/0006-presence-room-authorization.md)
+      (Proposed): accept anonymous peers and filter `anon-` ids client-side, or
+      gate `/ws/presence/*` behind membership?
+- [ ] `D5` Trust model for rolls → [ADR 0005](./adr/0005-dice-roll-authority.md)
+      (Proposed): client-computed `Math.random()` as the plan designs, or a
+      server action so `roll-logs` is authoritative for the AI GM?
+- [ ] `D6` `records.delete` in the AI allowlist: keep or drop? (write an ADR if
+      the answer is not obvious from Phase 5's prompt design)
