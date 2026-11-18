@@ -11,6 +11,8 @@ honest. It is the only cross-session memory of what is done and what is next.
 - Per-phase implementation plans: [`plans/`](./plans/README.md) — each phase
   session writes `phase-N-plan.md` from its template before coding.
 - One Pi session per phase. This file is the handoff between them.
+- Opening a phase session: toggle the **Phase X** prompt snippet (alt+s) and
+  send e.g. `Phase 1` — it carries the orchestrator directive and the doc order.
 - Checkboxes: `- [ ]` todo, `- [x]` done. Append `— <date> <who>` when you tick.
 - Never delete a task. If it becomes wrong, tick it and add the replacement.
 - New work goes under the phase it belongs to as `P<n>.<m>`; the next free
