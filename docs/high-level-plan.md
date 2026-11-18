@@ -1,5 +1,17 @@
 # LoreSpace — Master Architecture & Implementation Plan
 
+> **Status (2026-11-18).** This document is the original intent, written before
+> the build had a deadline. Binding decisions live in [`adr/`](./adr/README.md)
+> (0001-0014); the live board is [`tasks.md`](./tasks.md); per-phase plans live
+> in [`plans/`](./plans/README.md). The build is a **96-hour, interview-scoped
+> playable demo** ([ADR 0008](./adr/0008-playable-interview-build.md)): six
+> attributes only ([ADR 0010](./adr/0010-rules-depth.md)), one scaffolded arc
+> ([ADR 0011](./adr/0011-content-arc.md)), engine-owned math with model-supplied
+> inputs ([ADR 0009](./adr/0009-engine-owns-outcomes.md)), a public-read table
+> ([ADR 0014](./adr/0014-public-read-table.md)), and a pixel-chrome dark fantasy
+> register ([ADR 0013](./adr/0013-visual-register.md)). **Where this plan and an
+> ADR disagree, the ADR wins.**
+
 LoreSpace is a real-time, multiplayer virtual tabletop RPG (VTT) and collaborative storytelling application built on the DeepSpace SDK (`deepspace@0.43.0`) and Cloudflare Workers. Players join a shared campaign room, generate and manage d20 character sheets, broadcast live dice rolls, and interact with an AI Game Master (GM) that dynamically narrates the campaign, sets Difficulty Classes (DCs) for risky actions, and deterministically mutates persistent SQLite world and character state (HP, inventory, combat encounters, and active scenes) through server-side tools. All mutations synchronize instantaneously across connected clients via Durable Object WebSockets (`RecordRoom` and `PresenceRoom`).
 
 ---

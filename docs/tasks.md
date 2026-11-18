@@ -10,6 +10,9 @@ honest. It is the only cross-session memory of what is done and what is next.
   a new ADR, not a comment here.
 - Per-phase implementation plans: [`plans/`](./plans/README.md) — each phase
   session writes `phase-N-plan.md` from its template before coding.
+- Build budget: **96 hours** — ~10 focused hours/day for three days, day four as
+  contingency ([ADR 0008](./adr/0008-playable-interview-build.md)). Plan every
+  phase in hours; § Build budget is binding.
 - One Pi session per phase. This file is the handoff between them.
 - Opening a phase session: run `/phase <n>` (e.g. `/phase 2a`, `/phase 1`) —
   `.pi/prompts/phase.md` carries the orchestrator directive and the doc order.
@@ -40,9 +43,11 @@ document; this file stays the cross-phase index of what is done.
    `user` truthiness.
 5. **Verify before reporting done:** `npm run validate && npm run lint`, plus
    the phase's own gates (unit tests for pure logic, `npm test` for pages).
-6. **Commit per phase** (or per coherent slice) with a `phase N:` prefix.
-   `deepspace deploy` refuses a dirty worktree, so a clean tree is a deploy
-   prerequisite, not a nicety.
+6. **Commit per phase** (or per coherent slice) with a `phase N:` prefix. The
+   repo is the deliverable *and* the app's source: the **first** `deploy` claims
+   GitHub (`surajt02/lorespace`) permanently, after which deploys ship the
+   checkout including dirty bytes and record no commit lineage. Commit anyway —
+   the interview reads the history.
 7. **No emoji in UI chrome, no purple/indigo gradients, no placeholder copy.**
    Icons come from `lucide-react`.
 8. **Any change of direction gets an ADR** in `docs/adr/` (copy
@@ -75,6 +80,8 @@ model. Nothing user-visible is built yet.
 | `src/constants.ts` | `DEFAULT_CAMPAIGN_ID`, `DEFAULT_CAMPAIGN_PRESENCE_SCOPE` added by 2a |
 | Tests | `smoke`+`api`+`collab` green; 2 `lorespace-*@deepspace.test` accounts, browser cache warm (`P0.1-P0.3`); `test:unit` = 3 files / 17 tests |
 | Git | scaffold committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
+| Deploy | **never deployed**; source unclaimed — the first deploy latches GitHub (`surajt02/lorespace`) permanently |
+| Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)) |
 
 ## Architecture map
 
@@ -103,16 +110,87 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 
 ## Phase board
 
-| Phase | Scope | Status |
-| --- | --- | --- |
-| 0 | Session prerequisites: two test accounts + warmed browser | **done 2026-11-18** — 2 accounts, `collab` 3/3, cache warm; unblocked 4 and 6, no plan file |
-| 2a | Data model prelude: 4 schemas + registration + default campaign | **done 2026-11-18** — 4 schemas, 6 registered, `lintSchema`/`lintSchemas` clean, 17 unit tests; unblocked 1, 2, 3, 4, 5 |
-| 1 | Theme, landing page, 3-column workspace shell | todo — **next**; consumes the Phase 2a contracts |
-| 2 | RBAC hardening, `ensureDefaultCampaign`, `applyGmMutation` | todo |
-| 3 | Character sheet, d20 math, archetype generator, inventory | todo |
-| 4 | Party presence roster, dual-path dice engine | todo |
-| 5 | AI Game Master: install ai-chat, GM tools, owner billing, console | todo |
-| 6 | Grep gates, unit + multi-user E2E, deploy + live smoke | todo |
+| Phase | Scope | Hours | Status |
+| --- | --- | --- | --- |
+| 0 | Session prerequisites: two test accounts + warmed browser | — | **done 2026-11-18** — 2 accounts, `collab` 3/3, cache warm; no plan file |
+| 2a | Data model prelude: 4 schemas + registration + default campaign | — | **done 2026-11-18** — 6 registered, lint clean, 17 unit tests |
+| 1 | Pixel theme, landing page, 3-column workspace shell | 10 | todo — **next**, day 1 |
+| 2 | `ensureDefaultCampaign`, `applyGmMutation` | 4 | todo — day 2 morning |
+| 3 | d20 math, character sheet, inventory (read + use) | 7 | todo — day 2 |
+| 4 | Presence roster, server-computed roll, roll banner | 5 | todo — day 3 morning |
+| 5 | AI GM: install ai-chat, GM tools, owner billing, console | 6 | todo — days 3-4 |
+| 6 | Gates, unit + smoke + one sync spec, deploy, README | 7 | todo — day 4 |
+| | **Planned total** | **39** | of ~40 available (30 planned + day-4 contingency) |
+
+## Build budget (96 hours)
+
+96 hours wall-clock, for an interview, delivered as a GitHub link. The README of
+that repo is the front door (live URL, screenshots, architecture, notable ADRs).
+~10 focused hours/day for three days, day four held as contingency
+([ADR 0008](./adr/0008-playable-interview-build.md)). If the window becomes 96
+**working** hours, restore inventory CRUD and the creation modal first.
+
+The spec is ADR 0008's eight-beat demo script; anything that does not serve a
+beat is a cut.
+
+### Day 1 — identity and shell (10h) · Phase 1
+
+| h | Work |
+| --- | --- |
+| 1.5 | `obsidian` tokens (21: 19 colors + `--color-shell*`), pixel chrome utilities, Silkscreen, first-paint, `THEMES`, delete `slate` |
+| 1.5 | Landing: Design Direction block, split hero with the SVG d20, CTA — one screen |
+| 5 | Workspace shell: three columns, scene banner, roster, feed, sheet, GM panel (static data) |
+| 1.5 | Signed-out preview + `AuthOverlay` state + prop-driven data boundary |
+| 0.5 | README front door skeleton |
+
+**Risk:** the shell is the largest single chunk and everything plugs into it. An
+overrun eats day 2's buffer, not day 3's.
+
+### Day 2 — data and character (10h) · Phases 2 + 3
+
+| h | Work |
+| --- | --- |
+| 1.5 | `ensureDefaultCampaign` + `applyGmMutation` (HP, loot, scene only) |
+| 1.5 | `src/lib/d20.ts` + unit tests |
+| 4 | Live character sheet: Forge from presets, six stats + modifiers, AC, HP controls |
+| 1.5 | Inventory: read + Use/Discard only |
+| 1.5 | **Deploy #1** — latches GitHub, proves the shell serves |
+
+### Day 3 — sync and the GM (10h) · Phase 4, start Phase 5
+
+| h | Work |
+| --- | --- |
+| 1.5 | `rollSkillCheck` action with ownership check (ADR 0005) |
+| 1 | Presence membership gate (ADR 0006) |
+| 2.5 | `PartyPresenceBar`, `DiceRoller`, roll banner (signature), feed rows |
+| 1 | **Deploy #2 + two-window sync proof** — the wedge, demonstrated |
+| 2.5 | `ai-chat` install, owner billing, four GM tools, GM prompt |
+| 1.5 | `GmConsolePanel`, quick chips, auto-resolve on roll |
+
+**Milestone:** if two windows do not sync the roll by end of day 3, the
+interview rests on the AI instead of the architecture — and the AI is the part
+every competitor has.
+
+### Day 4 — rehearsal and gates (10h) · finish 5, Phase 6
+
+| h | Work |
+| --- | --- |
+| 2 | Golden-path rehearsal ×3 against the eight beats, fix breaks |
+| 1 | Streaming/latency: two-phase indicator, first token inside ~3s |
+| 1.5 | `collab` sync spec + smoke additions |
+| 1 | Grep/emoji gates, visual polish |
+| 1 | Final deploy + live smoke on both accounts |
+| 1 | README final: live URL, screenshots, architecture, ADRs |
+| 2.5 | Spare |
+
+### Cut (binding)
+
+Multiple campaigns and any campaign browser · custom creation, stat allocation,
+archetype editing · inventory add/edit CRUD · messaging schemas · `assistant`
+page and chat-history UI · theme switcher and `data-ui-theme` · maps/canvas,
+conditions, initiative, XP, spells · SEO/sitemap depth · `applyGmMutation` beyond
+HP/loot/scene · test breadth beyond unit + smoke + one sync spec · any
+pre-recorded demo.
 
 ---
 
@@ -142,9 +220,9 @@ early and once.
       accounts by name, never by email**.
       ```sh
       openssl rand -base64 18 | npx deepspace test accounts create \
-        --email alice@deepspace.test --name Alice --label lorespace --password-stdin
+        --email lorespace-alice@deepspace.test --name Alice --label lorespace --password-stdin
       openssl rand -base64 18 | npx deepspace test accounts create \
-        --email bob@deepspace.test --name Bob --label lorespace --password-stdin
+        --email lorespace-bob@deepspace.test --name Bob --label lorespace --password-stdin
       npx deepspace test accounts list   # expect 2 rows
       ```
       Credentials land in `~/.deepspace/test-accounts.json`, outside the repo —
@@ -213,11 +291,14 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 
 ## Phase 1 — Theme, landing page, workspace shell
 
-- [ ] `P1.1` `[data-theme="obsidian"]` in `src/themes.css` overriding **all**
-      color tokens (`styles.css:19-96` is the slate default — a missed token
-      leaks indigo `#818cf8`, which the anti-AI gate forbids). Palette per plan:
-      `#09090b` bg, `#121216` card, `#27272a` border, `#f4f4f5` fg, `#d97706`
-      primary, `#dc2626` destructive, `--radius: 0.375rem`.
+- [ ] `P1.1` `[data-theme="obsidian"]` in `src/themes.css` overriding **all 21**
+      tokens — 19 colors plus `--color-shell` and `--color-shell-panel`
+      (`styles.css:19-96` is the slate default; a missed token leaks indigo
+      `#818cf8`, which the anti-AI gate forbids). Palette: `#09090b` bg, `#121216`
+      card, `#27272a` border, `#f4f4f5` fg, `#d97706` primary, `#dc2626`
+      destructive. **`--radius: 0`** and the pixel register per
+      [ADR 0013](./adr/0013-visual-register.md): stepped borders, dithered
+      gradients, Silkscreen for labels/numerals, sans for prose.
 - [ ] `P1.2` `'obsidian'` in `THEMES` (`src/themes.ts`); fix `getActiveTheme()`
       fallback (hardcodes `'slate'` at lines 36-38) and `getTheme()` first-entry
       fallback.
@@ -230,9 +311,10 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 - [ ] `P1.5` Design Direction comment block at the top of `src/pages/index.tsx`
       (6-prompt brief + 6-token Style Tile).
 - [ ] `P1.6` Split-hero landing: verb-first copy left, live-rendered animated
-      d20 skill-check + character-sheet mockup right (inline SVG/styled divs,
-      **deterministic** — no `Math.random`/`Date.now`/`window`; CSS keyframes).
-      CTA → `/home`. Keep `data-testid="static-landing"` and `<Seo>` first.
+      d20 skill-check + character-sheet mockup right — **one hand-authored inline
+      SVG** plus styled divs, zero raster files, **deterministic** (no
+      `Math.random`/`Date.now`/`window`; CSS keyframes only). CTA → `/home`. Keep
+      `data-testid="static-landing"` and `<Seo>` first.
 - [ ] `P1.7` Line 1 of `src/pages/(app)/home.tsx` is exactly:
       `/* home pattern: product-preview-first — live multiplayer VTT campaign table, dice log, and character sheet */`
       (grep gate).
@@ -241,12 +323,16 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       + AI GM stream; right = character sheet + inventory. Use `bg-shell` /
       `bg-shell-panel`. `h-full` + internal scroll (layout is
       `h-screen overflow-hidden`).
-- [ ] `P1.9` Signed-out branch: same 3 columns on deterministic sample data +
-      inline sign-in banner owning its own `<AuthOverlay>` state (home is tier 2,
-      so there is no `AuthGate`). Gate on `useAuth().isSignedIn`, not
-      `useAuthProfileReady({requireUser:true})` (today's `home.tsx:13`).
-      Sample party members must **not** use `data-testid="nav-user-name"`
-      (`smoke.spec.ts:60-64` asserts count 0 signed out).
+- [ ] `P1.9` Signed-out branch: same 3 columns, rendered from **live campaign
+      rows when the seed exists** and from a bundled fixture when `campaigns` is
+      empty ([ADR 0014](./adr/0014-public-read-table.md)) — nobody has signed in
+      yet, so `ensureDefaultCampaign` has not run. The fixture must match the
+      schema, never invent fields. Inline sign-in banner owns its own
+      `<AuthOverlay>` state (home is tier 2, so there is no `AuthGate`). Gate on
+      `useAuth().isSignedIn`, not `useAuthProfileReady({requireUser:true})`
+      (today's `home.tsx:13`). Party members must **not** use
+      `data-testid="nav-user-name"` (`smoke.spec.ts:60-64` asserts count 0 signed
+      out).
 - [ ] `P1.10` Data boundary: components take their data as props so Phase 3/4
       swap sample data for `useQuery` without rewriting markup.
 - [ ] `P1.11` Keep nav test IDs intact (`app-navigation`, `nav-sign-in-button`,
@@ -255,17 +341,31 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 - [ ] `P1.12` Grep gates that this phase must turn green: no
       `data-theme="slate"` in `index.html`; no `placeholder page` in `src/`;
       `home pattern:` present; `data-theme="obsidian"` present in `themes.css`.
+- [ ] `P1.13` Pixel chrome as **shared utilities** in `src/styles.css`
+      ([ADR 0013](./adr/0013-visual-register.md)): stepped 2px border,
+      dithered gradient, ornamental divider, segmented HP bar, pixel-numeral
+      class. Components consume these; no per-component pixel art.
+- [ ] `P1.14` README front door skeleton: what the app is, one screenshot, the
+      live-URL placeholder, how to run it locally. Final copy on day 4. The repo
+      is the deliverable, so this is not optional garnish.
 
 ## Phase 2 — RBAC hardening, server actions
 
-- [ ] `P2.1` Manual audit of every schema's role matrix after P2a; confirm
-      `viewer` = anonymous means `read: true` is a deliberate public exposure.
-- [ ] `P2.2` `inventory` `member: delete: true` lets any member delete any
-      item while `characters` is `'own'` — decide and document the asymmetry.
+- [x] `P2.1` ~~Audit every schema's role matrix~~ **Resolved:** `viewer` (the
+      anonymous role) keeps `read: true` on all four collections by design — the
+      table is shareable by link, and the signed-out preview reads live rows
+      ([ADR 0014](./adr/0014-public-read-table.md)). Writes stay member/admin. —
+      2026-11-18 grill
+- [x] `P2.2` ~~`inventory` `member: delete: true` asymmetry~~ **Resolved:
+      accepted risk.** Any member can delete any inventory row because the
+      collection has no `userId` column. Acceptable for a two-character demo
+      dataset ([ADR 0014](./adr/0014-public-read-table.md)); a real product adds
+      `userId` and scopes delete to `'own'`. — 2026-11-18 grill
 - [ ] `P2.3` `src/actions/index.ts` — `ensureDefaultCampaign`: `tools.query`
       then `tools.create(..., 'default-campaign')`. Known-id create is an
       **upsert**, so it is idempotent. Seed scene + enemy + DC per plan.
-- [ ] `P2.4` `applyGmMutation` — privileged multi-collection HP/loot writes.
+- [ ] `P2.4` `applyGmMutation` — privileged multi-collection HP/loot writes,
+      **HP, loot and scene only** (no encounter model, no conditions).
       Remember `ctx.tools` runs with per-record RBAC **off**: check ownership
       yourself. There are **no transactions** — ordered best-effort only, and
       say so in the code comment instead of claiming atomicity.
@@ -288,16 +388,21 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 - [ ] `P3.3` `src/components/CharacterSheetPanel.tsx` — `useQuery('characters',
       { where: { campaignId } })`, match `record.data.userId === userId`,
       `animate-pulse` skeleton while `status === 'loading'`.
-- [ ] `P3.4` "Roll Adventurer" generator + creation modal (local primitives),
-      `createConfirmed` + seed 2 starter inventory items, toast on success.
+- [ ] `P3.4` **Forge adventurer**: one-click preset from `ARCHETYPE_PRESETS`
+      plus a name field, `createConfirmed` + seed 2 starter inventory items,
+      toast on success. **No creation modal, no stat allocation** — cut by
+      [ADR 0008](./adr/0008-playable-interview-build.md).
 - [ ] `P3.5` 6 attribute cards (`font-mono tabular-nums`), click → skill check;
       HP bar (no `Progress` primitive — compose div + `bg-success|warning|
       destructive` + inline width) and −5/−1/+1/+5/Short Rest, clamped
       `0..maxHp` via `putConfirmed`.
-- [ ] `P3.6` `src/components/InventoryPanel.tsx` — add-item `Modal` with
-      `Select` (inline `<SelectItem>` children only), `Textarea`; discard via
-      `ConfirmModal` naming the item.
+- [ ] `P3.6` `src/components/InventoryPanel.tsx` — list items, **Use/Discard
+      only** (no add/edit form, cut by ADR 0008); discard via `ConfirmModal`
+      naming the item.
 - [ ] `P3.7` Empty states via local `EmptyState`, icons from `lucide-react`.
+- [ ] `P3.8` **Deploy #1** at the end of day 2: latches GitHub as the app source
+      and proves the pages serve. Verify `/` and `/home` on the live URL before
+      moving on — the deploy is both host and artifact.
 
 ## Phase 4 — Party presence, dice engine
 
@@ -330,6 +435,10 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       presence broadcast fails after the write, the feed shows the roll and
       peers miss the banner — accepted, and must not trigger a retry (a retry
       would roll twice).
+- [ ] `P4.7` **Deploy #2 + two-window sync proof** (end of day 3): two signed-in
+      browsers, one roll, banner and feed land in both without a reload. This is
+      the milestone that decides whether the interview rests on the architecture
+      or on the AI; do not slip it into day 4 without saying so.
 
 ## Phase 5 — AI Game Master
 
@@ -350,16 +459,26 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       never needs it, there is no soft delete or transaction to undo it, and
       every tool in the set is auto-exposed over MCP. Re-add only as a narrow,
       confirmed GM tool. — 2026-11-18 master
-- [ ] `P5.5` GM system prompt: snapshot-first, two-stage resolution (set DC →
-      ask for the roll → never fabricate dice), verify in `roll-logs`, narrate
-      2-4 paragraphs, then mutate.
+- [ ] `P5.5` GM system prompt: snapshot-first, **two-stage resolution** (set DC
+      via tool → ask for the roll → never fabricate dice), verify in
+      `roll-logs`, narrate 2-4 short paragraphs, then mutate. Enforce the
+      split from [ADR 0009](./adr/0009-engine-owns-outcomes.md): tool first, then
+      prose; never state an outcome without a `roll-logs` row or a record write.
+      Turn policy per [ADR 0012](./adr/0012-gm-turn-policy.md): answer the latest
+      human message, no turn order, no addressing syntax.
 - [ ] `P5.6` Owner billing ([ADR 0004](./adr/0004-ai-chat-and-owner-billing.md)) = **delete** `authToken: jwt` from
       `makeDefaultSummarizer` and `streamDeepSpaceAgent` in
       `src/ai/chat-routes.ts` so `APP_OWNER_JWT` is used. There is no config flag.
       Locally `dev start` must mint `APP_OWNER_JWT` or the call throws.
 - [ ] `P5.7` `src/components/GmConsolePanel.tsx` embedding `ChatPanel` in the
       center column + quick-prompt chips that include character name and latest
-      roll.
+      roll. **Auto-resolve** ([ADR 0012](./adr/0012-gm-turn-policy.md)): after a
+      resolved roll, synthesise exactly one user message carrying
+      `{rawRoll, modifier, total, targetDc, outcome}` so beat 6 flows into beat 7
+      without a click; cap at one automatic turn per roll.
+- [ ] `P5.8` `deepspace add ai-chat` also drops in `src/pages/assistant.tsx`.
+      Leave it unlinked and unstyled — chat history UI is cut (ADR 0008). Do not
+      invest in it; do not delete it either (the feature owns that file).
 
 ## Phase 6 — Gates, tests, deploy
 
@@ -377,9 +496,16 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 - [ ] `P6.5` Type-check the tests: `tsconfig.json` `include` is
       `["src", "worker.ts"]`, so `tests/**` is unchecked by `tsc`. Either widen
       include or accept runtime-only checking — document the choice.
-- [ ] `P6.6` Deploy (`npx deepspace deploy`) from a clean worktree, then live
-      smoke on the deployed URL: two sessions, two characters, a roll, an AI GM
-      resolution with an HP/loot mutation, zero console/WS errors.
+- [ ] `P6.6` Deploy (`npx deepspace deploy`), then live smoke on the deployed
+      URL: two sessions, two characters, a roll, an AI GM resolution with an
+      HP/loot mutation, zero console/WS errors. **No recorded demo** — the
+      deliverable is the repo link ([ADR 0008](./adr/0008-playable-interview-build.md)).
+- [ ] `P6.7` README final: live URL at the top, two or three screenshots, what
+      the app is in three sentences, how the sync works, and links to ADRs 0005 /
+      0009 / 0014 (the interesting ones). It is the front door for the interview.
+- [ ] `P6.8` Rehearse the eight beats three times end to end, on the deployed
+      URL, signed out then signed in, watching for console errors. Time it: the
+      whole path must land inside five minutes.
 
 ---
 
@@ -447,8 +573,11 @@ in `styles.css`; new files are auto-scanned.
 
 **Tests.** `npm test` → smoke+api only; `test run e2e` → all specs.
 `deepspace/testing` `users(n)` returns `{context, page, email, name, userId}`
-and closes contexts automatically. No test accounts exist; Chromium is not
-cached. Vitest is node-only (no jsdom) and includes `src/**/*.{test,spec}.ts`.
+and closes contexts automatically. Two accounts exist
+(`lorespace-alice@`/`lorespace-bob@deepspace.test`) — **select them by name
+(`Alice`/`Bob`), never by email**, because the bare `alice@`/`bob@` addresses are
+held by other developers. Chromium 1255 is cached. Vitest is node-only (no
+jsdom) and includes `src/**/*.{test,spec}.ts`.
 
 ## Decisions
 
@@ -471,3 +600,24 @@ bottom as `D<n>` with the ADR that settles them.
       [ADR 0005](./adr/0005-dice-roll-authority.md). — 2026-11-18
 - [x] `D6` `records.delete` in the AI allowlist: **dropped**, re-add only as a
       narrow confirmed GM tool. — 2026-11-18
+- [x] `D7` Artifact identity: **playable demo-grade build, 96 hours, interview**;
+      multiplayer real; eight-beat demo script is the spec; cut list binding →
+      [ADR 0008](./adr/0008-playable-interview-build.md). — 2026-11-18 grill
+- [x] `D8` Outcome ownership: **engine computes results, model supplies inputs**
+      (DC, damage, loot, scene) through tools; no outcome without a roll row or a
+      record write → [ADR 0009](./adr/0009-engine-owns-outcomes.md). — 2026-11-18 grill
+- [x] `D9` Rules depth: **six attributes, AC, HP, one enemy, one DC**. No skills,
+      saves, conditions, initiative, XP or spells →
+      [ADR 0010](./adr/0010-rules-depth.md). — 2026-11-18 grill
+- [x] `D10` Content: **one scaffolded arc, three scene states** expressed in the
+      existing campaign columns; no content library →
+      [ADR 0011](./adr/0011-content-arc.md). — 2026-11-18 grill
+- [x] `D11` GM turns: **latest message wins, one automatic turn per resolved
+      roll**, no turn order → [ADR 0012](./adr/0012-gm-turn-policy.md). —
+      2026-11-18 grill
+- [x] `D12` Visual register: **Diablo-ward dark fantasy, pixel as chrome and
+      signal**, Silkscreen numerals, sans prose, zero raster, `--radius: 0` →
+      [ADR 0013](./adr/0013-visual-register.md). — 2026-11-18 grill
+- [x] `D13` Read policy: **public-read table by link**, live rows with a fixture
+      fallback when unsigned-out; `inventory` delete asymmetry accepted →
+      [ADR 0014](./adr/0014-public-read-table.md). — 2026-11-18 grill

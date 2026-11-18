@@ -31,3 +31,10 @@ an accident.
 | [0005](./0005-dice-roll-authority.md) | Dice rolls are computed server-side | Accepted | game integrity |
 | [0006](./0006-presence-room-authorization.md) | Campaign presence room is membership-gated | Accepted | realtime |
 | [0007](./0007-default-campaign-trigger.md) | Default campaign seeded by a client-triggered action | Accepted | data model |
+| [0008](./0008-playable-interview-build.md) | Playable interview build in 96 hours | Accepted | product |
+| [0009](./0009-engine-owns-outcomes.md) | Engine owns outcomes, the model supplies inputs | Accepted | game integrity |
+| [0010](./0010-rules-depth.md) | Rules depth: six attributes and nothing else | Accepted | game mechanics |
+| [0011](./0011-content-arc.md) | One scaffolded arc, no content library | Accepted | content |
+| [0012](./0012-gm-turn-policy.md) | GM answers the latest message, auto-resolves rolls | Accepted | AI |
+| [0013](./0013-visual-register.md) | Visual register: Diablo-ward pixel chrome | Accepted | UI |
+| [0014](./0014-public-read-table.md) | The table is public-read by link | Accepted | security |
