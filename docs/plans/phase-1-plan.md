@@ -529,6 +529,7 @@ Product Polish half-absence/half-presence pair, and the landing anti-AI set.
 | `--radius: 0` breaks a kit primitive's shape assumptions | `Avatar`/`Badge`/`Button` use `rounded-lg`/`rounded-full` | `rounded-full` is not token-driven and stays a circle; verify buttons/badges visually in manual step 2 |
 | Nav regression (test ids / `signOut`) | rewriting `Navigation` while theming | `Navigation.tsx` is **not** edited this phase; `collab` run at Step 5 and Step 7 |
 | Silkscreen at 14px hurts readability | using it for prose | ADR 0013 rule: prose sans, Silkscreen for labels/badges/numerals; review each panel |
+| Safari cannot sign in on `http://localhost` | `__Secure-` session cookie is refused by Safari on non-HTTPS localhost (Chromium allows it) | Local dev and all Playwright suites use Chrome/Chromium; Safari is verified on the deployed `https://…app.space` URL (`P3.8`, `P6.6`) |
 
 ## Open questions
 

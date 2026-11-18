@@ -28,6 +28,9 @@ npm install
 npx deepspace dev start     # vite + miniflare on http://localhost:5173
 ```
 
+> Local sign-in note: use Chrome. Safari refuses the `__Secure-` session cookie
+> on `http://localhost`; it works on the deployed HTTPS URL.
+
 Sign-in uses the DeepSpace platform account (`npx deepspace auth login`). The
 app's own data model is created automatically at first boot — there is no
 migration step.
