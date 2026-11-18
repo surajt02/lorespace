@@ -51,6 +51,12 @@ document; this file stays the cross-phase index of what is done.
    `plans/phase-N-plan.md`: shipped, slipped, deviations, inherited assumptions,
    and the **Next** line. The closing report ends by naming the next phase, its
    status (ready, or blocked on a named task), and the command to start it.
+10. **Approval is exception-gated.** Post the phase plan, then proceed. Wait for
+    the user only when a *crucial* decision is open: it changes a contract
+    another phase depends on, supersedes an accepted ADR, is hard to reverse
+    (schema, route, deploy), is a product/taste call, or needs something only
+    the user can supply. Settled by the plan, this file, or an ADR is not a
+    decision.
 
 ## Current state
 

@@ -32,9 +32,25 @@ Then, before writing code: draft `docs/plans/phase-$1-plan.md` from the
 template — scope with explicit non-goals, entry state verified against the actual
 files, the contracts the next phase will inherit, ordered steps that each name
 files and proof, verification commands, risks, and open questions. Map every
-step to a `P$1.<m>` id, adding missing tasks to `docs/tasks.md` first. Report the
-plan and wait for my approval. Where the plan rests on a guess, send a scout
-instead of guessing.
+step to a `P$1.<m>` id, adding missing tasks to `docs/tasks.md` first. Where the
+plan rests on a guess, send a scout instead of guessing.
+
+Do **not** wait for approval by default. Post the plan as a short summary — what
+changes, in what order, what settles each open question — then start step 1, and
+say plainly when nothing crucial was open. Stop and ask me only when a
+**crucial** decision is open:
+
+- it would change a contract another phase depends on, or supersede an accepted
+  ADR;
+- it is expensive or impossible to reverse — schema shape, a route, a deploy, a
+  data migration;
+- it is a product or taste call — copy, visual direction, naming, trimming scope;
+- it needs something only I can supply — credentials, accounts, a paid resource,
+  or a choice between two viable designs with different products.
+
+Anything the plan, `tasks.md`, or the ADRs already determine is settled:
+proceed. Implementation detail, file layout, step order, refactors inside a
+step, and local naming never need my sign-off.
 
 While executing: one step at a time, verifying each step as the plan says rather
 than at the end; run long builds and test suites in the background. If you hit
