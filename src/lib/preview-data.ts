@@ -14,7 +14,7 @@
 import type { RecordData } from 'deepspace'
 import type { GmMessage } from '@/components/GmConsolePanel'
 import { DEFAULT_CAMPAIGN_ID } from '@/constants'
-import { DEFAULT_CAMPAIGN_SEED } from './campaign-seed'
+import { DEFAULT_CAMPAIGN_SEED, type CampaignRow } from './campaign-seed'
 
 // The row shape and the seeded scene live in `campaign-seed.ts` so the live
 // seed and this fixture cannot drift. Re-exported here because call sites

@@ -1,6 +1,6 @@
 # Phase 2 — RBAC hardening, server actions
 
-- **Status:** Active
+- **Status:** Done
 - **Session:** 2026-11-18, phase 2 orchestrator session (`/phase 2`)
 - **Governing tasks:** [`P2.1`–`P2.6`](../tasks.md#phase-2--rbac-hardening-server-actions)
 - **ADRs in force:** [0002](../adr/0002-installed-sdk-is-authority.md) (installed
@@ -325,4 +325,96 @@ None blocking. Settled in this session:
 
 ## Outcome
 
-Filled at close-out.
+- **Shipped:** `ensureDefaultCampaign` and `applyGmMutation` as bearer-only
+  server actions; the shared seed constant and the fixture as one object; the
+  app's first client action caller (`callAction`); `/home`'s signed-in seeding
+  state machine (skeleton → live row, visible failure notice, no silent fixture
+  fallback).
+- **Slipped:** nothing moved to another task. One promised test case was
+  untestable as written (see Deviations).
+- **Deviations:**
+  - **Seed content** is ADR 0011's *threshold* state, not the high-level plan's
+    literal `Sunken Reliquary / dungeon / DC 13 / Runebound Sentinel`. That prose
+    matches none of ADR 0011's three states, while `PREVIEW_CAMPAIGN` called
+    itself the drift guard for `P2.3` and `SceneBanner` already renders the
+    enemy block only when `enemyMaxHp > 0`. No new ADR: this is ADR 0011's first
+    state, not a new direction. Values now live once, in
+    `src/lib/campaign-seed.ts`.
+  - **`details.applied`** is in `applyGmMutation`'s failure shape but is always
+    `[]`: every mutation kind performs exactly one write, so "a later write
+    failed after the first landed" cannot occur today. The P2.6 test asserts the
+    single-write failure instead; the field stays so a future multi-write kind
+    does not change the wire contract.
+  - **Commit entanglement:** commit `01720d5` ("docs: per-archetype armor bonus
+    for P3.1", authored by a concurrent session in this worktree) swept in this
+    phase's in-flight files — `src/lib/campaign-seed.ts`, the
+    `preview-data.ts` rewiring, this plan, and the throwaway proof spec. The
+    code is unchanged and verified here; the history is not clean, and the
+    throwaway spec was deleted in the phase-2 commit that follows. Not rewritten
+    (history is written) — recorded instead.
+- **Inherited by the next phase:** a `campaigns/default-campaign` row exists
+  after the first signed-in visit, identical to `DEFAULT_CAMPAIGN_SEED`;
+  `callAction` is the way to reach an action from the browser; `applyGmMutation`
+  accepts `{ mutation: character_hp | grant_loot | update_scene }` and is the
+  GM's only write path; `characters.userId` is never written by an action;
+  `campaigns` may contain foreign rows, so readers must key on
+  `DEFAULT_CAMPAIGN_ID`.
+- **Feature inventory** (report sections 1-5, verbatim): see
+the close-out report in this session; the table below is that report's content.
+
+### 1. Shipped, by feature
+
+| Feature | State | Files | Evidence |
+| --- | --- | --- | --- |
+| Campaign seed action (`POST /api/actions/ensureDefaultCampaign`, idempotent upsert at `default-campaign`) | route, write, unit test | `src/actions/index.ts`, `src/lib/campaign-seed.ts` | live browser run logged `[action] "ensureDefaultCampaign"` and rendered *The Ashen Threshold*; `actions.test.ts` "creates the default campaign with the fixture values on an empty collection" |
+| Seed values as one shared constant (`DEFAULT_CAMPAIGN_SEED` = `PREVIEW_CAMPAIGN.data`) | read (fixture + action import the same object) | `src/lib/campaign-seed.ts`, `src/lib/preview-data.ts` | unit test deep-equals the created row to `PREVIEW_CAMPAIGN.data`; banner text identical signed in/out |
+| `/home` signed-in seeding state (`idle → seeding → seeded \| failed`, `useRef` guard, `seeded` fallback) | action, read | `src/pages/(app)/home.tsx` | throwaway spec: banner text after mount, no stale skeleton, no notice, and **zero** action calls on an already-seeded table |
+| Client action caller (`callAction`, bearer + JSON, `ActionCallError`) | action | `src/lib/actions.ts` | observed in the browser run (the action reached the worker with a bearer token); 401-with-no-slug mapped to `not_authenticated` |
+| GM mutation action (`POST /api/actions/applyGmMutation`: HP clamp to `0..maxHp`, loot with forced `campaignId`, scene whitelist) | route, unit test | `src/actions/index.ts` | `applyGmMutation` block of `actions.test.ts` (membership refusal, clamp at 0 and maxHp, other-campaign refusal, loot pinning, scene whitelist, `write_failed`, invalid params) |
+| Action unit gate (fake `ActionTools`, 15 tests) | unit test | `src/actions/__tests__/actions.test.ts` | `npm run test:unit` → 4 files / 32 tests |
+
+### 2. Not real yet
+
+| What you see | Actually | Becomes real in |
+| --- | --- | --- |
+| Party roster (Kaelen, Vesper) with green online dots | `PREVIEW_CHARACTERS` in `src/lib/preview-data.ts`; `online: true` hardcoded in `src/pages/(app)/home.tsx` | Phase 3 — `characters` query; Phase 4 — presence peers |
+| Action feed (roll rows) | `PREVIEW_ROLLS` in `src/lib/preview-data.ts` | Phase 4 — `rollSkillCheck` + `roll-logs` |
+| GM console transcript and its input | `PREVIEW_GM_MESSAGES` in `src/lib/preview-data.ts`; no ai-chat feature, no `/api/ai/chat` | Phase 5 — `ai-chat` install + GM tools |
+| Character sheet numbers and inventory list | `PREVIEW_CHARACTERS` / `PREVIEW_INVENTORY`, passed as props by `src/pages/(app)/home.tsx` | Phase 3 — sheet + inventory panels |
+| Enemy HP block in the scene banner | never rendered for the seed row (`enemyMaxHp: 0`) | Phase 5 — `update_scene` via the GM |
+| `applyGmMutation` itself | implemented and tested, but no UI or tool calls it | Phase 5 — `P5.3` GM tools |
+
+### 3. Persistence check
+
+Yes — one collection. `campaigns` (`default-campaign`) is written once per empty
+room from `/home` by the signed-in seed via `POST
+/api/actions/ensureDefaultCampaign`. Nothing else in the app writes anything;
+`applyGmMutation` can write `characters.hp`, `inventory`, and `campaigns` scene
+columns, but it has no caller until Phase 5.
+
+### 4. Pending, by phase
+
+- Phase 3 → the character sheet, Forge creation, d20 math and inventory read as
+  live `characters`/`inventory` rows instead of the preview arrays.
+- Phase 4 → the roster, feed and roll banner become presence + server-computed
+  `roll-logs` writes.
+- Phase 5 → the GM console becomes a real streamed agent, and it is the caller
+  that makes `applyGmMutation` live.
+- Phase 6 → gates, the rewritten `collab` spec, deploy and the live URL.
+
+### 5. Worth your eyes
+
+| Tier | Item | Why a human | What to check | Files |
+| --- | --- | --- | --- | --- |
+| blocks | Seed is the threshold state, not the high-level plan's dungeon seed | content/beat choice, and the opening frame of the demo | Confirm the demo opens at The Ashen Threshold (exploration, DC 12) and the Sentinel arrives through the GM, per ADR 0011 | `src/lib/campaign-seed.ts` |
+| blocks | `applyGmMutation` authority is table membership: any signed-in player with a character can change another character's HP, grant loot, and move the scene | permission model, expensive to reverse once the GM prompt and demo rely on it | Confirm "no GM seat, the whole table can prompt and mutate" is the story you want to tell (ADR 0012 has no GM role) | `src/actions/index.ts:160-190` |
+| blocks | Loot rows carry no `userId`, so any member can delete GM-granted loot | accepted risk, but now the GM creates those rows | Confirm ADR 0014's accepted asymmetry still holds for AI-granted items | `src/schemas/inventory-schema.ts` |
+| blocks | Scene numbers are unclamped (`enemyHp` above `enemyMaxHp`, any DC) — deferred to the GM tools | accepted gap, visible on the banner | Confirm deferring clamping to `P5.3` rather than guarding in the action | `src/actions/index.ts:72-90` |
+| taste | Failure copy: "The live campaign could not be loaded, so this is the preview table. Reload to try again." | copy | Skim it; it is one sentence, no emoji | `src/pages/(app)/home.tsx` |
+| taste | Skeleton: one banner bar + three pulse columns, same grid as the real shell | visual proportion | Glance at a cold load; no argument needed | `src/pages/(app)/home.tsx` |
+
+- **Next:** `/phase 3` — **ready**. Phase 3 depends on a seeded campaign row
+  (`P2.3`/`P2.5`, shipped) and nothing else in this phase blocks it. `P6.2`
+  gains a real signed-in flow to assert, but no phase became blocked as a side
+  effect of this one.
+

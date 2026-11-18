@@ -69,24 +69,27 @@ document; this file stays the cross-phase index of what is done.
 
 ## Current state
 
-As of 2026-11-18 (after phase 1): the LoreSpace table is visible — themed
-landing page and a populated three-column workspace shell. Everything below it
-is fixture data until Phases 2-4.
+As of 2026-11-18 (after phase 2): the LoreSpace table is visible — themed
+landing page and a populated three-column workspace shell — and a signed-in
+visitor now gets a real campaign row. Everything else in the shell is fixture
+data until Phases 3-4.
 
 | Thing | State |
 | --- | --- |
 | Theme | `obsidian` — 21 tokens, `--radius: 0`, amber `#d97706`, Silkscreen labels; no indigo anywhere |
 | `src/pages/index.tsx` | Split-hero landing, Design Direction block, inline-SVG d20, CTA `Enter the table` |
-| `src/pages/(app)/home.tsx` | 3-column shell: scene banner, roster, feed, GM console, sheet, inventory (fixture-backed) |
+| `src/pages/(app)/home.tsx` | 3-column shell; campaign banner reads the live row (seed skeleton + failure notice), rest fixture-backed |
 | `src/schemas.ts` | `users` + `settings` + `campaigns` + `characters` + `inventory` + `roll-logs` (six, `lintSchema`/`lintSchemas` clean) |
-| `src/actions/index.ts` | `{}` — every action call 404s |
+| `src/actions/index.ts` | `ensureDefaultCampaign` + `applyGmMutation`; both reachable over `POST /api/actions/:name` (bearer) |
+| `src/lib/campaign-seed.ts` | `DEFAULT_CAMPAIGN_SEED` — the seed row and `PREVIEW_CAMPAIGN.data` are the same object |
 | `src/ai/tools.ts` | Built-in record tools only, generic prompt |
 | `ai-chat` feature | **Not installed** — no `ChatPanel`, no `/api/ai/chat` |
 | `src/constants.ts` | `DEFAULT_CAMPAIGN_ID`, `DEFAULT_CAMPAIGN_PRESENCE_SCOPE` added by 2a |
-| Tests | `smoke` 6/6 + `api` 2/2 + `collab` 3/3; 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 3 files / 17 tests |
-| Git | scaffold committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
+| Tests | `smoke` 6/6 + `api` 2/2 + `collab` 3/3; 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 4 files / 32 tests |
+| Git | scaffold + phases 0-2 committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
 | Deploy | **never deployed**; source unclaimed — the first deploy latches GitHub (`surajt02/lorespace`) permanently |
-| Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)); `/home` renders live campaign rows or `src/lib/preview-data.ts` |
+| Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)); `/home` renders the live campaign row or `src/lib/preview-data.ts` |
+| Write policy | the **only** write in the app is `campaigns/default-campaign` from the signed-in `/home` seed; `applyGmMutation` writes HP/loot/scene but has no caller until `P5.3` |
 | README | front door with local run, verification, real screenshots; live URL pending `P6.7` |
 
 ## Architecture map
@@ -121,7 +124,7 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 | 0 | Session prerequisites: two test accounts + warmed browser | — | **done 2026-11-18** — 2 accounts, `collab` 3/3, cache warm; no plan file |
 | 2a | Data model prelude: 4 schemas + registration + default campaign | — | **done 2026-11-18** — 6 registered, lint clean, 17 unit tests |
 | 1 | Pixel theme, landing page, 3-column workspace shell | 10 | **done 2026-11-18** — obsidian 21 tokens + chrome utilities, split-hero landing, 3-col shell signed in/out |
-| 2 | `ensureDefaultCampaign`, `applyGmMutation` | 4 | todo — **next**, day 2 morning |
+| 2 | `ensureDefaultCampaign`, `applyGmMutation` | 4 | **done 2026-11-18** — seed action + GM write path, 32 unit tests, seeded once in a live browser run |
 | 3 | d20 math, character sheet, inventory (read + use) | 7 | todo — day 2 |
 | 4 | Presence roster, server-computed roll, roll banner | 5 | todo — day 3 morning |
 | 5 | AI GM: install ai-chat, GM tools, owner billing, console | 6 | todo — days 3-4 |
@@ -367,26 +370,49 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       collection has no `userId` column. Acceptable for a two-character demo
       dataset ([ADR 0014](./adr/0014-public-read-table.md)); a real product adds
       `userId` and scopes delete to `'own'`. — 2026-11-18 grill
-- [ ] `P2.3` `src/actions/index.ts` — `ensureDefaultCampaign`: `tools.query`
+- [x] `P2.3` `src/actions/index.ts` — `ensureDefaultCampaign`: `tools.query`
       then `tools.create(..., 'default-campaign')`. Known-id create is an
       **upsert**, so it is idempotent. Seed scene + enemy + DC per plan.
-- [ ] `P2.4` `applyGmMutation` — privileged multi-collection HP/loot writes,
+      — 2026-11-18 phase 2. **Deviation:** the seed values are the
+      **threshold** state (`DEFAULT_CAMPAIGN_SEED` in `src/lib/campaign-seed.ts`
+      — The Ashen Threshold, exploration, DC 12, no enemy), not the old plan
+      prose's Sunken Reliquary/dungeon/DC 13, which matches none of
+      [ADR 0011](./adr/0011-content-arc.md)'s three states. The fixture and the
+      seed are now the same object, so they cannot drift. The existence check
+      filters on `recordId`, not "any row".
+- [x] `P2.4` `applyGmMutation` — privileged multi-collection HP/loot writes,
       **HP, loot and scene only** (no encounter model, no conditions).
       Remember `ctx.tools` runs with per-record RBAC **off**: check ownership
       yourself. There are **no transactions** — ordered best-effort only, and
       say so in the code comment instead of claiming atomicity.
-- [ ] `P2.5` Wire `ensureDefaultCampaign` per
+      — 2026-11-18 phase 2. Authority is table membership (caller owns a
+      character in the campaign), checked before any target read; the target
+      must share the campaign. No caller until `P5.3`. `details.applied` is part
+      of the wire shape but is always `[]` today, because every mutation kind
+      performs exactly one write.
+- [x] `P2.5` Wire `ensureDefaultCampaign` per
       [ADR 0007](./adr/0007-default-campaign-trigger.md): from the app tier on
       `/home` when `isSignedIn` && the `campaigns` query is empty && a `useRef`
       guard is unset. Render a skeleton while it runs, not a "no campaign"
       empty state; on failure toast and retry on the next mount.
-- [ ] `P2.6` `src/actions/__tests__/actions.test.ts` — Vitest (node) with a fake
+      — 2026-11-18 phase 2, via `callAction` in `src/lib/actions.ts` (the app's
+      first action caller). The gate is the seeded row's absence, not an empty
+      collection, so a stray campaign row cannot leave the table unseeded; a
+      `seed-failed` notice covers both a failed seed and a failed read, and
+      after success the seed values render until the room subscription lands.
+- [x] `P2.6` `src/actions/__tests__/actions.test.ts` — Vitest (node) with a fake
       `ActionTools`: seed is idempotent and its values equal the preview
       fixture; `applyGmMutation` refuses a caller with no character in the
       campaign, clamps HP to `0..maxHp`, pins `campaignId` on loot, applies only
       whitelisted scene columns, and reports a partial apply when a later write
       fails. The actions are privileged (RBAC off), so this test is the gate on
       the ownership check.
+      — 2026-11-18 phase 2: 15 tests, suite 4 files / 32 tests, including the
+      foreign-row seed case. **Deviation:** the promised "later write fails"
+      partial-apply case cannot exist while each mutation kind writes one
+      record; the test asserts `applied: []` on the single-write failure
+      instead, and the field stays in the wire shape for a future multi-write
+      kind.
 
 ## Phase 3 — Character sheet, d20 math, inventory
 
