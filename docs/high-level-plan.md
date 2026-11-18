@@ -155,8 +155,8 @@ LoreSpace is a real-time, multiplayer virtual tabletop RPG (VTT) and collaborati
    - Implement pure helper functions:
      - `getModifier(score: number): number => Math.floor((score - 10) / 2)`
      - `formatModifier(mod: number): string => (mod >= 0 ? `+${mod}`:`${mod}`)`
-     - `calculateArmorClass(dexScore: number, bonus = 2): number => 10 + getModifier(dexScore) + bonus`
-     - `ARCHETYPE_PRESETS`: Pre-balanced stat arrays and starting items for `Vanguard` (STR/CON focus), `Shadowblade` (DEX/CHA focus), `Arcanist` (INT/WIS focus), and `Cleric` (WIS/CON focus).
+     - `calculateArmorClass(dexScore: number, armorBonus: number): number => 10 + getModifier(dexScore) + armorBonus` — the bonus is per archetype (`P3.1`), not a flat 2, so the armored archetype is harder to hit than the nimble one.
+     - `ARCHETYPE_PRESETS`: Pre-balanced stat arrays, an `armorBonus`, and starting items for `Vanguard` (STR/CON focus), `Shadowblade` (DEX/CHA focus), `Arcanist` (INT/WIS focus), and `Cleric` (WIS/CON focus).
 2. **Character Generator & Sheet Component (`src/components/CharacterSheetPanel.tsx`):**
    - Query characters in the active campaign via `const { records: characters, status } = useQuery('characters', { where: { campaignId: activeCampaignId } })`. Identify the signed-in user's character by matching `record.data.userId === userId`.
    - While `status === 'loading'`, render `animate-pulse` skeleton blocks (`bg-muted rounded-md`) matching the character sheet dimensions.

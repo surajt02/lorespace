@@ -380,6 +380,13 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       `/home` when `isSignedIn` && the `campaigns` query is empty && a `useRef`
       guard is unset. Render a skeleton while it runs, not a "no campaign"
       empty state; on failure toast and retry on the next mount.
+- [ ] `P2.6` `src/actions/__tests__/actions.test.ts` — Vitest (node) with a fake
+      `ActionTools`: seed is idempotent and its values equal the preview
+      fixture; `applyGmMutation` refuses a caller with no character in the
+      campaign, clamps HP to `0..maxHp`, pins `campaignId` on loot, applies only
+      whitelisted scene columns, and reports a partial apply when a later write
+      fails. The actions are privileged (RBAC off), so this test is the gate on
+      the ownership check.
 
 ## Phase 3 — Character sheet, d20 math, inventory
 
@@ -389,14 +396,31 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       `Math.random` inside the classifier — worker code imports this module
       ([ADR 0005](./adr/0005-dice-roll-authority.md)), so keep it safe for both
       runtimes.
+      **AC is per-archetype armor, not a flat bonus:** each preset carries
+      `armorBonus` and `calculateArmorClass(dexScore, armorBonus)` is
+      `10 + getModifier(dexScore) + armorBonus`. Values: Vanguard `5` (mail),
+      Cleric `4` (scale), Arcanist `2` (warded robes), Shadowblade `1`
+      (leathers) — chosen so the shipped fixture reproduces Kaelen `16`
+      (DEX 12, +1, +5) and Vesper `14` (DEX 17, +3, +1), and so the tank is
+      the hardest to hit rather than the easiest. **AC stays display-only:**
+      nothing attacks it in this build (no enemy AC column, no attack roll —
+      ADR 0010, ADR 0011), so do not invent an attack procedure here. A flat
+      `bonus = 2` default is *not* the contract; the archetype supplies the
+      number.
 - [ ] `P3.2` Unit tests for `src/lib/d20.ts` (Vitest node env; boundary cases
-      at 1/10/11/20, AC clamping).
+      at 1/10/11/20, AC clamping). Pin the AC contract too: every
+      `ARCHETYPE_PRESETS` entry has an `armorBonus`, and the two fixture
+      builds compute `16` (Vanguard, DEX 12) and `14` (Shadowblade, DEX 17).
 - [ ] `P3.3` `src/components/CharacterSheetPanel.tsx` — `useQuery('characters',
       { where: { campaignId } })`, match `record.data.userId === userId`,
       `animate-pulse` skeleton while `status === 'loading'`.
 - [ ] `P3.4` **Forge adventurer**: one-click preset from `ARCHETYPE_PRESETS`
       plus a name field, `createConfirmed` + seed 2 starter inventory items,
-      toast on success. **No creation modal, no stat allocation** — cut by
+      toast on success. Write `ac` from
+      `calculateArmorClass(preset.dex, preset.armorBonus)` — the column is
+      required and stays the stored source of truth; it is never recomputed
+      later because DEX does not change after Forge. **No creation modal, no
+      stat allocation** — cut by
       [ADR 0008](./adr/0008-playable-interview-build.md).
 - [ ] `P3.5` 6 attribute cards (`font-mono tabular-nums`), click → skill check;
       HP bar (no `Progress` primitive — compose div + `bg-success|warning|

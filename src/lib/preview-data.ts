@@ -14,18 +14,12 @@
 import type { RecordData } from 'deepspace'
 import type { GmMessage } from '@/components/GmConsolePanel'
 import { DEFAULT_CAMPAIGN_ID } from '@/constants'
+import { DEFAULT_CAMPAIGN_SEED } from './campaign-seed'
 
-/** `campaigns` — 8 columns. */
-export interface CampaignRow {
-  title: string
-  locationName: string
-  atmosphereTag: string
-  sceneSummary: string
-  activeThreatDc: number
-  enemyName: string
-  enemyHp: number
-  enemyMaxHp: number
-}
+// The row shape and the seeded scene live in `campaign-seed.ts` so the live
+// seed and this fixture cannot drift. Re-exported here because call sites
+// import `CampaignRow` from the fixture module.
+export type { CampaignRow } from './campaign-seed'
 
 /** `characters` — 13 columns. `userId` is `userBound` on the server. */
 export interface CharacterRow {
@@ -80,17 +74,7 @@ const ENVELOPE = { createdBy: 'preview' } as const
 
 export const PREVIEW_CAMPAIGN: RecordData<CampaignRow> = {
   recordId: DEFAULT_CAMPAIGN_ID,
-  data: {
-    title: 'Chronicles of the Obsidian Vault',
-    locationName: 'The Ashen Threshold',
-    atmosphereTag: 'exploration',
-    sceneSummary:
-      'Ash drifts across a broken causeway. Runic fire burns green in the braziers, and a sealed door waits beyond them.',
-    activeThreatDc: 12,
-    enemyName: '',
-    enemyHp: 0,
-    enemyMaxHp: 0,
-  },
+  data: DEFAULT_CAMPAIGN_SEED,
   ...ENVELOPE,
   createdAt: CAMPAIGN_CREATED_AT,
   updatedAt: CAMPAIGN_CREATED_AT,
