@@ -662,6 +662,62 @@ Filled in at the end of the phase, never rewritten afterwards.
   - **P2.5's skeleton** replaces only the fixture fallback for a signed-in user
     with an empty `campaigns` query; the signed-out path keeps the fixture
     forever (ADR 0014).
+- **Feature inventory:** the close-out's sections 1-5, verbatim.
+
+  **1. Shipped, by feature.**
+
+  | Feature | State | Files | Evidence |
+  | --- | --- | --- | --- |
+  | Obsidian theme tokens (all 21) + `--radius: 0` | real (read) | `src/themes.css`, `src/styles.css` | `grep -c -- '  --color-' src/themes.css` → 21; `grep -rn 818cf8 src/` → 0 |
+  | Pixel chrome utilities | real (read) | `src/styles.css` | consumed by 9 files (`grep -rln 'pixel-frame\|pixel-numeral\|hp-segment' src/components src/pages`); emitted by `npm run build` |
+  | Silkscreen, self-hosted | real (read) | `package.json`, `src/main.tsx` | build emits `silkscreen-latin-400-normal-*.woff2` |
+  | Theme catalog, first paint, title/SEO, nav brand | real (route) | `src/themes.ts`, `index.html`, `src/seo.ts`, `src/components/Navigation.tsx` | `smoke` "one title, one description, one canonical"; build prerender head |
+  | Prerendered landing at `/` | real (route + prerender) | `src/pages/index.tsx` | `smoke` 6/6 (zero console errors on `/`); `npm run build` → "[prerender] wrote 1 page(s) [/]" |
+  | Three-column `/home` shell | real (route) | `src/pages/(app)/home.tsx` | `smoke` `app-navigation` + `nav-sign-in-button`; signed-out probe: `workspace-shell`, 3 columns, no page scrollbar |
+  | Signed-out/signed-in branch + `AuthOverlay` | real (auth) | `src/pages/(app)/home.tsx`, `src/components/vtt/SignInBanner.tsx` | signed out: `nav-user-name` count 0 (`smoke`); signed in: `collab` 3/3; Chrome OAuth probe reached `get-session` 200 with a user |
+  | `campaigns` read with fixture fallback | real (read) | `src/pages/(app)/home.tsx` | `useQuery<CampaignRow>('campaigns')` matched on `recordId === DEFAULT_CAMPAIGN_ID`, else `PREVIEW_CAMPAIGN.data` (no seed exists yet) |
+
+  **2. Not real yet.**
+
+  | What you see | Actually | Becomes real in |
+  | --- | --- | --- |
+  | Scene banner title/location/atmosphere/DC | `PREVIEW_CAMPAIGN.data` in `src/lib/preview-data.ts` (the live read exists but no row is seeded) | Phase 2 — `ensureDefaultCampaign` (`P2.3`) |
+  | Enemy HP tracker | implemented branch that never renders (threshold fixture has no enemy) | Phase 5 — GM scene change, demo beat 5 |
+  | Party roster names/HP | `PREVIEW_CHARACTERS` | Phase 3 — `useQuery('characters')` |
+  | Roster online dots | hardcoded `online: true` in `home.tsx` | Phase 4 — presence |
+  | Table feed entries | `PREVIEW_ROLLS` | Phase 4 — `rollSkillCheck` + `roll-logs` |
+  | GM stream messages | `PREVIEW_GM_MESSAGES` | Phase 5 — `ai-chat` / `ChatPanel` |
+  | GM input row | disabled native `<input>`; does nothing | Phase 5 — auto-resolve / `ChatPanel` |
+  | Character sheet stats, AC, HP | `PREVIEW_CHARACTERS[0].data` | Phase 3 — sheet query + Forge |
+  | "No character at this table" empty state | real component with no action | Phase 3 — Forge CTA (`P3.4`) |
+  | Inventory items | `PREVIEW_INVENTORY` | Phase 3 — query + Use/Discard |
+  | README "Live" URL | placeholder; never deployed | Phase 3 — Deploy #1 (`P3.8`) |
+
+  **3. Persistence check.** Nothing in the app writes to any collection: no
+  mutation hook is called or imported — the only hits for
+  `useMutations|createConfirmed|putConfirmed|removeConfirmed` under `src/` are two
+  scaffold docstrings (`(app)/_layout.tsx:7`, `_app.tsx:9`) — and the only query
+  is the anonymous `campaigns` read. Phase 2 (`P2.3`, `P2.4`) introduces the
+  first writes.
+
+  **4. Pending, by phase.** Phase 2 → first writes (seed + GM mutations).
+  Phase 3 → live sheet/inventory, Forge, d20 math, Deploy #1. Phase 4 → presence
+  roster, server-computed roll, roll banner. Phase 5 → AI GM surfaces. Phase 6 →
+  sync spec, final deploy, README final.
+
+  **5. Worth your eyes.**
+
+  | Tier | Item | Why a human | What to check | Files |
+  | --- | --- | --- | --- | --- |
+  | blocks | Seed state = ADR 0011's **threshold**, not the brazier fight | `P2.3` must copy this row or preview and live table drift; it also decides whether beat 2 shows an enemy | confirm the campaign row has `exploration`, DC 12, empty enemy fields | `src/lib/preview-data.ts:80-100` |
+  | blocks | `inventory.characterId` stores a character **recordId** | Phase 3's `where: { characterId }` inherits it; a display-name assumption would be a data bug | confirm `'char-kaelen'` in the fixture and in `P3.6`'s planned query | `src/lib/preview-data.ts`, `docs/tasks.md` `P3.6` |
+  | blocks | Outcome badge mapping: green success, amber failure, crimson critical failure | crimson is ADR 0013's damage colour; a plain failure wearing it is a judgement call | confirm failures should not read as damage | `src/components/vtt/ActionFeed.tsx:12-18` |
+  | blocks | Safari cannot sign in on `http://localhost` (accepted, no ADR) | a reviewer who clones locally in Safari sees a broken sign-in | confirm "Chrome locally, Safari on the deployed URL" is acceptable | `docs/plans/phase-1-plan.md` § Risks, `README.md` |
+  | blocks | `paper`/`slate` deleted, Silkscreen adds a dependency | removes the light example theme and locks the font choice into `package.json` | confirm no later phase needs a theme switch (ADR 0008 cuts it) | `src/themes.ts`, `package.json` |
+  | taste | Headline and CTA copy | copy | "Roll together. The vault remembers." / "Enter the table" | `src/pages/index.tsx` |
+  | taste | Pixel register strength in situ | 10-11px Silkscreen labels, square badges, 24-segment HP bars | does it read gothic-stone or costume | `src/styles.css`, `src/components/CharacterSheetPanel.tsx` |
+  | taste | Left column emptiness below the roster | density/hierarchy only Phase 4 fills it | acceptable for now, or add structure in Phase 4 | `src/pages/(app)/home.tsx` |
+
 - **Next:** `/phase 2` — ready. Phase 2 (`P2.3`–`P2.5`) seeds
   `default-campaign`, adds `applyGmMutation`, and mounts the seeding trigger in
   the shell built here. Phase 3 stays sequenced behind it (its Deploy #1 wants
