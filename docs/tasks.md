@@ -71,7 +71,7 @@ As of 2026-11-18: fresh DeepSpace scaffold, nothing LoreSpace-specific built.
 | `src/actions/index.ts` | `{}` — every action call 404s |
 | `src/ai/tools.ts` | Built-in record tools only, generic prompt |
 | `ai-chat` feature | **Not installed** — no `ChatPanel`, no `/api/ai/chat` |
-| Tests | `smoke`+`api` green; `collab` auto-skipped (0 test accounts) |
+| Tests | `smoke`+`api`+`collab` green; 2 `lorespace-*@deepspace.test` accounts, browser cache warm (`P0.1-P0.3`) |
 | Git | scaffold committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
 
 ## Architecture map
@@ -103,8 +103,8 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 
 | Phase | Scope | Status |
 | --- | --- | --- |
-| 0 | Session prerequisites: two test accounts + warmed browser | todo — **unblocks 4 and 6**, no plan file |
-| 2a | Data model prelude: 4 schemas + registration + default campaign | todo — **prerequisite for 1 and 3** |
+| 0 | Session prerequisites: two test accounts + warmed browser | **done 2026-11-18** — 2 accounts, `collab` 3/3, cache warm; unblocked 4 and 6, no plan file |
+| 2a | Data model prelude: 4 schemas + registration + default campaign | todo — **next**; prerequisite for 1 and 3 |
 | 1 | Theme, landing page, 3-column workspace shell | todo |
 | 2 | RBAC hardening, `ensureDefaultCampaign`, `applyGmMutation` | todo |
 | 3 | Character sheet, d20 math, archetype generator, inventory | todo |
@@ -128,9 +128,16 @@ itself until Phase 6. `loadAllTestAccounts()` reads the local registry, so an
 account only counts on the machine that created it — another reason to do this
 early and once.
 
-- [ ] `P0.1` Create two accounts. Email must end with `@deepspace.test`; a
+- [x] `P0.1` Create two accounts. Email must end with `@deepspace.test`; a
       password must be at least 8 characters and is better piped than passed on
       argv, where it lands in `ps` and shell history.
+      **Deviation (2026-11-18, phase 0 session):** `alice@`/`bob@deepspace.test`
+      are already held by *other developers* — the domain is global, not
+      per-developer, and `recover --all` found no pool account of ours. Created
+      `lorespace-alice@deepspace.test` (selector `Alice`) and
+      `lorespace-bob@deepspace.test` (selector `Bob`) instead. Names are
+      unchanged, so `users(['Alice', 'Bob'])` still works; **specs must select
+      accounts by name, never by email**.
       ```sh
       openssl rand -base64 18 | npx deepspace test accounts create \
         --email alice@deepspace.test --name Alice --label lorespace --password-stdin
@@ -142,7 +149,7 @@ early and once.
       never commit them. Recovery on another machine is
       `npx deepspace test accounts recover --all`, and never invent a password
       to match a spec.
-- [ ] `P0.2` Prove the gate opened and warm the browser cache (the first run
+- [x] `P0.2` Prove the gate opened and warm the browser cache (the first run
       downloads Chromium and boots vite + workerd, so allow minutes):
       ```sh
       npx deepspace test run tests/collab.spec.ts
@@ -151,9 +158,14 @@ early and once.
       intercept `**/api/integrations`, so they need no real integration. If the
       identity test fails, the fixture or sign-in is broken — fix it here, not in
       Phase 6.
-- [ ] `P0.3` Note the outcome on the phase board: 2 accounts, `collab` green,
+- [x] `P0.3` Note the outcome on the phase board: 2 accounts, `collab` green,
       and the `~/.deepspace/playwright-states/` cache warm. Phase 4 and `P6.2`
       both depend on this line being true.
+      **Done 2026-11-18, phase 0 session:** `test accounts list` shows 2/10;
+      `npx deepspace test run tests/collab.spec.ts` → **3 passed (12.6s)**, none
+      skipped; Chromium 1255 + headless shell cached in
+      `~/Library/Caches/ms-playwright`, sign-in states in
+      `~/.deepspace/playwright-states/` (2 files).
 
 ## Phase 2a — Data model prelude (schemas only)
 
