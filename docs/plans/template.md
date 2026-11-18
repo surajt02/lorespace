@@ -106,8 +106,8 @@ Filled in at the end of the phase, never rewritten afterwards.
 - **Deviations:** <ADR ids>
 - **Inherited by the next phase:** <assumptions now safe to make>
 - **Feature inventory:** the close-out's sections 1-5 (shipped by feature, not
-  real yet, persistence check, pending by phase, worth your eyes), pasted
-  verbatim
+  real yet, persistence check, worth your eyes — and pending by phase, section 4,
+  only when something is actually pending), pasted verbatim
 - **Next:** `/phase <n>` — ready | blocked on `<task id>`: <what clears it>
 
 Also update the Status column of this phase and the next one on the phase board

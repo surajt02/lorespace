@@ -101,8 +101,12 @@ to any collection, and if so which collection, from where. "Nothing in the app
 writes to any collection" is a valid and important answer — say it when true,
 and say which phase changes it.
 
-**4. Pending, by phase.** Only phases after this one. One line each: phase →
-what it turns live. No re-narrating the plan.
+**4. Pending, by phase.** Include this **only when something is genuinely
+pending** — a later phase that turns a specific fixture, stub or gap into a live
+system. Phases after this one, one line each: phase → what it turns live. No
+re-narrating the plan. If nothing is pending, omit the section entirely (do not
+leave an empty heading, and do not list a phase for the sake of completeness) and
+keep the other section numbers as they are.
 
 **5. Worth your eyes.** The few things only a human can judge — where a passing
 test is not the same as it being right. Put nothing here that a command proves.
