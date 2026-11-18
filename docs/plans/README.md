@@ -37,8 +37,8 @@ This folder is the "how", narrowly scoped to one phase. The other documents are:
 | --- | --- | --- |
 | 0 | — (no plan file; three prerequisite tasks) | **done** — 2 accounts, `collab` 3/3, cache warm |
 | 2a | `phase-2a-plan.md` | **done 2026-11-18** — 4 schemas, 6 registered, lint gate green, `default-campaign` constant |
-| 1 | `phase-1-plan.md` | **next** — ~10h, day 1: pixel theme, landing, workspace shell |
-| 2 | `phase-2-plan.md` | not written — ~4h, day 2: two actions |
+| 1 | `phase-1-plan.md` | **done 2026-11-18** — obsidian theme, split-hero landing, 3-col shell, fixture, README |
+| 2 | `phase-2-plan.md` | **next** — ~4h, day 2: two actions |
 | 3 | `phase-3-plan.md` | not written — ~7h, day 2: d20, sheet, inventory |
 | 4 | `phase-4-plan.md` | not written — ~5h, day 3: presence, server roll, banner |
 | 5 | `phase-5-plan.md` | not written — ~6h, days 3-4: AI GM |

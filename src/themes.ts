@@ -1,10 +1,12 @@
 /**
  * Theme catalog.
  *
- * The scaffold ships two placeholder themes: `slate` (dark default, defined
- * in styles.css) and `paper` (light example, defined in themes.css). They
- * are scaffolding, not a design — give the app its own theme before first
- * deploy:
+ * Obsidian is the app's only theme (ADR 0008 cut the theme switcher): near-black
+ * stone, amber signal, zero radius, in the pixel-chrome register of ADR 0013.
+ * The values themselves live in styles.css (`@theme` default) and
+ * themes.css (`[data-theme="obsidian"]`) — this file is metadata only.
+ *
+ * To add a theme:
  *   1. Add a `[data-theme="my-id"] { ... }` block in src/themes.css with
  *      the shadcn token overrides (include `color-scheme: light;` for
  *      light themes).
@@ -12,20 +14,13 @@
  *   3. Add the theme's background to the first-paint <style> block in
  *      index.html so the pre-CSS frame matches (no white flash).
  *   4. Switch via `data-theme` on <html> in index.html.
- *
- * Color values live in styles.css / themes.css — this file is metadata only.
  */
 
 export const THEMES = [
   {
-    id: 'slate',
-    label: 'Slate',
-    description: 'Neutral dark placeholder default. Replace with your own theme.',
-  },
-  {
-    id: 'paper',
-    label: 'Paper',
-    description: 'Light example theme showing the token contract. Replace or delete.',
+    id: 'obsidian',
+    label: 'Obsidian',
+    description: 'Near-black stone, amber signal, zero radius.',
   },
 ] as const
 
@@ -33,9 +28,9 @@ export type ThemeId = (typeof THEMES)[number]['id']
 
 /** Read the currently active theme id from <html data-theme>. */
 export function getActiveTheme(): ThemeId {
-  if (typeof document === 'undefined') return 'slate'
+  if (typeof document === 'undefined') return 'obsidian'
   const id = document.documentElement.getAttribute('data-theme') as ThemeId | null
-  return id ?? 'slate'
+  return id ?? 'obsidian'
 }
 
 /** Look up a theme entry by id, or fall back to the first theme. */

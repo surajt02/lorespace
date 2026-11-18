@@ -8,35 +8,36 @@
 /*
  * Theming — pure shadcn/ui CSS variables with [data-theme] selectors.
  *
- * The @theme block below holds the default theme (slate). All other themes
- * live in `themes.css` as `[data-theme="<id>"]` override blocks. Switching
- * themes = changing the data-theme attribute on <html> in index.html. No
- * JS, no FOUC.
+ * The @theme block below holds the default theme (obsidian, the app's only
+ * theme). `themes.css` restates the same 21 tokens as a
+ * `[data-theme="obsidian"]` override block, so the contract still holds if
+ * this default ever changes. Switching themes = changing the data-theme
+ * attribute on <html> in index.html. No JS, no FOUC.
  *
  * Status colors (success, warning, info) are intentionally NOT themed —
  * they stay consistent across every preset.
  */
 @theme {
-  /* shadcn core tokens — slate (default): neutral gray on near-black, indigo accent */
-  --color-background: #0a0a0a;
-  --color-foreground: #e8eaed;
-  --color-card: #161616;
-  --color-card-foreground: #e8eaed;
-  --color-popover: #161616;
-  --color-popover-foreground: #e8eaed;
-  --color-primary: #818cf8;
-  --color-primary-foreground: #ffffff;
-  --color-secondary: #1e1e1e;
-  --color-secondary-foreground: #e8eaed;
-  --color-muted: #1e1e1e;
-  --color-muted-foreground: #9ca3af;
-  --color-accent: #262626;
-  --color-accent-foreground: #e8eaed;
-  --color-destructive: #ef4444;
-  --color-destructive-foreground: #ffffff;
-  --color-border: rgba(60, 64, 67, 0.6);
-  --color-input: rgba(60, 64, 67, 0.6);
-  --color-ring: #818cf8;
+  /* shadcn core tokens — obsidian (default): near-black stone, amber signal */
+  --color-background: #09090b;
+  --color-foreground: #f4f4f5;
+  --color-card: #121216;
+  --color-card-foreground: #f4f4f5;
+  --color-popover: #121216;
+  --color-popover-foreground: #f4f4f5;
+  --color-primary: #d97706;
+  --color-primary-foreground: #09090b;
+  --color-secondary: #1b1b20;
+  --color-secondary-foreground: #f4f4f5;
+  --color-muted: #17171b;
+  --color-muted-foreground: #a1a1aa;
+  --color-accent: #1f1f24;
+  --color-accent-foreground: #f4f4f5;
+  --color-destructive: #dc2626;
+  --color-destructive-foreground: #f4f4f5;
+  --color-border: #27272a;
+  --color-input: #3f3f46;
+  --color-ring: #d97706;
   --radius: 0.5rem;
 
   /*
@@ -51,6 +52,11 @@
   --radius-xl: calc(var(--radius) + 4px);
   --radius-2xl: calc(var(--radius) + 8px);
 
+  /* Pixel face — labels, badges and numerals only; prose stays in the sans
+   * stack below (ADR 0013). Fallbacks are monospace so a missing font file
+   * shifts metrics very little. */
+  --font-pixel: 'Silkscreen', ui-monospace, SFMono-Regular, Menlo, monospace;
+
   /* Status colors — constant across all themes */
   --color-success: #10b981;
   --color-success-foreground: #ffffff;
@@ -60,7 +66,8 @@
   --color-info-foreground: #ffffff;
 
   /*
-   * Shadows — slate (default). Each theme in themes.css tunes these.
+   * Shadows — soft defaults. `[data-theme="obsidian"]` in themes.css
+   * replaces them with hard pixel offsets.
    *
    * Toned down 2026-05: previous values were 8px/12px offset with
    * 32px/40px blur which read as a heavy halo under every Card on
@@ -88,8 +95,8 @@
      simply doesn't reference them. In every theme keep the panel reading as
      elevated: dark → panel lighter than shell; light → white panel on a
      faintly darker shell. */
-  --color-shell: #0a0a0a;
-  --color-shell-panel: #161616;
+  --color-shell: #09090b;
+  --color-shell-panel: #121216;
 
   /* Animations */
   --animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
@@ -145,6 +152,96 @@
 @utility slide-out-to-bottom-2 { --tw-exit-translate-y: 0.5rem; }
 @utility slide-out-to-left-2 { --tw-exit-translate-x: -0.5rem; }
 @utility slide-out-to-right-2 { --tw-exit-translate-x: 0.5rem; }
+
+
+/*
+ * Pixel chrome (ADR 0013) — the shared register every panel and label uses.
+ * Class names are contract; the styling below may evolve. Kept in
+ * `@layer components` so Tailwind utilities can still override any single
+ * property at the call site. No per-component pixel art: draw with these.
+ */
+@layer components {
+  /* Every number in the shell: labels, DCs, HP, rolls. */
+  .pixel-numeral {
+    font-family: var(--font-pixel);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
+  }
+
+  /* Panels, banner and cards: stepped border plus a hard, unblurred offset. */
+  .pixel-frame {
+    border: 2px solid var(--color-border);
+    box-shadow: 4px 4px 0 0 color-mix(in srgb, #000 55%, transparent);
+  }
+
+  /* Ordered-pixel texture over the card surface: banner and hero glow. */
+  .pixel-dither {
+    background-color: var(--color-card);
+    background-image: repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--color-foreground) 6%, transparent) 0 2px,
+      transparent 2px 4px
+    );
+  }
+
+  /* Section separator: a dashed 2px rule, not a hairline. */
+  .pixel-rule {
+    height: 2px;
+    background-image: repeating-linear-gradient(
+      90deg,
+      var(--color-border) 0 6px,
+      transparent 6px 10px
+    );
+  }
+
+  /* One block of a segmented HP bar: a 1px inset bevel, then the holder paints
+   * the fill (bg-primary for living, bg-muted for spent). */
+  .hp-segment {
+    box-shadow: inset 1px 1px 0 0 var(--color-background);
+  }
+
+  /* Scanline overlay for the scene banner. Position it absolutely at the call
+   * site (`absolute inset-0`) inside a positioned parent. */
+  .pixel-strip {
+    background-image: repeating-linear-gradient(
+      0deg,
+      color-mix(in srgb, var(--color-foreground) 60%, transparent) 0 1px,
+      transparent 1px 3px
+    );
+    opacity: 0.06;
+    pointer-events: none;
+  }
+}
+
+/*
+ * Pixel motion. Each keyframe ends at the element's resting state, so
+ * `prefers-reduced-motion: reduce` simply renders the final frame — an element
+ * is never left blank or half-drawn.
+ */
+@keyframes d20-trace {
+  /* Pair with `pathLength="1"` + `stroke-dasharray: 1` on the SVG path. */
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes roll-tick {
+  /* Banner / feed entry stamps in from slightly above. */
+  from { opacity: 0; transform: translateY(-0.25rem); }
+}
+
+@keyframes hp-fill {
+  /* A segment grows from nothing to its own (inline) width. */
+  from { width: 0; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @layer components {
+    .d20-trace { animation: d20-trace 1.1s ease-out both; }
+    /* Stepped timing reads as a pixel stamp rather than a smooth fade. */
+    .roll-tick { animation: roll-tick 240ms steps(3, end) both; }
+    .hp-fill { animation: hp-fill 420ms ease-out both; }
+  }
+}
 
 
 /*

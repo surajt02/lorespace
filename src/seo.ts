@@ -17,7 +17,7 @@
  * restrictions require separate controls.
  */
 
-import { APP_NAME } from './constants'
+import { APP_DISPLAY_NAME } from './constants'
 
 /** Injected by prerender.ts: `https://<name>.app.space` from wrangler.toml, or
  *  what `deepspace deploy` passes (staging: spacestest.com). Absent in unit
@@ -25,8 +25,8 @@ import { APP_NAME } from './constants'
 declare const __DEEPSPACE_SITE_ORIGIN__: string | undefined
 
 export const seo = {
-  title: APP_NAME,
-  description: `${APP_NAME} is a real-time collaborative app.`,
+  title: `${APP_DISPLAY_NAME} — Multiplayer AI Tabletop RPG`,
+  description: `${APP_DISPLAY_NAME} is a multiplayer AI tabletop RPG where a live dice table, character sheets, and an AI game master share one campaign screen.`,
   /** Public origin for canonical URLs, og:url, and the sitemap — no trailing
    *  slash. Replace with the custom domain once one is attached, e.g.
    *  'https://www.example.com'. */

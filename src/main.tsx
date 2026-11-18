@@ -4,6 +4,9 @@ import { createRoot, hydrateRoot } from 'react-dom/client'
 import { routes } from '@generouted/react-router/lazy'
 import { createBrowserRouter, RouterProvider } from 'react-router'
 import { installStaleChunkRecovery } from './stale-chunk-recovery'
+// Self-hosted pixel face (ADR 0013) — labels, badges and numerals only. The
+// latin-400 subset is the narrowest file that covers the UI copy.
+import '@fontsource/silkscreen/latin-400.css'
 import './styles.css'
 
 async function main() {

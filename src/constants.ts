@@ -1,6 +1,9 @@
 /** App name — replaced by the CLI during scaffolding */
 export const APP_NAME = 'lorespace'
 
+/** Product name for page titles and chrome; APP_NAME stays the app slug. */
+export const APP_DISPLAY_NAME = 'LoreSpace'
+
 /** Immutable app identity — data scope keys to this, so renames never
  *  strand your records.
  *

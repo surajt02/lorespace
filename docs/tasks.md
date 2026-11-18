@@ -65,23 +65,25 @@ document; this file stays the cross-phase index of what is done.
 
 ## Current state
 
-As of 2026-11-18 (after phase 2a): DeepSpace scaffold plus the LoreSpace data
-model. Nothing user-visible is built yet.
+As of 2026-11-18 (after phase 1): the LoreSpace table is visible — themed
+landing page and a populated three-column workspace shell. Everything below it
+is fixture data until Phases 2-4.
 
 | Thing | State |
 | --- | --- |
-| Theme | `slate` (indigo `#818cf8` primary) — must become `obsidian` |
-| `src/pages/index.tsx` | Generic scaffold landing, no design-direction block |
-| `src/pages/(app)/home.tsx` | 27-line placeholder |
+| Theme | `obsidian` — 21 tokens, `--radius: 0`, amber `#d97706`, Silkscreen labels; no indigo anywhere |
+| `src/pages/index.tsx` | Split-hero landing, Design Direction block, inline-SVG d20, CTA `Enter the table` |
+| `src/pages/(app)/home.tsx` | 3-column shell: scene banner, roster, feed, GM console, sheet, inventory (fixture-backed) |
 | `src/schemas.ts` | `users` + `settings` + `campaigns` + `characters` + `inventory` + `roll-logs` (six, `lintSchema`/`lintSchemas` clean) |
 | `src/actions/index.ts` | `{}` — every action call 404s |
 | `src/ai/tools.ts` | Built-in record tools only, generic prompt |
 | `ai-chat` feature | **Not installed** — no `ChatPanel`, no `/api/ai/chat` |
 | `src/constants.ts` | `DEFAULT_CAMPAIGN_ID`, `DEFAULT_CAMPAIGN_PRESENCE_SCOPE` added by 2a |
-| Tests | `smoke`+`api`+`collab` green; 2 `lorespace-*@deepspace.test` accounts, browser cache warm (`P0.1-P0.3`); `test:unit` = 3 files / 17 tests |
+| Tests | `smoke` 6/6 + `api` 2/2 + `collab` 3/3; 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 3 files / 17 tests |
 | Git | scaffold committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
 | Deploy | **never deployed**; source unclaimed — the first deploy latches GitHub (`surajt02/lorespace`) permanently |
-| Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)) |
+| Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)); `/home` renders live campaign rows or `src/lib/preview-data.ts` |
+| README | front door with local run, verification, real screenshots; live URL pending `P6.7` |
 
 ## Architecture map
 
@@ -114,8 +116,8 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 | --- | --- | --- | --- |
 | 0 | Session prerequisites: two test accounts + warmed browser | — | **done 2026-11-18** — 2 accounts, `collab` 3/3, cache warm; no plan file |
 | 2a | Data model prelude: 4 schemas + registration + default campaign | — | **done 2026-11-18** — 6 registered, lint clean, 17 unit tests |
-| 1 | Pixel theme, landing page, 3-column workspace shell | 10 | todo — **next**, day 1 |
-| 2 | `ensureDefaultCampaign`, `applyGmMutation` | 4 | todo — day 2 morning |
+| 1 | Pixel theme, landing page, 3-column workspace shell | 10 | **done 2026-11-18** — obsidian 21 tokens + chrome utilities, split-hero landing, 3-col shell signed in/out |
+| 2 | `ensureDefaultCampaign`, `applyGmMutation` | 4 | todo — **next**, day 2 morning |
 | 3 | d20 math, character sheet, inventory (read + use) | 7 | todo — day 2 |
 | 4 | Presence roster, server-computed roll, roll banner | 5 | todo — day 3 morning |
 | 5 | AI GM: install ai-chat, GM tools, owner billing, console | 6 | todo — days 3-4 |
@@ -291,39 +293,39 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 
 ## Phase 1 — Theme, landing page, workspace shell
 
-- [ ] `P1.1` `[data-theme="obsidian"]` in `src/themes.css` overriding **all 21**
+- [x] `P1.1` `[data-theme="obsidian"]` in `src/themes.css` overriding **all 21**
       tokens — 19 colors plus `--color-shell` and `--color-shell-panel`
       (`styles.css:19-96` is the slate default; a missed token leaks indigo
       `#818cf8`, which the anti-AI gate forbids). Palette: `#09090b` bg, `#121216`
       card, `#27272a` border, `#f4f4f5` fg, `#d97706` primary, `#dc2626`
       destructive. **`--radius: 0`** and the pixel register per
       [ADR 0013](./adr/0013-visual-register.md): stepped borders, dithered
-      gradients, Silkscreen for labels/numerals, sans for prose.
-- [ ] `P1.2` `'obsidian'` in `THEMES` (`src/themes.ts`); fix `getActiveTheme()`
+      gradients, Silkscreen for labels/numerals, sans for prose. — 2026-11-18 phase 1
+- [x] `P1.2` `'obsidian'` in `THEMES` (`src/themes.ts`); fix `getActiveTheme()`
       fallback (hardcodes `'slate'` at lines 36-38) and `getTheme()` first-entry
-      fallback.
-- [ ] `P1.3` `index.html`: `lang="en" data-theme="obsidian"`, remove
+      fallback. — 2026-11-18 phase 1
+- [x] `P1.3` `index.html`: `lang="en" data-theme="obsidian"`, remove
       `data-theme="slate"` (grep gate), `<title>LoreSpace — Multiplayer AI
       Tabletop RPG</title>`, and an `html[data-theme="obsidian"]` first-paint
-      line matching `#09090b` (today `#0a0a0a`).
-- [ ] `P1.4` `src/seo.ts` title/description for LoreSpace (single source for the
-      prerendered head).
-- [ ] `P1.5` Design Direction comment block at the top of `src/pages/index.tsx`
-      (6-prompt brief + 6-token Style Tile).
-- [ ] `P1.6` Split-hero landing: verb-first copy left, live-rendered animated
+      line matching `#09090b` (today `#0a0a0a`). — 2026-11-18 phase 1
+- [x] `P1.4` `src/seo.ts` title/description for LoreSpace (single source for the
+      prerendered head). — 2026-11-18 phase 1
+- [x] `P1.5` Design Direction comment block at the top of `src/pages/index.tsx`
+      (6-prompt brief + 6-token Style Tile). — 2026-11-18 phase 1
+- [x] `P1.6` Split-hero landing: verb-first copy left, live-rendered animated
       d20 skill-check + character-sheet mockup right — **one hand-authored inline
       SVG** plus styled divs, zero raster files, **deterministic** (no
       `Math.random`/`Date.now`/`window`; CSS keyframes only). CTA → `/home`. Keep
-      `data-testid="static-landing"` and `<Seo>` first.
-- [ ] `P1.7` Line 1 of `src/pages/(app)/home.tsx` is exactly:
+      `data-testid="static-landing"` and `<Seo>` first. — 2026-11-18 phase 1
+- [x] `P1.7` Line 1 of `src/pages/(app)/home.tsx` is exactly:
       `/* home pattern: product-preview-first — live multiplayer VTT campaign table, dice log, and character sheet */`
-      (grep gate).
-- [ ] `P1.8` 3-column workspace shell in `home.tsx`: scene banner (location,
+      (grep gate). — 2026-11-18 phase 1
+- [x] `P1.8` 3-column workspace shell in `home.tsx`: scene banner (location,
       atmosphere, active DC, enemy HP) + party roster; center = action/dice feed
       + AI GM stream; right = character sheet + inventory. Use `bg-shell` /
       `bg-shell-panel`. `h-full` + internal scroll (layout is
-      `h-screen overflow-hidden`).
-- [ ] `P1.9` Signed-out branch: same 3 columns, rendered from **live campaign
+      `h-screen overflow-hidden`). — 2026-11-18 phase 1
+- [x] `P1.9` Signed-out branch: same 3 columns, rendered from **live campaign
       rows when the seed exists** and from a bundled fixture when `campaigns` is
       empty ([ADR 0014](./adr/0014-public-read-table.md)) — nobody has signed in
       yet, so `ensureDefaultCampaign` has not run. The fixture must match the
@@ -332,22 +334,22 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       `useAuth().isSignedIn`, not `useAuthProfileReady({requireUser:true})`
       (today's `home.tsx:13`). Party members must **not** use
       `data-testid="nav-user-name"` (`smoke.spec.ts:60-64` asserts count 0 signed
-      out).
-- [ ] `P1.10` Data boundary: components take their data as props so Phase 3/4
-      swap sample data for `useQuery` without rewriting markup.
-- [ ] `P1.11` Keep nav test IDs intact (`app-navigation`, `nav-sign-in-button`,
+      out). — 2026-11-18 phase 1
+- [x] `P1.10` Data boundary: components take their data as props so Phase 3/4
+      swap sample data for `useQuery` without rewriting markup. — 2026-11-18 phase 1
+- [x] `P1.11` Keep nav test IDs intact (`app-navigation`, `nav-sign-in-button`,
       `nav-user-name`, `nav-user-email`) and `signOut()` reachable
-      (`collab.spec.ts` depends on the account menu).
-- [ ] `P1.12` Grep gates that this phase must turn green: no
+      (`collab.spec.ts` depends on the account menu). — 2026-11-18 phase 1
+- [x] `P1.12` Grep gates that this phase must turn green: no
       `data-theme="slate"` in `index.html`; no `placeholder page` in `src/`;
-      `home pattern:` present; `data-theme="obsidian"` present in `themes.css`.
-- [ ] `P1.13` Pixel chrome as **shared utilities** in `src/styles.css`
+      `home pattern:` present; `data-theme="obsidian"` present in `themes.css`. — 2026-11-18 phase 1
+- [x] `P1.13` Pixel chrome as **shared utilities** in `src/styles.css`
       ([ADR 0013](./adr/0013-visual-register.md)): stepped 2px border,
       dithered gradient, ornamental divider, segmented HP bar, pixel-numeral
-      class. Components consume these; no per-component pixel art.
-- [ ] `P1.14` README front door skeleton: what the app is, one screenshot, the
+      class. Components consume these; no per-component pixel art. — 2026-11-18 phase 1
+- [x] `P1.14` README front door skeleton: what the app is, one screenshot, the
       live-URL placeholder, how to run it locally. Final copy on day 4. The repo
-      is the deliverable, so this is not optional garnish.
+      is the deliverable, so this is not optional garnish. — 2026-11-18 phase 1
 
 ## Phase 2 — RBAC hardening, server actions
 
