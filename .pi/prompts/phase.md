@@ -59,13 +59,93 @@ than at the end; run long builds and test suites in the background. If you hit
 something the plan did not cover, stop and tell me instead of widening scope.
 
 When the phase is done: tick its tasks in `docs/tasks.md`, fill the plan's
-§ Outcome (shipped, slipped, deviations, what the next phase inherits), record
-any decision change as an ADR, run the phase's full verification, commit with a
-`phase $1:` prefix, and report what shipped with the exact evidence.
+§ Outcome (shipped, slipped, deviations, inherited assumptions, **and the feature
+inventory and review list below verbatim**), record any decision change as an
+ADR, run the phase's full verification, and commit with a `phase $1:` prefix.
 
-Close the report on the next phase, in the last lines I read: name it from the
-phase board, say whether it is **ready** or **blocked** (and on exactly which
-task, with that task's id), and give me the one command to start it —
-`/phase <next>`. If a later phase became ready or blocked as a side effect of
-this one, say so there too, so I never have to read the board to decide what to
-run. Do not start the next phase yourself.
+Then report. The report is a **feature inventory**, not a summary: I must be able
+to tell what actually works without opening the repo, and what is a picture of a
+feature. Use these seven sections, in this order.
+
+**1. Shipped, by feature.** One row per feature this phase added or changed.
+
+| Feature | State | Files | Evidence |
+| --- | --- | --- | --- |
+
+- `State` is `real` **only** if something reads, writes, routes, or tests it —
+  and the word must name which: "read", "action", "route", "auth", "unit test",
+  "e2e". If it only renders, it is `sample` and it belongs in section 2.
+- `Files` are repo-relative and backticked. **A row without a file is not
+  allowed.** No adjectives as features: "polished the UI" is rejected; "pixel
+  chrome utilities, consumed by `Badge` and `Button`" is a row.
+- `Evidence` is the command, test name, or exact UI check that proves the state.
+- Half-built things go in section 2, never here. This table is a claim that it
+  works; if it is not wired, do not list it.
+
+**2. Not real yet.** Every panel, control or number a user can see with no
+system behind it. Mandatory even when empty ("no fixture data remains in this
+surface").
+
+| What you see | Actually | Becomes real in |
+| --- | --- | --- |
+
+- Name the fixture constant and its file (`PREVIEW_ROLLS` in
+  `src/pages/(app)/home.tsx`), or the hardcoded prop (`online: true`).
+- `Becomes real in` is a phase and the system that does it, not a restatement of
+  the plan: "Phase 4 — server roll + `roll-logs`".
+- Include disabled or fake affordances (a native `<input>` that does nothing is a
+  row), and any read that silently falls back to a fixture.
+
+**3. Persistence check.** One line, plainly: did this phase make the app write
+to any collection, and if so which collection, from where. "Nothing in the app
+writes to any collection" is a valid and important answer — say it when true,
+and say which phase changes it.
+
+**4. Pending, by phase.** Only phases after this one. One line each: phase →
+what it turns live. No re-narrating the plan.
+
+**5. Worth your eyes.** The few things only a human can judge — where a passing
+test is not the same as it being right. Put nothing here that a command proves.
+
+| Tier | Item | Why a human | What to check | Files |
+| --- | --- | --- | --- | --- |
+
+- **Tier every row.** `blocks` when being wrong costs rework, is hard to
+  reverse, or is a security/permission choice; `taste` when it is copy, spacing
+  or preference. `blocks` rows come first.
+- **Cap `blocks` at five.** More than five is the finding: say which phase each
+  extra one belongs to, or which decision the plan skipped, instead of trimming
+  to fit.
+- **A row may never be dropped for length.** If it does not fit, move it into the
+  plan's § Risks with one line so it stays on the record.
+- `taste` rows are uncapped but skippable in ten seconds: a file and one clause,
+  no argument.
+- Only judgment calls. If the section is empty, write "nothing this phase needs
+  human judgment" — do not pad it.
+- Candidates: schema shape versus design intention · permission/RBAC matrices ·
+  the AI system prompt, which is product behaviour · user-visible copy · visual
+  proportions and palette in situ · accepted risks and known compromises ·
+  anything expensive to reverse (column names, route paths, the GitHub source
+  latch).
+- `What to check` names a **decision to confirm**, not a file to open:
+  "`characters` has no `level`/`xp` — still matches ADR 0010?" beats "review the
+  schema".
+- Point at the smallest useful thing: a column list, an exported symbol, a line
+  range, a constant.
+- Do not repeat section 2. Fixtures are known-absent; this is for things that
+  exist and could be wrong.
+- An accepted risk listed here must name its ADR.
+
+**6. Files touched.** Output of
+`git diff --stat <first commit before this phase>..HEAD`, trimmed to source
+files, with the commit hashes named. This is the receipt for section 1.
+
+**7. Verification.** Exact commands run and their results, plus the demo beats
+that pass by hand if this phase touched a beat.
+
+Close on the next phase, in the last lines I read: name it from the phase board,
+say whether it is **ready** or **blocked** (and on exactly which task, with that
+task's id), and give me the one command to start it — `/phase <next>`. If a later
+phase became ready or blocked as a side effect of this one, say so there too, so
+I never have to read the board to decide what to run. Do not start the next phase
+yourself.

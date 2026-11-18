@@ -105,6 +105,9 @@ Filled in at the end of the phase, never rewritten afterwards.
 - **Slipped:** <what moved, and to which task id>
 - **Deviations:** <ADR ids>
 - **Inherited by the next phase:** <assumptions now safe to make>
+- **Feature inventory:** the close-out's sections 1-5 (shipped by feature, not
+  real yet, persistence check, pending by phase, worth your eyes), pasted
+  verbatim
 - **Next:** `/phase <n>` — ready | blocked on `<task id>`: <what clears it>
 
 Also update the Status column of this phase and the next one on the phase board

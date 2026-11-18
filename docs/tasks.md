@@ -54,8 +54,12 @@ document; this file stays the cross-phase index of what is done.
    `template.md`, next free number, link it here). Supersede, never rewrite.
 9. **A phase that finishes leaves an Outcome section** in its
    `plans/phase-N-plan.md`: shipped, slipped, deviations, inherited assumptions,
-   and the **Next** line. The closing report ends by naming the next phase, its
-   status (ready, or blocked on a named task), and the command to start it.
+   the **feature inventory** (shipped by feature / not real yet / persistence
+   check / pending by phase / worth your eyes), and the **Next** line. The
+   closing report ends by naming the next phase, its status (ready, or blocked on
+   a named task), and the command to start it. Sections 1-5 of that report are
+   pasted into the Outcome verbatim; fixtures and half-built things belong in
+   "not real yet", never in "shipped".
 10. **Approval is exception-gated.** Post the phase plan, then proceed. Wait for
     the user only when a *crucial* decision is open: it changes a contract
     another phase depends on, supersedes an accepted ADR, is hard to reverse
