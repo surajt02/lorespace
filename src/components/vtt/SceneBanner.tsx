@@ -36,7 +36,7 @@ export function SceneBanner({ campaign }: { campaign: CampaignRow }) {
             {campaign.atmosphereTag}
           </Badge>
           <Badge variant="outline" className="pixel-numeral text-[10px]">
-            DC {campaign.activeThreatDc}
+            Active DC {campaign.activeThreatDc}
           </Badge>
         </div>
       </div>
