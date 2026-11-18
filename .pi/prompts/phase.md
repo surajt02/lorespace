@@ -33,7 +33,9 @@ template — scope with explicit non-goals, entry state verified against the act
 files, the contracts the next phase will inherit, ordered steps that each name
 files and proof, verification commands, risks, and open questions. Map every
 step to a `P$1.<m>` id, adding missing tasks to `docs/tasks.md` first. Where the
-plan rests on a guess, send a scout instead of guessing.
+plan rests on a guess, send a scout instead of guessing. If `docs/tasks.md` says
+this phase has **no plan file**, skip drafting one and work straight from its
+tasks — do not manufacture ceremony.
 
 Do **not** wait for approval by default. Post the plan as a short summary — what
 changes, in what order, what settles each open question — then start step 1, and
