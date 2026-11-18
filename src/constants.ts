@@ -19,3 +19,16 @@ export const SCOPE_ID = `app:${APP_ID}`
 
 /** Roles and display config — imported from SDK (single source of truth) */
 export { ROLES, ROLE_CONFIG, type Role } from 'deepspace'
+
+/** Shared record id for the app's single seeded campaign (ADR 0007).
+ *
+ *  Phase 2 upserts this row (`ensureDefaultCampaign`) and every query filters
+ *  on it (`where: { campaignId: DEFAULT_CAMPAIGN_ID }`). One constant, so the
+ *  seed and its readers can never disagree. */
+export const DEFAULT_CAMPAIGN_ID = 'default-campaign'
+
+/** Presence scope for that campaign — Phase 4 broadcasts here.
+ *
+ *  Derived, never spelled out by hand: the room and the record id are the same
+ *  campaign, so a changed id carries. */
+export const DEFAULT_CAMPAIGN_PRESENCE_SCOPE = `campaign:${DEFAULT_CAMPAIGN_ID}`

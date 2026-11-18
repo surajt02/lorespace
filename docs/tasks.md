@@ -60,18 +60,20 @@ document; this file stays the cross-phase index of what is done.
 
 ## Current state
 
-As of 2026-11-18: fresh DeepSpace scaffold, nothing LoreSpace-specific built.
+As of 2026-11-18 (after phase 2a): DeepSpace scaffold plus the LoreSpace data
+model. Nothing user-visible is built yet.
 
 | Thing | State |
 | --- | --- |
 | Theme | `slate` (indigo `#818cf8` primary) — must become `obsidian` |
 | `src/pages/index.tsx` | Generic scaffold landing, no design-direction block |
 | `src/pages/(app)/home.tsx` | 27-line placeholder |
-| `src/schemas.ts` | `users` + `settings` only |
+| `src/schemas.ts` | `users` + `settings` + `campaigns` + `characters` + `inventory` + `roll-logs` (six, `lintSchema`/`lintSchemas` clean) |
 | `src/actions/index.ts` | `{}` — every action call 404s |
 | `src/ai/tools.ts` | Built-in record tools only, generic prompt |
 | `ai-chat` feature | **Not installed** — no `ChatPanel`, no `/api/ai/chat` |
-| Tests | `smoke`+`api`+`collab` green; 2 `lorespace-*@deepspace.test` accounts, browser cache warm (`P0.1-P0.3`) |
+| `src/constants.ts` | `DEFAULT_CAMPAIGN_ID`, `DEFAULT_CAMPAIGN_PRESENCE_SCOPE` added by 2a |
+| Tests | `smoke`+`api`+`collab` green; 2 `lorespace-*@deepspace.test` accounts, browser cache warm (`P0.1-P0.3`); `test:unit` = 3 files / 17 tests |
 | Git | scaffold committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
 
 ## Architecture map
@@ -104,8 +106,8 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 0 | Session prerequisites: two test accounts + warmed browser | **done 2026-11-18** — 2 accounts, `collab` 3/3, cache warm; unblocked 4 and 6, no plan file |
-| 2a | Data model prelude: 4 schemas + registration + default campaign | todo — **next**; prerequisite for 1 and 3 |
-| 1 | Theme, landing page, 3-column workspace shell | todo |
+| 2a | Data model prelude: 4 schemas + registration + default campaign | **done 2026-11-18** — 4 schemas, 6 registered, `lintSchema`/`lintSchemas` clean, 17 unit tests; unblocked 1, 2, 3, 4, 5 |
+| 1 | Theme, landing page, 3-column workspace shell | todo — **next**; consumes the Phase 2a contracts |
 | 2 | RBAC hardening, `ensureDefaultCampaign`, `applyGmMutation` | todo |
 | 3 | Character sheet, d20 math, archetype generator, inventory | todo |
 | 4 | Party presence roster, dual-path dice engine | todo |
@@ -174,31 +176,40 @@ workspace is built data-driven once instead of rewritten
 ([ADR 0001](./adr/0001-schemas-before-ui.md)). This is the schema half of
 Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 
-- [ ] `P2a.1` `src/schemas/campaigns-schema.ts` — 8 columns per plan; `'*'`/`viewer`
-      read-only, `member` create+update, `admin` all.
-- [ ] `P2a.2` `src/schemas/characters-schema.ts` — 6 attributes + hp/maxHp/ac;
+- [x] `P2a.1` `src/schemas/campaigns-schema.ts` — 8 columns per plan; `'*'`/`viewer`
+      read-only, `member` create+update, `admin` all. — 2026-11-18 phase 2a
+- [x] `P2a.2` `src/schemas/characters-schema.ts` — 6 attributes + hp/maxHp/ac;
       `ownerField: 'userId'`, `userBound: true` on `userId`,
       `uniqueOn: ['userId', 'campaignId']`, `member` create + `'own'` update/delete.
-- [ ] `P2a.3` `src/schemas/inventory-schema.ts` — `characterId` as
+      — 2026-11-18 phase 2a
+- [x] `P2a.3` `src/schemas/inventory-schema.ts` — `characterId` as
       `reference{targetTable:'characters',displayColumn:'name'}` (metadata only,
-      no FK — join client-side).
-- [ ] `P2a.4` `src/schemas/roll-logs-schema.ts` — roll columns + `ownerField:'userId'`.
+      no FK — join client-side). — 2026-11-18 phase 2a
+- [x] `P2a.4` `src/schemas/roll-logs-schema.ts` — roll columns + `ownerField:'userId'`.
       **Deviation:** use `rolledAt` with `timestampTrigger: { field: 'summary' }`
       instead of `createdAt` ([ADR 0003](./adr/0003-roll-log-timestamp-column.md)) —
       the SDK resolves `orderBy: 'createdAt'` to the system `_created_at`, so a
       custom column named `createdAt` is unsortable and redundant.
-- [ ] `P2a.5` Register the four domain schemas in `src/schemas.ts`. **Do not**
+      — 2026-11-18 phase 2a
+- [x] `P2a.5` Register the four domain schemas in `src/schemas.ts`. **Do not**
       register the messaging drop-ins (`CHANNELS_SCHEMA`, `MESSAGES_SCHEMA`,
       `REACTIONS_SCHEMA`, `CHANNEL_MEMBERS_SCHEMA`, `READ_RECEIPTS_SCHEMA`):
       nothing reads them and they would widen RBAC plus AI/MCP reach for no
       product benefit (`D2`, resolved). Deferring is free — 0.44.2 creates
       tables on DO init, so adding them later is a one-line registry change.
-- [ ] `P2a.6` `lintSchema` clean for every schema (unit test in `P2a.7`).
-- [ ] `P2a.7` `src/schemas/__tests__/schemas.test.ts` asserting
+      — 2026-11-18 phase 2a: registered six, asserted by name in the unit test
+- [x] `P2a.6` `lintSchema` clean for every schema (unit test in `P2a.7`).
+      — 2026-11-18 phase 2a: `[]` per schema and `lintSchemas(schemas)` `[]`
+- [x] `P2a.7` `src/schemas/__tests__/schemas.test.ts` asserting
       `lintSchema(schema)` is `[]` for each. Runs under Vitest (node env).
-- [ ] `P2a.8` `default-campaign` record id becomes a shared constant in
+      — 2026-11-18 phase 2a: also pins registration, both constants, and the
+      load-bearing columns/`uniqueOn` that later phases write by name; the
+      permission matrices stay with the `P2.1` audit
+- [x] `P2a.8` `default-campaign` record id becomes a shared constant in
       `src/constants.ts` — Phase 4 hardcodes the presence scope
       `campaign:default-campaign` and must agree with the action.
+      — 2026-11-18 phase 2a: `DEFAULT_CAMPAIGN_ID` plus derived
+      `DEFAULT_CAMPAIGN_PRESENCE_SCOPE`, so the room and the record cannot drift
 
 ## Phase 1 — Theme, landing page, workspace shell
 
@@ -395,7 +406,15 @@ Findings from the initial recon pass. Trust these over the plan text.
 - DDL is automatic at RecordRoom init (`CREATE TABLE IF NOT EXISTS` + `ALTER
   TABLE ADD COLUMN`). `deepspace.migrations.json` is an SDK-behaviour manifest,
   not a DB queue — nothing to run.
-- `lintSchema` checks only 4 rules and is warn-only; our own test is the gate.
+- `lintSchema` checks only 3 per-schema rules and is warn-only; the 4th rule
+  (a `'team'` level with no `team_members` collection) is set-level in
+  `lintSchemaSet`, reachable only via `lintSchemas`. Our own test is the gate.
+- `'*'` in `permissions` is a catch-all **fallback**, not an alias for
+  anonymous: `getRolePermissions` tries `permissions[role]` first, then `'*'`,
+  then deny-all. `viewer` is the anonymous role, so `viewer` is the key that
+  governs anonymous access; listing `'*'` too covers roles added later.
+- `userBound` stamps the user id **before** the `required` check on insert, so
+  a `userBound: true, required: true` column needs no client value.
 
 **Actions.** `ctx.tools` = `create/update/remove/deleteWhere/get/query/
 integration/registerUser`. No `delete` (it is `remove`), **no transactions**.

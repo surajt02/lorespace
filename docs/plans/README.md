@@ -36,7 +36,7 @@ This folder is the "how", narrowly scoped to one phase. The other documents are:
 | Phase | Plan | Status |
 | --- | --- | --- |
 | 0 | — (no plan file; three prerequisite tasks) | **done** — 2 accounts, `collab` 3/3, cache warm |
-| 2a | `phase-2a-plan.md` | not written — data model prelude, prerequisite of Phase 1 |
+| 2a | `phase-2a-plan.md` | **done 2026-11-18** — 4 schemas, 6 registered, lint gate green, `default-campaign` constant |
 | 1 | `phase-1-plan.md` | **next** — theme, landing page, workspace shell |
 | 2 | `phase-2-plan.md` | not written — RBAC hardening, server actions |
 | 3 | `phase-3-plan.md` | not written — character sheet, d20 math, inventory |
