@@ -552,3 +552,23 @@ documented mobile reading order rather than the desktop guarantee.
 **Inherited by Phase 5:** the roll→GM auto-resolve (`P5.7`) can hang on the same
 new-`roll-logs`-row signal the banner uses instead of a presence event, and
 `P5.9`'s typing indicator lands on an identity-only presence payload.
+
+### Revision 2 — 2026-11-19 (post-close)
+
+- `P4.18` "Show all" now means every `roll-logs` row. The `/home` read has no
+  `limit` (the record layer only applies `LIMIT` when one is given), so the feed's
+  five-row cap is display-only. Measured with 31 rows: `5/31` collapsed, 31 rows
+  rendered expanded. **The two-window spec caught what the change cost:** an
+  unbounded subscription *appends* a live insert to the client array instead of
+  re-running the query, so the new roll landed at the end of 31 rows while the
+  banner (same array) announced it — the feed never showed it. `newestFirst`
+  (`src/lib/roll-announcements.ts`, 4 unit tests) sorts by the envelope's
+  `createdAt` then the ULID, once in `/home`, shared by the feed and the banner
+  layer. The read is unbounded and the client `Query` has no `offset`, so paging a
+  long campaign is a future read-path decision — recorded, not hidden.
+- `P4.19` The two panels trade the column instead of both keeping a fixed split.
+  Minimised (this is the fix): feed 304px, GM console 365px, feed list scrolls
+  428→230. Expanded: feed 448px, GM 221px natural. At 1440×900 the GM console's
+  bottom edge is 888 of 900 in both states. `feedExpanded` moved up to `/home`
+  because the heights depend on it, and `GmConsolePanel`'s message list scrolls
+  inside the height it is given.

@@ -59,8 +59,34 @@ export function toAnnouncedRoll(entry: RecordData<RollLogRow>): AnnouncedRoll | 
 }
 
 /**
- * Entries this window has not announced yet, in the order given (newest first —
- * the feed read is `_created_at DESC`).
+ * Newest first, by row age then by id.
+ *
+ * The initial read is already ordered `_created_at DESC`, but a **live insert**
+ * arrives appended to the client's array: with a bounded read the store re-runs
+ * the query and the order holds, and with the unbounded read the feed uses
+ * (`P4.18`) it does not. Without this, a new roll lands at the bottom of a
+ * 31-row list and never reaches the five-row window that is meant to show it —
+ * and the banner announces the oldest row of a batch instead of the newest.
+ *
+ * `createdAt` is the record envelope's ISO timestamp (sortable as text, parsed
+ * here so a malformed value sorts last rather than first), and a record id is a
+ * ULID, so equal timestamps still have a stable, time-ordered tiebreak.
+ */
+export function newestFirst(
+  entries: RecordData<RollLogRow>[],
+): RecordData<RollLogRow>[] {
+  return [...entries].sort((a, b) => {
+    const at = Date.parse(a.createdAt ?? '') || 0
+    const bt = Date.parse(b.createdAt ?? '') || 0
+    if (at !== bt) return bt - at
+    if (a.recordId === b.recordId) return 0
+    return a.recordId < b.recordId ? 1 : -1
+  })
+}
+
+/**
+ * Entries this window has not announced yet, in the order given (callers pass
+ * `newestFirst`, so the first entry is the newest).
  */
 export function unseenRolls(
   entries: RecordData<RollLogRow>[],

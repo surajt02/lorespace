@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RecordData } from 'deepspace'
-import { toAnnouncedRoll, unseenRolls } from '@/lib/roll-announcements'
+import { newestFirst, toAnnouncedRoll, unseenRolls } from '@/lib/roll-announcements'
 import { PREVIEW_ROLLS, type RollLogRow } from '@/lib/preview-data'
 
 /**
@@ -103,5 +103,42 @@ describe('unseenRolls', () => {
     // `PREVIEW_ROLLS`; the baseline is whatever the first ready snapshot held.
     const baseline = new Set(PREVIEW_ROLLS.map((entry) => entry.recordId))
     expect(unseenRolls(PREVIEW_ROLLS, baseline)).toEqual([])
+  })
+})
+
+describe('newestFirst', () => {
+  it('restores newest-first when a live insert arrives appended', () => {
+    const old = row({}, 'roll-a')
+    const middle = row({}, 'roll-b')
+    const fresh = row({}, 'roll-c')
+    // The client appends inserts, so the fresh row is last in the array.
+    expect(newestFirst([old, middle, fresh]).map((entry) => entry.recordId)).toEqual([
+      'roll-c',
+      'roll-b',
+      'roll-a',
+    ])
+  })
+
+  it('uses the record envelope, not the row fields, for age', () => {
+    const earlier = { ...row({}, 'roll-a'), createdAt: '2026-11-19T00:00:00.000Z' }
+    const later = { ...row({}, 'roll-b'), createdAt: '2026-11-19T00:00:05.000Z' }
+    expect(newestFirst([earlier, later]).map((entry) => entry.recordId)).toEqual([
+      'roll-b',
+      'roll-a',
+    ])
+  })
+
+  it('breaks equal timestamps by id, newest id first, and never mutates', () => {
+    const a = { ...row({}, 'roll-a'), createdAt: '2026-11-19T00:00:00.000Z' }
+    const b = { ...row({}, 'roll-b'), createdAt: '2026-11-19T00:00:00.000Z' }
+    const input = [a, b]
+    expect(newestFirst(input).map((entry) => entry.recordId)).toEqual(['roll-b', 'roll-a'])
+    expect(input.map((entry) => entry.recordId)).toEqual(['roll-a', 'roll-b'])
+  })
+
+  it('sorts a malformed createdAt last rather than first', () => {
+    const bad = { ...row({}, 'roll-z'), createdAt: 'not-a-date' }
+    const good = { ...row({}, 'roll-a'), createdAt: '2026-11-19T00:00:00.000Z' }
+    expect(newestFirst([bad, good]).map((entry) => entry.recordId)).toEqual(['roll-a', 'roll-z'])
   })
 })

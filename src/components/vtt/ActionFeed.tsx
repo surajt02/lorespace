@@ -9,7 +9,6 @@
  * so this component never sorts.
  */
 
-import { useState } from 'react'
 import { Dices } from 'lucide-react'
 import type { RecordData } from 'deepspace'
 import { Badge, Button, EmptyState, type BadgeProps } from '@/components/ui'
@@ -39,28 +38,31 @@ const ENTRY_LABELS: Record<string, string> = {
   combat: 'Combat',
 }
 
-/** Rows shown before the expand toggle. Explicitly a display cap, not a read
- *  cap: the query already limits to 20, so "show all" means all of those. */
+/** Rows shown before the expand toggle. A display cap only: the query reads the
+ *  whole collection, so "show all" means every row the table has (`P4.18`). */
 const RECENT_COUNT = 5
 
 export function ActionFeed({
   entries,
   status,
+  expanded,
+  onToggleExpanded,
 }: {
   entries: RecordData<RollLogRow>[]
   status: QueryStatus
+  /** Owned by `/home`, because the column's heights depend on it: minimised the
+   *  feed is its content height and the GM console takes the rest, expanded the
+   *  feed takes the column and scrolls (`P4.14`, `P4.19`). */
+  expanded: boolean
+  onToggleExpanded: () => void
 }) {
-  // Minimised by default so the feed cannot push the GM console off screen. The
-  // list scrolls in both states — the panel is bounded by the column, not by the
-  // row count (`P4.14`).
-  const [expanded, setExpanded] = useState(false)
   const collapsible = entries.length > RECENT_COUNT
   const visible = collapsible && !expanded ? entries.slice(0, RECENT_COUNT) : entries
 
   return (
     <section
       data-testid="action-feed"
-      className="flex min-h-0 flex-col gap-2 lg:h-full lg:overflow-hidden"
+      className="flex h-full min-h-0 flex-col gap-2 overflow-hidden"
     >
       <header className="flex shrink-0 items-center justify-between gap-2 px-3 pt-3">
         <h2 className="font-pixel text-[10px] uppercase text-muted-foreground">Table feed</h2>
@@ -80,9 +82,7 @@ export function ActionFeed({
               data-testid="feed-expand"
               aria-expanded={expanded}
               className="h-6 px-2 font-pixel text-[10px] uppercase"
-              onClick={() => {
-                setExpanded((open) => !open)
-              }}
+              onClick={onToggleExpanded}
             >
               {expanded ? 'Recent' : `All ${String(entries.length)}`}
             </Button>

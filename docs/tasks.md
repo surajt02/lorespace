@@ -89,7 +89,7 @@ is the only remaining fixture (Phase 5).
 | `src/lib/d20.ts` | `getModifier`, `formatModifier`, `calculateArmorClass`, `classifyRoll`, `ARCHETYPE_PRESETS`, `ARCHETYPE_ORDER`, `ABILITY_SCORES`, `CONSUMABLE_EFFECTS`; zero imports, no randomness. Entropy lives in `src/lib/rng.ts` (rejection-sampled d20 from bytes) |
 | `src/components/CharacterSheetPanel.tsx` | Live `characters` record → Forge (`forgeCharacter`), 6 stat cards that **roll** (click → `rollSkillCheck` → toast + banner), AC, segmented HP bar (read-only — no HP controls, ADR 0020); preview cards stay inert |
 | `src/components/InventoryPanel.tsx` | Live `inventory` rows → Use (`useItem` action, heals) / Discard (owner-scoped `removeConfirmed` behind `ConfirmModal`), no add/edit |
-| `src/components/vtt/ActionFeed.tsx` | Live `roll-logs` rows, newest 20 read / 5 shown with an expand toggle, scrolls inside its frame so the GM console stays on screen; skeleton/read-error/empty states |
+| `src/components/vtt/ActionFeed.tsx` | Live `roll-logs` rows (every row read), 5 shown with an `All N` toggle, scrolls inside its frame; minimised it shares the column with the GM console, which takes the rest; skeleton/read-error/empty states |
 | `src/components/vtt/RollBanner.tsx` | One fixed strip, d20 sprite, `d20(n) ± m = t vs DC n`, outcome badge, 6 s auto-dismiss; fed by `RollBannerLayer` from the newest `roll-logs` row, so signed-in and signed-out windows see the same roll (ADR 0021) |
 | `src/ai/tools.ts` | Built-in record tools only, generic prompt — `records.delete` still listed, so `P5.4` is **reopened** |
 | `ai-chat` feature | **Not installed** — no `ChatPanel`, no `/api/ai/chat` |
@@ -768,6 +768,31 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       to be ready (baseline), rolls from a signed-in window and asserts the
       signed-out banner text equals the roller's — 3/3 spec tests green. This was
       the reported bug: the feed updated, the banner did not.
+
+- [x] `P4.18` "Show all" in the table feed means **all** rows, not a page: the
+      `/home` read drops `limit` (`useQuery('roll-logs', { where })` returns every
+      row — the record layer applies no default cap when `limit` is absent), and
+      the feed's 5-row cap is display-only.
+      — 2026-11-19 phase 4 revision: measured with 31 roll rows — collapsed shows
+      `5/31`, expanded renders 31 rows (`31/31`). **Deviation found by the
+      spec:** an unbounded subscription *appends* live inserts instead of
+      re-querying, so the new roll sat at the end of the array and never reached
+      the five-row window (the banner showed it, the feed did not). `newestFirst`
+      in `src/lib/roll-announcements.ts` sorts by the record envelope's
+      `createdAt` then the ULID, applied once in `/home` and shared by the feed
+      and the banner layer; 4 unit tests pin it. **Known limit:** the read is
+      unbounded and the client `Query` has no `offset`, so paging a long campaign
+      would need a new read path — recorded here rather than papered over with a
+      silent cap.
+- [x] `P4.19` Minimised, the feed takes a share of the column and the GM console
+      takes the rest; expanded, the feed takes the column and the GM keeps its
+      natural height at the bottom. `feedExpanded` is owned by `/home` because the
+      column's heights depend on it; `GmConsolePanel`'s message list scrolls inside
+      whatever height it is given.
+      — 2026-11-19 phase 4 revision: measured at 1440×900 — collapsed feed 304px
+      / GM 365px (feed list scrolls 428→230); expanded feed 448px / GM 221px,
+      GM bottom edge 888 of 900 in both. Before this, both states were
+      380/221 — the "same amount of space" complaint.
 
 ## Phase 5 — AI Game Master
 

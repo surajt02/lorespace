@@ -33,7 +33,7 @@
  * room subscription.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth, useQuery } from 'deepspace'
 import { CharacterSheetPanel, type QueryStatus, type SheetMode } from '@/components/CharacterSheetPanel'
 import { GmConsolePanel } from '@/components/GmConsolePanel'
@@ -42,6 +42,7 @@ import { ActionFeed } from '@/components/vtt/ActionFeed'
 import { PartyPresenceBar } from '@/components/PartyPresenceBar'
 import { PartyRoster, type RosterMember } from '@/components/vtt/PartyRoster'
 import { RollBannerLayer } from '@/components/vtt/RollBannerLayer'
+import { newestFirst } from '@/lib/roll-announcements'
 import { SceneBanner } from '@/components/vtt/SceneBanner'
 import { SignInBanner } from '@/components/vtt/SignInBanner'
 import { useToast } from '@/components/ui'
@@ -86,13 +87,25 @@ export default function HomePage() {
     'inventory',
     { where: { campaignId: DEFAULT_CAMPAIGN_ID } },
   )
-  // The feed (`P4.11`). No `orderBy`: the record layer already sorts by
-  // `_created_at DESC`, and a `rolledAt` sort would order against that system
-  // column for no gain (ADR 0003). Newest first is the read's own order.
+  // The feed (`P4.11`, `P4.18`). No `limit`: the read returns every row for the
+  // campaign, so "show all" in the feed means all of them rather than a page.
+  // No `orderBy` either — the record layer already sorts by `_created_at DESC`,
+  // and a `rolledAt` sort would order against that system column for no gain
+  // (ADR 0003). A long campaign would need paging, and the client `Query` has no
+  // `offset`, so that is a later decision, not a missing parameter.
   const { records: rollRecords, status: rollStatus } = useQuery<RollLogRow>('roll-logs', {
     where: { campaignId: DEFAULT_CAMPAIGN_ID },
-    limit: 20,
   })
+
+  // A live insert arrives appended to the client's array (the unbounded read has
+  // no re-query to restore the order), so newest-first is applied here once and
+  // shared by the feed and the banner layer (`P4.18`).
+  const liveRolls = useMemo(() => newestFirst(rollRecords), [rollRecords])
+
+  // The feed's own height depends on this, so `/home` owns it: minimised, the
+  // feed is five rows and the GM console takes the rest of the column; expanded,
+  // the feed takes the column and scrolls (`P4.19`).
+  const [feedExpanded, setFeedExpanded] = useState(false)
   const { error: toastError } = useToast()
 
   const [seedState, setSeedState] = useState<SeedState>('idle')
@@ -199,9 +212,9 @@ export default function HomePage() {
   // roll attributed to a fixture name beside a live sheet is the incoherence
   // ADR 0014 and `P4.9` forbid.
   const feedEntries = isSignedIn
-    ? rollRecords
+    ? liveRolls
     : previewFromLiveRows
-      ? rollRecords
+      ? liveRolls
       : PREVIEW_ROLLS
   const feedStatus: QueryStatus = isSignedIn
     ? rollStatus
@@ -235,7 +248,7 @@ export default function HomePage() {
               (ADR 0021), and it is rendered on both branches: a signed-out
               window reads the same public rows (ADR 0014), so the demo table
               announces to every open tab without joining the campaign room. */}
-          <RollBannerLayer entries={rollRecords} status={rollStatus} />
+          <RollBannerLayer entries={liveRolls} status={rollStatus} />
 
           <div className="shrink-0">
             <SceneBanner campaign={campaign} />
@@ -273,14 +286,39 @@ export default function HomePage() {
               </div>
             </aside>
 
-            {/* The feed scrolls inside its own frame (`P4.14`); the GM console
-                keeps its height below it, so a long table never pushes the GM
-                off screen. */}
+            {/* Whichever panel is not reading its oldest rows gets the leftover
+                height (`P4.19`): minimised, the feed is five rows and the GM
+                console fills the column and scrolls its own messages; expanded,
+                the feed fills and scrolls and the GM keeps its natural height at
+                the bottom, so it is never pushed off screen (`P4.14`). */}
             <section className="flex min-h-0 flex-col gap-3 bg-shell-panel lg:overflow-hidden">
-              <div className="pixel-frame flex min-h-0 flex-col bg-card lg:flex-1 lg:overflow-hidden">
-                <ActionFeed entries={feedEntries} status={feedStatus} />
+              <div
+                className={
+                  feedExpanded
+                    ? 'pixel-frame flex min-h-0 flex-col bg-card lg:flex-1 lg:overflow-hidden'
+                    : // Minimised, the feed gets a share of the column rather than
+                      // its content height: five full rows are taller than half the
+                      // table, which would leave the GM console squeezed into the
+                      // remainder (`P4.19`). The rows scroll inside it.
+                      'pixel-frame flex min-h-0 shrink-0 flex-col bg-card lg:h-[45%] lg:overflow-hidden'
+                }
+              >
+                <ActionFeed
+                  entries={feedEntries}
+                  status={feedStatus}
+                  expanded={feedExpanded}
+                  onToggleExpanded={() => {
+                    setFeedExpanded((open) => !open)
+                  }}
+                />
               </div>
-              <div className="shrink-0">
+              <div
+                className={
+                  feedExpanded
+                    ? 'shrink-0'
+                    : 'flex min-h-0 flex-col lg:flex-1 lg:overflow-hidden'
+                }
+              >
                 <GmConsolePanel messages={PREVIEW_GM_MESSAGES} />
               </div>
             </section>

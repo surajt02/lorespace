@@ -20,7 +20,10 @@ export interface GmMessage {
 
 export function GmConsolePanel({ messages }: { messages: GmMessage[] }) {
   return (
-    <section data-testid="gm-stream" className="pixel-frame flex flex-col bg-card">
+    <section
+      data-testid="gm-stream"
+      className="pixel-frame flex min-h-0 flex-1 flex-col bg-card"
+    >
       <header className="flex items-center justify-between border-b border-border px-3 py-2">
         <h2 className="font-pixel text-[10px] uppercase text-muted-foreground">Game Master</h2>
         <Badge variant="outline" className="font-pixel text-[10px] uppercase">
@@ -28,7 +31,9 @@ export function GmConsolePanel({ messages }: { messages: GmMessage[] }) {
         </Badge>
       </header>
 
-      <ol className="flex flex-col gap-2 px-3 py-3">
+      {/* Scrolls when the panel is given the leftover column height (the feed
+          minimised, `P4.19`); at its natural height this is just the list. */}
+      <ol className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-3">
         {messages.map((message) => (
           <li
             key={message.id}
@@ -47,7 +52,7 @@ export function GmConsolePanel({ messages }: { messages: GmMessage[] }) {
         ))}
       </ol>
 
-      <div className="mt-auto flex items-center gap-2 border-t border-border px-3 py-2">
+      <div className="mt-auto flex shrink-0 items-center gap-2 border-t border-border px-3 py-2">
         <input
           type="text"
           disabled
