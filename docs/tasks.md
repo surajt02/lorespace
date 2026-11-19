@@ -794,6 +794,20 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       GM bottom edge 888 of 900 in both. Before this, both states were
       380/221 — the "same amount of space" complaint.
 
+- [x] `P4.20` Minimised, the table feed does not scroll at all: it is its own
+      (compact) height, the GM console takes the rest, and scrolling belongs to
+      the expanded state. Five rows was the wrong cap for that rule — the panel
+      ended up a few pixels short of its content, so it scrolled by half a row
+      and drew a scrollbar in the signed-out window (where the fixture table has
+      four rows) and not in the signed-in one.
+      — 2026-11-19 phase 4 revision: `RECENT_COUNT = 3`, compact rows
+      (`py-1`, one-line summary), no percentage cap, no internal scroll. Measured
+      at 1440×900 and 1440×760, signed in and out: feed 264 with
+      `scrollHeight === clientHeight` on both the panel and the list, GM 198-406
+      filling the remainder, GM bottom edge at 888/748 (always on screen);
+      expanded is still 448 with the list scrolling (3284→404). Raising the cap
+      to 5 is one constant and costs ~100px of GM console.
+
 ## Phase 5 — AI Game Master
 
 - [ ] `P5.1` Install the chat surface ([ADR 0004](./adr/0004-ai-chat-and-owner-billing.md)):

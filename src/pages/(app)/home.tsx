@@ -296,11 +296,12 @@ export default function HomePage() {
                 className={
                   feedExpanded
                     ? 'pixel-frame flex min-h-0 flex-col bg-card lg:flex-1 lg:overflow-hidden'
-                    : // Minimised, the feed gets a share of the column rather than
-                      // its content height: five full rows are taller than half the
-                      // table, which would leave the GM console squeezed into the
-                      // remainder (`P4.19`). The rows scroll inside it.
-                      'pixel-frame flex min-h-0 shrink-0 flex-col bg-card lg:h-[45%] lg:overflow-hidden'
+                    : // Minimised, the feed is its own (compact) height and the GM
+                      // console takes the rest (`P4.19`). No cap and no scroll:
+                      // a capped box that is a few pixels short of its five
+                      // compact rows scrolls by half a row, which reads as a
+                      // broken scrollbar (`P4.20`).
+                      'pixel-frame flex shrink-0 flex-col bg-card'
                 }
               >
                 <ActionFeed

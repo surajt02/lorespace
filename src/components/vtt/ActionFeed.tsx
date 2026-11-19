@@ -38,9 +38,18 @@ const ENTRY_LABELS: Record<string, string> = {
   combat: 'Combat',
 }
 
-/** Rows shown before the expand toggle. A display cap only: the query reads the
- *  whole collection, so "show all" means every row the table has (`P4.18`). */
-const RECENT_COUNT = 5
+/**
+ * Rows shown before the expand toggle. A display cap only: the query reads the
+ * whole collection, so "show all" means every row the table has (`P4.18`).
+ *
+ * Three, not five (`P4.20`): minimised, the panel is its own height so there is
+ * nothing to scroll, and every extra row is height taken from the GM console.
+ * Five compact rows are ~360px, which either squeezes the GM below a usable
+ * height or forces the panel into a box a few pixels short of its content — the
+ * half-row scrollbar this fixes. One constant to raise if the GM can give up the
+ * room.
+ */
+const RECENT_COUNT = 3
 
 export function ActionFeed({
   entries,
@@ -62,7 +71,16 @@ export function ActionFeed({
   return (
     <section
       data-testid="action-feed"
-      className="flex h-full min-h-0 flex-col gap-2 overflow-hidden"
+      // Expanded, the panel is a fixed window and the list scrolls inside it.
+      // Minimised it is content-height (compact rows) so the GM console behind it
+      // gets the rest, and there is nothing to scroll — a five-row box only a few
+      // pixels short of its content scrolls by half a row, which reads as a
+      // broken scrollbar (`P4.20`).
+      className={
+        expanded
+          ? 'flex h-full min-h-0 flex-col gap-2 overflow-hidden'
+          : 'flex flex-col gap-2'
+      }
     >
       <header className="flex shrink-0 items-center justify-between gap-2 px-3 pt-3">
         <h2 className="font-pixel text-[10px] uppercase text-muted-foreground">Table feed</h2>
@@ -96,7 +114,11 @@ export function ActionFeed({
       {status === 'ready' && entries.length > 0 && (
         <ol
           data-testid="feed-list"
-          className="flex min-h-0 flex-col overflow-y-auto pb-2 lg:flex-1"
+          className={
+            expanded
+              ? 'flex min-h-0 flex-col overflow-y-auto pb-2 lg:flex-1'
+              : 'flex flex-col pb-2'
+          }
         >
           {visible.map((entry, index) => {
             const row = entry.data
@@ -107,11 +129,16 @@ export function ActionFeed({
                 // and an index in the key would remount every row on each insert.
                 key={entry.recordId}
                 data-testid="feed-entry"
-                className={
-                  index === 0
-                    ? 'roll-tick border-b border-border px-3 py-2.5'
-                    : 'border-b border-border px-3 py-2.5'
-                }
+                className={[
+                  // Compact rows while minimised: the dice line and the outcome
+                  // are the substance, the summary is flavour, so it takes one
+                  // line instead of wrapping to two.
+                  'border-b border-border px-3',
+                  expanded ? 'py-2.5' : 'py-1',
+                  index === 0 ? 'roll-tick' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-pixel text-[10px] uppercase text-muted-foreground">
@@ -137,7 +164,15 @@ export function ActionFeed({
                   </p>
                 )}
 
-                <p className="mt-1 text-xs text-muted-foreground">{row.summary}</p>
+                <p
+                  className={
+                    expanded
+                      ? 'mt-1 text-xs text-muted-foreground'
+                      : 'mt-0.5 line-clamp-1 text-[11px] text-muted-foreground'
+                  }
+                >
+                  {row.summary}
+                </p>
               </li>
             )
           })}

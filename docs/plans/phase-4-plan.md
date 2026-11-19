@@ -572,3 +572,18 @@ new-`roll-logs`-row signal the banner uses instead of a presence event, and
   bottom edge is 888 of 900 in both states. `feedExpanded` moved up to `/home`
   because the heights depend on it, and `GmConsolePanel`'s message list scrolls
   inside the height it is given.
+
+### Revision 3 — 2026-11-19 (post-close)
+
+- `P4.20` Minimised, the feed no longer scrolls **at all** — the reported bug was a
+  half-row scroll and a scrollbar in the signed-out window only, because the
+  panel's cap (45%, then 60% of the column) left it a few pixels short of its
+  content. The panel is now its own compact height with no internal scroll, and
+  scrolling belongs to the expanded state. `RECENT_COUNT` drops 5 → 3: five
+  compact rows are ~360px, which either squeezes the GM console or forces the
+  half-row scrollbar back. Measured at 1440×900 and 1440×760, signed in and out:
+  feed 264 with `scrollHeight === clientHeight` on the panel and the list, GM
+  198-406 filling the remainder, GM bottom at 888/748; expanded stays 448 with
+  the list scrolling 3284→404.
+- Mobile is explicitly a later version (user decision, 2026-11-19); the `lg:`
+  branch is the only one this revision touches.
