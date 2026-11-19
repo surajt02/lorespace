@@ -3,7 +3,9 @@ import type { ActionContext, ActionHandler, ActionResult } from 'deepspace/worke
 import type { Env } from '../../worker'
 import { DEFAULT_CAMPAIGN_ID } from '../constants'
 import { DEFAULT_CAMPAIGN_SEED, isAtmosphereTag } from '../lib/campaign-seed'
-import { ARCHETYPE_PRESETS, CONSUMABLE_EFFECTS, calculateArmorClass } from '../lib/d20'
+import { ARCHETYPE_PRESETS, CONSUMABLE_EFFECTS, calculateArmorClass, classifyRoll, formatModifier, getModifier } from '../lib/d20'
+import type { RollOutcome } from '../lib/d20'
+import { rollD20FromBytes } from '../lib/rng'
 
 /**
  * App server actions. Reached only over `POST /api/actions/:name`, which
@@ -37,6 +39,27 @@ interface MembershipRow {
   [key: string]: unknown
   userId: string
   campaignId: string
+}
+
+/**
+ * The `characters` columns `rollSkillCheck` reads: ownership, the campaign the
+ * row belongs to (never the caller's claim), the name the row is logged under,
+ * and the six ability scores the modifier comes from.
+ */
+interface RollTarget extends CharacterTarget {
+  name: string
+  str: number
+  dex: number
+  con: number
+  int: number
+  wis: number
+  cha: number
+}
+
+/** The one `campaigns` column a roll reads: the scene's DC. */
+interface RollCampaignTarget {
+  [key: string]: unknown
+  activeThreatDc: number
 }
 
 /** `inventory.category`'s select options, in schema order (ADR 0016: no `relic`). */
@@ -530,6 +553,142 @@ export async function useItem(ctx: ActionContext<Env>): Promise<ActionResult<Use
   }
 }
 
+const rollSkillCheckParamsSchema = z.object({
+  characterId: z.string().min(1),
+  statName: z.enum(['str', 'dex', 'con', 'int', 'wis', 'cha']),
+})
+
+/** Bytes drawn per attempt. 64 accepted-or-not bytes make an all-rejected
+ *  buffer a 2^-256 event, so `ROLL_DRAW_ATTEMPTS` is a loop guard, not a
+ *  probability question. */
+const ROLL_DRAW_BYTES = 64
+const ROLL_DRAW_ATTEMPTS = 3
+
+export interface RollSkillCheckData {
+  rawRoll: number
+  modifier: number
+  total: number
+  targetDc: number
+  outcome: RollOutcome
+  rollLogId: string
+}
+
+/**
+ * The only roll authority (ADR 0005, `P4.4`, `P4.6`).
+ *
+ * The caller sends `{ characterId, statName }` and nothing else — no `rawRoll`,
+ * no `total`, no `campaignId` — so a browser cannot invent a result or aim a
+ * roll at another table. The campaign comes from the character row, the DC from
+ * that campaign's `activeThreatDc`, the modifier from the character's score,
+ * and the d20 from `crypto.getRandomValues` through the pure
+ * `rollD20FromBytes`. Classification is `src/lib/d20.ts`'s `classifyRoll`, the
+ * same function the GM tools use.
+ *
+ * Durable before ephemeral: the `roll-logs` row is written first, and only a
+ * successful write is returned, so the row is evidence rather than a claim.
+ * **If the client's presence broadcast fails after this write succeeds, the
+ * feed shows the roll and peers miss the banner. That is accepted, and it must
+ * never trigger a retry — a retry would roll twice** (`P4.6`).
+ *
+ * Gates run in a fixed order before anything is rolled: `character_not_found`,
+ * then `not_owner` (RBAC is off inside actions, so ownership is this file's
+ * job), then `campaign_not_found`. A campaign row whose `activeThreatDc` is not
+ * a number is a failed action, never a DC of 0 — a roll against 0 would always
+ * succeed and log as if it had meant something.
+ */
+export async function rollSkillCheck(
+  ctx: ActionContext<Env>,
+): Promise<ActionResult<RollSkillCheckData>> {
+  const parsed = rollSkillCheckParamsSchema.safeParse(ctx.params)
+  if (!parsed.success) return invalidParams(parsed.error)
+
+  const { tools, userId } = ctx
+  const { characterId, statName } = parsed.data
+  const target = await tools.get<RollTarget>('characters', characterId)
+  if (!target.success) {
+    return { success: false, code: 'character_not_found', error: target.error }
+  }
+  const character = target.data.record.data
+  if (character.userId !== userId) {
+    return {
+      success: false,
+      code: 'not_owner',
+      error: `Character ${JSON.stringify(characterId)} does not belong to the caller`,
+    }
+  }
+  // Same guard as every other character action: a row from another campaign is
+  // not a target here. Without it the DC below would be read from the default
+  // campaign while the log row named the character's own — one roll, two tables.
+  if (character.campaignId !== DEFAULT_CAMPAIGN_ID) {
+    return {
+      success: false,
+      code: 'character_not_found',
+      error: `Character ${JSON.stringify(characterId)} is not in campaign ${JSON.stringify(DEFAULT_CAMPAIGN_ID)}`,
+    }
+  }
+
+  // The DC is the table's, read by the one campaign id every write path uses
+  // (`forgeCharacter`) — never a value the caller supplied, and never a default
+  // that would make the roll a no-op. The row's `campaignId` still comes from
+  // the character (guarded equal above), so the log names where the roll happened.
+  const campaign = await tools.get<RollCampaignTarget>('campaigns', DEFAULT_CAMPAIGN_ID)
+  if (!campaign.success) {
+    return { success: false, code: 'campaign_not_found', error: campaign.error }
+  }
+  const targetDc = campaign.data.record.data.activeThreatDc
+  if (typeof targetDc !== 'number' || !Number.isFinite(targetDc)) {
+    return {
+      success: false,
+      code: 'campaign_not_found',
+      error: `Campaign ${JSON.stringify(DEFAULT_CAMPAIGN_ID)} has no numeric activeThreatDc`,
+    }
+  }
+
+  let rawRoll: number | null = null
+  for (let attempt = 0; attempt < ROLL_DRAW_ATTEMPTS && rawRoll === null; attempt += 1) {
+    try {
+      rawRoll = rollD20FromBytes(crypto.getRandomValues(new Uint8Array(ROLL_DRAW_BYTES)))
+    } catch {
+      // Every byte was rejected: draw again rather than bias the roll.
+    }
+  }
+  // Unreachable with real entropy (see ROLL_DRAW_BYTES); reported rather than
+  // thrown, so the route answers with an action result instead of a 500.
+  if (rawRoll === null) {
+    return {
+      success: false,
+      code: 'roll_failed',
+      error: `No accepted d20 byte in ${ROLL_DRAW_ATTEMPTS} draws of ${ROLL_DRAW_BYTES} bytes`,
+    }
+  }
+
+  const modifier = getModifier(character[statName])
+  const total = rawRoll + modifier
+  const outcome = classifyRoll(rawRoll, total, targetDc)
+  const summary = `${statName.toUpperCase()} check: d20(${rawRoll}) ${formatModifier(modifier)} = ${total} vs DC ${targetDc} — ${outcome.replace('_', ' ')}`
+
+  // The ten columns the action owns. `userId` is userBound and `rolledAt` is the
+  // timestampTrigger's, so passing either would be a lie about who rolled and when.
+  const created = await tools.create('roll-logs', {
+    campaignId: character.campaignId,
+    characterName: character.name,
+    entryType: 'roll',
+    statName,
+    rawRoll,
+    modifier,
+    total,
+    targetDc,
+    outcome,
+    summary,
+  })
+  if (!created.success) return writeFailed('roll_log', created.error, [])
+
+  return {
+    success: true,
+    data: { rawRoll, modifier, total, targetDc, outcome, rollLogId: created.data.recordId },
+  }
+}
+
 const deleteCharacterParamsSchema = z.object({ characterId: z.string().min(1) })
 
 /** `deleteWhere`'s page size for the inventory drain (SDK default 100, max 500). */
@@ -621,5 +780,6 @@ export const actions: Record<string, ActionHandler<Env>> = {
   applyGmMutation,
   forgeCharacter,
   useItem,
+  rollSkillCheck,
   deleteCharacter,
 }

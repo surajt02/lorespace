@@ -8,8 +8,14 @@
  */
 
 import type { Context, Hono } from 'hono'
-import { authenticatedRoomRequest, resolveAppRole, verifyJwt } from 'deepspace/worker'
+import {
+  authenticatedRoomRequest,
+  resolveAppMembership,
+  resolveAppRole,
+  verifyJwt,
+} from 'deepspace/worker'
 import type { JwtVerifierConfig, VerifyResult } from 'deepspace/worker'
+import { PREVIEW_PRESENCE_SCOPE } from '../constants'
 import type { AppContext, Env } from '../../worker.js'
 
 function jwtConfig(env: Env): JwtVerifierConfig {
@@ -150,10 +156,44 @@ export function registerRealtimeRoutes(app: Hono<AppContext>): void {
     ),
   )
 
-  app.get(
-    '/ws/presence/:scopeId',
-    wsRoute((env) => env.PRESENCE_ROOMS),
-  )
+  // Hand-written rather than `wsRoute(..., extraIdentity)`: `extraIdentity`
+  // receives no auth for an anonymous caller and can only return a role, so it
+  // encodes neither "anonymous is refused" nor "anonymous is allowed for this
+  // one scope" (ADR 0006). Refusing before `stub.fetch` is the point — a role
+  // is checked inside the room, after the socket is already open.
+  //
+  // `resolveAppMembership` answers `null` for "could not verify", which is a
+  // 503, never a 403: an unreachable users collection must not read as a
+  // non-member. Presence payloads carry character names and roll activity, so
+  // this is the authorization boundary the canvas and cron routes already have.
+  app.get('/ws/presence/:scopeId', async (c) => {
+    const scopeId = c.req.param('scopeId')
+    if (!scopeId) return new Response('Not found', { status: 404 })
+    const token = new URL(c.req.url).searchParams.get('token')
+    const auth = token ? (await verifyJwt(jwtConfig(c.env), token)).result : null
+
+    // A token that was offered and did not verify is a failed sign-in, not an
+    // anonymous visitor: answer 401 either way, but never fall back to the
+    // preview's exemption.
+    if (token && !auth) return new Response('Unauthorized', { status: 401 })
+
+    let identity: { role?: string } | undefined
+    if (!auth) {
+      // The only anonymous scope: sample data for the signed-out table. An
+      // empty identity is what an unauthenticated upgrade has always carried.
+      if (scopeId !== PREVIEW_PRESENCE_SCOPE) {
+        return new Response('Unauthorized', { status: 401 })
+      }
+    } else {
+      const membership = await resolveAppMembership(c.env, auth.userId)
+      if (!membership) return new Response('Service unavailable', { status: 503 })
+      if (!membership.member) return new Response('Forbidden', { status: 403 })
+      identity = { role: membership.role }
+    }
+
+    const stub = c.env.PRESENCE_ROOMS.get(c.env.PRESENCE_ROOMS.idFromName(scopeId))
+    return stub.fetch(authenticatedRoomRequest(c.req.raw, auth, identity))
+  })
 
   app.get(
     '/ws/cron/:roomId',

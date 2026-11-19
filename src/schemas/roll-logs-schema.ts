@@ -12,6 +12,13 @@
  * `timestampTrigger.field` is `summary`: `summary` is required, so every row
  * that passes validation gets stamped, and a hand-seeded row without one gets
  * no `rolledAt` rather than a misleading zero.
+ *
+ * Roll history is **server-authored** (ADR 0005, `P4.12`): the only writer is
+ * `rollSkillCheck`, which runs with the action credential and skips per-record
+ * RBAC. Members therefore have no create/update/delete here — a row they could
+ * write would stop being evidence that the GM (and the next phase) can trust.
+ * Reads stay open so the feed is live for signed-in and signed-out alike
+ * (ADR 0014).
  */
 
 import type { CollectionSchema } from 'deepspace/schema'
@@ -36,7 +43,7 @@ export const rollLogsSchema: CollectionSchema = {
   permissions: {
     '*': { read: true, create: false, update: false, delete: false },
     viewer: { read: true, create: false, update: false, delete: false },
-    member: { read: true, create: true, update: 'own', delete: 'own' },
+    member: { read: true, create: false, update: false, delete: false },
     admin: { read: true, create: true, update: true, delete: true },
   },
 }

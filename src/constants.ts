@@ -35,3 +35,13 @@ export const DEFAULT_CAMPAIGN_ID = 'default-campaign'
  *  Derived, never spelled out by hand: the room and the record id are the same
  *  campaign, so a changed id carries. */
 export const DEFAULT_CAMPAIGN_PRESENCE_SCOPE = `campaign:${DEFAULT_CAMPAIGN_ID}`
+
+/** Reserved scope for sample presence data — the one presence room an
+ *  unauthenticated socket may join (ADR 0006).
+ *
+ *  Every real campaign scope is membership-gated at
+ *  `src/server/realtime-routes.ts`, so the signed-out preview cannot reach the
+ *  party's room. Nothing joins this scope yet: the preview renders fixture data
+ *  rather than opening a socket, and this constant exists so the route's
+ *  exception is a named string instead of a literal. */
+export const PREVIEW_PRESENCE_SCOPE = 'campaign:preview'

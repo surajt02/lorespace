@@ -14,8 +14,16 @@
  * panels write through server actions and owner-scoped deletes (ADR 0015), and
  * the results come back over the room subscription. Signed out, every panel
  * falls back to the deterministic `PREVIEW_*` table (ADR 0014).
- * The roster and the action feed stay fixtures until `P4.3`, the GM console
- * until `P5`.
+ * The roster is live when signed in (`P4.3`): `PartyPresenceBar` opens the
+ * campaign's presence room and joins each present peer to a `characters` row.
+ * Signed out there is no socket and no liveness claim (ADR 0006).
+ *
+ * Every surface here resolves live rows first and falls back per ADR 0014: the
+ * campaign, the sheet, the pack, the feed (`P4.11`) and the roster. Signed out,
+ * one derivation picks the preview character so the sheet, the pack and the
+ * roster cannot show two different parties — the anonymous viewer reads the same
+ * collections, so an empty one just means nobody has seeded yet. The GM console
+ * is the only remaining fixture (`P5`).
  *
  * The one write this page makes itself is the seed (ADR 0007, `P2.5`): signed in
  * on an empty `campaigns` collection, `/home` POSTs
@@ -25,12 +33,18 @@
  * room subscription.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth, useQuery } from 'deepspace'
-import { CharacterSheetPanel, type QueryStatus, type SheetMode } from '@/components/CharacterSheetPanel'
+import {
+  CharacterSheetPanel,
+  type QueryStatus,
+  type ResolvedRoll,
+  type SheetMode,
+} from '@/components/CharacterSheetPanel'
 import { GmConsolePanel } from '@/components/GmConsolePanel'
 import { InventoryPanel } from '@/components/InventoryPanel'
 import { ActionFeed } from '@/components/vtt/ActionFeed'
+import { PartyPresenceBar, type Announcement } from '@/components/PartyPresenceBar'
 import { PartyRoster, type RosterMember } from '@/components/vtt/PartyRoster'
 import { SceneBanner } from '@/components/vtt/SceneBanner'
 import { SignInBanner } from '@/components/vtt/SignInBanner'
@@ -38,6 +52,7 @@ import { useToast } from '@/components/ui'
 import { DEFAULT_CAMPAIGN_ID } from '@/constants'
 import { callAction, ActionCallError } from '@/lib/actions'
 import { DEFAULT_CAMPAIGN_SEED, type CampaignRow } from '@/lib/campaign-seed'
+import type { AbilityScoreKey } from '@/lib/party-presence'
 import {
   PREVIEW_CAMPAIGN,
   PREVIEW_CHARACTERS,
@@ -46,6 +61,7 @@ import {
   PREVIEW_ROLLS,
   type CharacterRow,
   type InventoryRow,
+  type RollLogRow,
 } from '@/lib/preview-data'
 
 /**
@@ -74,6 +90,13 @@ export default function HomePage() {
     'inventory',
     { where: { campaignId: DEFAULT_CAMPAIGN_ID } },
   )
+  // The feed (`P4.11`). No `orderBy`: the record layer already sorts by
+  // `_created_at DESC`, and a `rolledAt` sort would order against that system
+  // column for no gain (ADR 0003). Newest first is the read's own order.
+  const { records: rollRecords, status: rollStatus } = useQuery<RollLogRow>('roll-logs', {
+    where: { campaignId: DEFAULT_CAMPAIGN_ID },
+    limit: 20,
+  })
   const { error: toastError } = useToast()
 
   const [seedState, setSeedState] = useState<SeedState>('idle')
@@ -81,6 +104,20 @@ export default function HomePage() {
   // seed retries on the next mount, not in a loop). A success flag here would
   // let a failure re-fire on the next render.
   const seedFired = useRef(false)
+
+  // The last roll this window resolved (`P4.8` → `P4.10`). The sheet hands up
+  // the action's own payload, so the banner and the toast cannot disagree.
+  const [lastRoll, setLastRoll] = useState<{
+    roll: ResolvedRoll
+    statName: AbilityScoreKey
+  } | null>(null)
+
+  // One value for presence, memoised: a fresh object on every render would make
+  // the bar's broadcast effect think a new roll had landed.
+  const announce = useMemo<Announcement | null>(
+    () => (lastRoll ? { ...lastRoll.roll, statName: lastRoll.statName } : null),
+    [lastRoll],
+  )
 
   const liveCampaign =
     records.find((record) => record.recordId === DEFAULT_CAMPAIGN_ID)?.data ?? null
@@ -134,30 +171,60 @@ export default function HomePage() {
   const campaign =
     liveCampaign ?? (seedState === 'seeded' ? DEFAULT_CAMPAIGN_SEED : PREVIEW_CAMPAIGN.data)
 
-  // `online` is a fixed flag this phase: `P4.3` replaces it with presence.
-  const roster: RosterMember[] = PREVIEW_CHARACTERS.map((record) => ({
+  // Signed in, your sheet is the row bound to your user id — no row yet means no
+  // character, so the panel renders the Forge. Signed out you are watching the
+  // table: the first live character when the collection has one, the fixture
+  // character when nobody has seeded yet (ADR 0014).
+  const myCharacter = isSignedIn
+    ? (characterRecords.find((record) => record.data.userId === userId) ?? null)
+    : (characterRecords[0] ?? PREVIEW_CHARACTERS[0] ?? null)
+
+  // True while the sheet is showing a live row to a signed-out viewer; that is
+  // also what decides the pack and the roster below, so one character cannot
+  // come with another character's items.
+  const previewFromLiveRows = !isSignedIn && characterRecords.length > 0
+
+  // `inventory.characterId` holds a character record id, so the pack is the rows
+  // pointing at the character resolved above — the same rows the sheet counts.
+  // Signed out, the fixture items only ever pair with the fixture character.
+  const myItems = isSignedIn
+    ? inventoryRecords.filter((record) => record.data.characterId === myCharacter?.recordId)
+    : previewFromLiveRows
+      ? inventoryRecords.filter((record) => record.data.characterId === myCharacter?.recordId)
+      : PREVIEW_INVENTORY.filter(
+          (record) => record.data.characterId === (PREVIEW_CHARACTERS[0]?.recordId ?? ''),
+        )
+
+  // Signed out, the roster is whatever the sheet is showing: the live party when
+  // there is one, else the fixture party. No presence socket is open on this
+  // branch, so `online` stays undefined and the rows draw no dot (ADR 0006).
+  // Signed in, `PartyPresenceBar` replaces this entirely.
+  const previewRoster: RosterMember[] = (
+    previewFromLiveRows ? characterRecords : PREVIEW_CHARACTERS
+  ).map((record) => ({
     id: record.recordId,
     name: record.data.name,
     archetype: record.data.archetype,
     hp: record.data.hp,
     maxHp: record.data.maxHp,
-    online: true,
   }))
 
-  // Signed in, your sheet is the row bound to your user id — no row yet means no
-  // character, so the panel renders the Forge. Signed out you are watching
-  // Kaelen's table, and both lists come from the fixture.
-  const myCharacter = isSignedIn
-    ? (characterRecords.find((record) => record.data.userId === userId) ?? null)
-    : (PREVIEW_CHARACTERS[0] ?? null)
-
-  // `inventory.characterId` holds a character record id, so the pack is the rows
-  // pointing at the character resolved above — the same rows the sheet counts.
-  const myItems = isSignedIn
-    ? inventoryRecords.filter((record) => record.data.characterId === myCharacter?.recordId)
-    : PREVIEW_INVENTORY.filter(
-        (record) => record.data.characterId === (PREVIEW_CHARACTERS[0]?.recordId ?? ''),
-      )
+  // Signed out the feed shows the same table it is previewing: when nobody has
+  // seeded a character there is nothing live to be coherent with, so the whole
+  // preview is the fixture. Once the party is live, the feed is the live
+  // `roll-logs` read — empty, loading or failed as it may be — because a fixture
+  // roll attributed to a fixture name beside a live sheet is the incoherence
+  // ADR 0014 and `P4.9` forbid.
+  const feedEntries = isSignedIn
+    ? rollRecords
+    : previewFromLiveRows
+      ? rollRecords
+      : PREVIEW_ROLLS
+  const feedStatus: QueryStatus = isSignedIn
+    ? rollStatus
+    : previewFromLiveRows
+      ? rollStatus
+      : 'ready'
 
   const sheetMode: SheetMode = isSignedIn ? 'live' : 'preview'
   // The pack waits on both reads: it cannot filter by a character it has not
@@ -203,13 +270,24 @@ export default function HomePage() {
           >
             <aside className="flex min-h-0 flex-col gap-3 bg-shell-panel lg:overflow-y-auto">
               <div className="pixel-frame bg-card">
-                <PartyRoster members={roster} />
+                {/* Conditional *component*, not a conditional hook: the presence
+                    socket must not be opened on the signed-out branch. */}
+                {isSignedIn ? (
+                  <PartyPresenceBar
+                    characters={characterRecords}
+                    myCharacter={myCharacter}
+                    userId={userId ?? ''}
+                    announce={announce}
+                  />
+                ) : (
+                  <PartyRoster members={previewRoster} />
+                )}
               </div>
             </aside>
 
             <section className="flex min-h-0 flex-col gap-3 bg-shell-panel lg:overflow-y-auto">
               <div className="pixel-frame bg-card">
-                <ActionFeed entries={PREVIEW_ROLLS.map((record) => record.data)} />
+                <ActionFeed entries={feedEntries} status={feedStatus} />
               </div>
               <GmConsolePanel messages={PREVIEW_GM_MESSAGES} />
             </section>
@@ -220,6 +298,9 @@ export default function HomePage() {
                 status={isSignedIn ? charactersStatus : 'ready'}
                 character={myCharacter}
                 items={myItems}
+                onRollResolved={(roll, statName) => {
+                  setLastRoll({ roll, statName })
+                }}
               />
               <InventoryPanel mode={sheetMode} status={inventoryPanelStatus} items={myItems} />
             </aside>

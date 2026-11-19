@@ -157,6 +157,19 @@ describe('character and inventory write permissions (ADR 0015/0016)', () => {
     })
   })
 
+  // ADR 0005 turned the roll into the server's: members may read history but
+  // never author it, or a forged total reaches the GM. Pinned the same way as
+  // `characters` above, because the action credential skips per-record RBAC and
+  // nothing else would notice the flip back (`P4.12`).
+  it('makes roll history read-only for members', () => {
+    expect(schemaNamed('roll-logs').permissions.member).toEqual({
+      read: true,
+      create: false,
+      update: false,
+      delete: false,
+    })
+  })
+
   it('allows members to discard only their own items, never to edit them', () => {
     // `update` is deliberately off: effects are keyed by item name, so a
     // rename would mint charges (ADR 0015/0016). Discard needs `delete: 'own'`.

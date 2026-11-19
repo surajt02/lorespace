@@ -158,12 +158,15 @@ describe('action surface', () => {
   // ADR 0020 deleted `adjustCharacterHp`, and the whole point was that hiding the
   // buttons is not enough: the route itself must be gone. This pins the
   // registered set so a player-facing HP path cannot quietly grow back.
-  it('registers exactly the five server actions', () => {
+  // `rollSkillCheck` is the sixth and the only roll authority (ADR 0005), so a
+  // second roll path would have to be added here on purpose.
+  it('registers exactly the six server actions', () => {
     expect(Object.keys(actions).sort()).toEqual([
       'applyGmMutation',
       'deleteCharacter',
       'ensureDefaultCampaign',
       'forgeCharacter',
+      'rollSkillCheck',
       'useItem',
     ])
   })

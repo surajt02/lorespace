@@ -15,9 +15,11 @@
  * server-computed `ac` and `hp = maxHp`. The record it renders still arrives
  * over the room subscription.
  *
- * All rules come from `src/lib/d20.ts`; there is no local modifier arithmetic
- * and stat cards are deliberately not clickable — a browser-computed roll would
- * be the dice authority ADR 0005 rejects, so the click path is `P4.8`.
+ * All rules come from `src/lib/d20.ts`; there is no local modifier arithmetic.
+ * The stat cards are clickable only on the viewer's live sheet (`P4.8`), and a
+ * click does not roll anything here: it calls the `rollSkillCheck` action, which
+ * is the only roll authority (ADR 0005), and renders what the server returned.
+ * A failed action rolls nothing at all — there is no client-side fallback die.
  */
 
 import { useState } from 'react'
@@ -33,7 +35,9 @@ import {
   formatModifier,
   getModifier,
   type ArchetypeName,
+  type RollOutcome,
 } from '@/lib/d20'
+import type { AbilityScoreKey } from '@/lib/party-presence'
 import type { CharacterRow, InventoryRow } from '@/lib/preview-data'
 
 export type SheetMode = 'preview' | 'live'
@@ -48,6 +52,25 @@ interface ForgeResult {
   name: string
   archetype: string
   itemsMissing: string[]
+}
+
+/** `rollSkillCheck`'s success data, spelled out for the same reason: the action
+ *  module is worker-only. These are the server's numbers — the panel formats
+ *  them and never recomputes one. */
+export interface ResolvedRoll {
+  rawRoll: number
+  modifier: number
+  total: number
+  targetDc: number
+  outcome: RollOutcome
+  rollLogId: string
+}
+
+const OUTCOME_LABELS: Record<RollOutcome, string> = {
+  critical_success: 'Critical success',
+  success: 'Success',
+  failure: 'Failure',
+  critical_failure: 'Critical failure',
 }
 
 /** Display-only: keeps the bar in range while a stale row is still on screen.
@@ -73,11 +96,15 @@ export function CharacterSheetPanel({
   status,
   character,
   items,
+  onRollResolved,
 }: {
   mode: SheetMode
   status: QueryStatus
   character: RecordData<CharacterRow> | null
   items: RecordData<InventoryRow>[]
+  /** Called with the server's result after a successful roll, so `/home` can
+   *  hand the same payload to the presence banner. */
+  onRollResolved?: (roll: ResolvedRoll, statName: AbilityScoreKey) => void
 }) {
   // Hooks run in every branch, so they live above the dispatch. `preview` simply
   // never renders the surfaces that use them. No mutation hook: this panel reads
@@ -86,6 +113,9 @@ export function CharacterSheetPanel({
 
   const [name, setName] = useState('')
   const [forging, setForging] = useState<ArchetypeName | null>(null)
+  // Which card is waiting on the server, so exactly that card shows `loading`
+  // and every other card is inert for the duration.
+  const [rollingStat, setRollingStat] = useState<AbilityScoreKey | null>(null)
 
   const live = mode === 'live'
 
@@ -128,6 +158,34 @@ export function CharacterSheetPanel({
     }
   }
 
+  /**
+   * Roll: the click sends `{ characterId, statName }` and nothing else. The
+   * server draws the d20, applies the modifier, reads the campaign's DC and
+   * writes the `roll-logs` row; this only formats the returned payload. A
+   * failure toasts and clears — it never fabricates a roll locally (ADR 0005).
+   */
+  async function rollStat(statName: AbilityScoreKey): Promise<void> {
+    if (character === null || rollingStat !== null) return
+    setRollingStat(statName)
+    try {
+      const roll = await callAction<ResolvedRoll>('rollSkillCheck', {
+        characterId: character.recordId,
+        statName,
+      })
+      const label =
+        ABILITY_SCORES.find((score) => score.key === statName)?.label ?? statName.toUpperCase()
+      success(
+        `${label} check`,
+        `d20(${roll.rawRoll}) ${formatModifier(roll.modifier)} = ${roll.total} vs DC ${roll.targetDc} — ${OUTCOME_LABELS[roll.outcome]}`,
+      )
+      onRollResolved?.(roll, statName)
+    } catch (cause) {
+      error('Roll failed', failureMessage(cause))
+    } finally {
+      setRollingStat(null)
+    }
+  }
+
   if (live && status === 'loading') return <SheetSkeleton />
 
   if (live && status === 'error') return <SheetReadError />
@@ -157,7 +215,21 @@ export function CharacterSheetPanel({
     )
   }
 
-  return <SheetBody character={character.data} carried={items.length} />
+  return (
+    <SheetBody
+      character={character.data}
+      carried={items.length}
+      // Preview mode is read-only: no bearer token, so no roll (ADR 0005).
+      onRoll={
+        live
+          ? (statName) => {
+              void rollStat(statName)
+            }
+          : undefined
+      }
+      rollingStat={rollingStat}
+    />
+  )
 }
 
 /**
@@ -219,8 +291,20 @@ function SheetSkeleton() {
   )
 }
 
-/** The sheet itself. Presentational: `preview` and `live` render the same body. */
-function SheetBody({ character, carried }: { character: CharacterRow; carried: number }) {
+/** The sheet itself. Presentational: `preview` and `live` render the same body.
+ *  `onRoll` present turns the six cards into the roll entry point; absent, they
+ *  stay display-only (signed-out preview, or a sheet that is not the viewer's). */
+function SheetBody({
+  character,
+  carried,
+  onRoll,
+  rollingStat,
+}: {
+  character: CharacterRow
+  carried: number
+  onRoll?: (statName: AbilityScoreKey) => void
+  rollingStat?: AbilityScoreKey | null
+}) {
   const maxHp = character.maxHp
   const hp = clamp(character.hp, 0, maxHp)
   const ratio = maxHp > 0 ? hp / maxHp : 0
@@ -264,21 +348,52 @@ function SheetBody({ character, carried }: { character: CharacterRow; carried: n
 
       <div className="pixel-rule my-3" />
 
-      {/* Display-only: no onClick and no pointer affordance. Rolling is the
-          server's (`P4.4`/`P4.8`), per ADR 0005. The score and its modifier share
+      {/* One card per ability. With `onRoll` each is a button that asks the
+          server to roll (`P4.8`, ADR 0005); without it, an inert `<li>` so the
+          preview cannot pretend it can roll. Scores and modifiers share
           `pixel-numeral` with every other number in the shell (ADR 0013). */}
       <ul className="grid grid-cols-3 gap-2">
-        {ABILITY_SCORES.map(({ key, label }) => (
-          <li key={key} className="border border-border bg-secondary px-2 py-1.5 text-center">
-            <span className="block font-pixel text-[10px] uppercase text-muted-foreground">{label}</span>
-            <span className="pixel-numeral block text-sm text-foreground">
-              {character[key]}
-            </span>
-            <span className="pixel-numeral block text-[10px] text-primary">
-              {formatModifier(getModifier(character[key]))}
-            </span>
-          </li>
-        ))}
+        {ABILITY_SCORES.map(({ key, label }) => {
+          const card = (
+            <>
+              <span className="block font-pixel text-[10px] uppercase text-muted-foreground">
+                {label}
+              </span>
+              <span className="pixel-numeral block text-sm text-foreground">{character[key]}</span>
+              <span className="pixel-numeral block text-[10px] text-primary">
+                {formatModifier(getModifier(character[key]))}
+              </span>
+            </>
+          )
+
+          if (!onRoll) {
+            return (
+              <li key={key} className="border border-border bg-secondary px-2 py-1.5 text-center">
+                {card}
+              </li>
+            )
+          }
+
+          return (
+            <li key={key}>
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid={`stat-card-${key}`}
+                aria-label={`Roll a ${label} check`}
+                // One roll in flight: a second click cannot start another.
+                disabled={Boolean(rollingStat)}
+                loading={rollingStat === key}
+                className="h-auto w-full flex-col items-stretch gap-0 whitespace-normal px-2 py-1.5 text-center"
+                onClick={() => {
+                  onRoll(key)
+                }}
+              >
+                {card}
+              </Button>
+            </li>
+          )
+        })}
       </ul>
 
       <p className="mt-3 font-pixel text-[10px] uppercase text-muted-foreground">

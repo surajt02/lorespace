@@ -1,7 +1,15 @@
 /**
  * Party roster — the left column of the table: who is standing, and how badly
- * they are hurt. Prop-driven (`P1.10`); `P4.3` feeds it presence × characters,
- * which is why `online` is optional rather than derived here.
+ * they are hurt. Prop-driven (`P1.10`); `P4.3` feeds it presence × characters
+ * through `PartyPresenceBar`.
+ *
+ * `online` is optional on purpose: `undefined` means "no liveness claim" — it
+ * draws **no** dot at all, which is what the signed-out preview needs, when no
+ * presence socket is open. `true`/`false` are the only values that draw one.
+ *
+ * `isSelf` marks the viewer's own row (`P4.3`); self comes from the viewer's
+ * character row, not from presence, because the SDK's peer list excludes self
+ * and is empty on every (re)connect.
  *
  * Deliberately carries **no** nav user-name test id — `smoke.spec.ts` asserts
  * that id is absent while signed out, and party members are not the nav user.
@@ -17,6 +25,7 @@ export interface RosterMember {
   hp: number
   maxHp: number
   online?: boolean
+  isSelf?: boolean
 }
 
 function initials(name: string): string {
@@ -49,6 +58,7 @@ export function PartyRoster({ members }: { members: RosterMember[] }) {
             return (
               <li
                 key={member.id}
+                data-testid="roster-member"
                 className="flex items-center gap-3 border-b border-border px-3 py-2 last:border-b-0"
               >
                 <Avatar className="size-8">
@@ -60,25 +70,41 @@ export function PartyRoster({ members }: { members: RosterMember[] }) {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     <span className="truncate text-sm text-foreground">{member.name}</span>
-                    <span
-                      aria-hidden="true"
-                      className={
-                        member.online
-                          ? 'size-1.5 shrink-0 rounded-full bg-success'
-                          : 'size-1.5 shrink-0 rounded-full bg-muted-foreground'
-                      }
-                    />
-                    <span className="sr-only">{member.online ? 'online' : 'offline'}</span>
+                    {member.online !== undefined && (
+                      <>
+                        <span
+                          aria-hidden="true"
+                          className={
+                            member.online
+                              ? 'size-1.5 shrink-0 rounded-full bg-success'
+                              : 'size-1.5 shrink-0 rounded-full bg-muted-foreground'
+                          }
+                        />
+                        <span className="sr-only">{member.online ? 'online' : 'offline'}</span>
+                      </>
+                    )}
+                    {member.isSelf && (
+                      <span
+                        data-testid="roster-self"
+                        className="font-pixel text-[10px] uppercase text-muted-foreground"
+                      >
+                        you
+                      </span>
+                    )}
                   </div>
-                  <Badge variant="secondary" className="mt-1 font-pixel text-[10px] uppercase">
-                    {member.archetype}
-                  </Badge>
+                  {member.archetype !== '' && (
+                    <Badge variant="secondary" className="mt-1 font-pixel text-[10px] uppercase">
+                      {member.archetype}
+                    </Badge>
+                  )}
                 </div>
 
-                <span className="pixel-numeral text-xs text-foreground">
-                  {hp}
-                  <span className="text-muted-foreground">/{member.maxHp}</span>
-                </span>
+                {member.maxHp > 0 && (
+                  <span className="pixel-numeral text-xs text-foreground">
+                    {hp}
+                    <span className="text-muted-foreground">/{member.maxHp}</span>
+                  </span>
+                )}
               </li>
             )
           })}

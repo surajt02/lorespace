@@ -69,31 +69,36 @@ document; this file stays the cross-phase index of what is done.
 
 ## Current state
 
-As of 2026-11-18 (after phase 3): a signed-in player gets a real campaign row,
-forges an adventurer from four presets, and owns a live sheet and pack that
-write HP and inventory through confirmed record mutations. The roster, feed and
-GM console are still fixtures (Phases 4-5).
+As of 2026-11-19 (after phase 4): a signed-in player forges an adventurer, sees
+who is actually at the table, and rolls a stat check that the **server** resolves
+— the result lands in `roll-logs` first, then as a banner in every open window and
+as the newest row of the live feed. Presence is membership-gated. The GM console
+is the only remaining fixture (Phase 5).
 
 | Thing | State |
 | --- | --- |
 | Theme | `obsidian` — 21 tokens, `--radius: 0`, amber `#d97706`, Silkscreen labels; no indigo anywhere |
-| `src/pages/index.tsx` | Split-hero landing, Design Direction block, inline-SVG d20, CTA `Enter the table` |
-| `src/pages/(app)/home.tsx` | 3-column shell; campaign banner, sheet and pack read live rows (seed skeleton + read-failure notices); roster/feed/GM fixture-backed |
+| `src/pages/index.tsx` | Split-hero landing, Design Direction block, inline-SVG d20 (`D20Mark`, shared with the roll banner), CTA `Enter the table` |
+| `src/pages/(app)/home.tsx` | 3-column shell; campaign banner, sheet, pack, **roster** and **feed** read live rows (seed skeleton + read-failure notices); GM console is the last fixture. Signed out, one `previewFromLiveRows` flag keeps sheet/pack/roster/feed on the same source |
+| Presence | `src/components/PartyPresenceBar.tsx` — one `usePresenceRoom(DEFAULT_CAMPAIGN_PRESENCE_SCOPE)` socket, broadcasts identity + `lastRoll`, roster join in `src/lib/party-presence.ts` |
+| `src/server/realtime-routes.ts` | `/ws/presence/:scopeId` is **gated** (401 anonymous/bad token, 503 unverifiable, 403 non-member) with `campaign:preview` the one anonymous scope; hand-written instead of `wsRoute(extraIdentity)` |
 | `src/pages/(app)/(protected)/settings.tsx` | Account card + a **Characters** card: the caller's character with `Delete <name>` → confirm → `deleteCharacter` (items first); `/home` then shows Forge |
-| `src/schemas.ts` | `users` + `settings` + `campaigns` + `characters` + `inventory` (7 cols, `userId` owner) + `roll-logs` (six, `lintSchema`/`lintSchemas` clean) |
-| `src/actions/index.ts` | Five actions: `ensureDefaultCampaign`, `applyGmMutation`, `forgeCharacter`, `useItem`, `deleteCharacter`; all over `POST /api/actions/:name` (bearer). No player HP action (ADR 0020) |
+| `src/schemas.ts` | `users` + `settings` + `campaigns` + `characters` + `inventory` + `roll-logs` (six, `lintSchema`/`lintSchemas` clean) |
+| `src/actions/index.ts` | Six actions: `ensureDefaultCampaign`, `applyGmMutation`, `forgeCharacter`, `useItem`, `deleteCharacter`, **`rollSkillCheck`**; all over `POST /api/actions/:name` (bearer). No player HP action (ADR 0020) |
 | `src/lib/campaign-seed.ts` | `DEFAULT_CAMPAIGN_SEED` — the seed row and `PREVIEW_CAMPAIGN.data` are the same object |
-| `src/lib/d20.ts` | `getModifier`, `formatModifier`, `calculateArmorClass`, `classifyRoll`, `ARCHETYPE_PRESETS` (Vanguard/Shadowblade/Arcanist/Marksman), `ARCHETYPE_ORDER`, `ABILITY_SCORES`, `CONSUMABLE_EFFECTS`; zero imports, no randomness |
-| `src/components/CharacterSheetPanel.tsx` | Live `characters` record → Forge (`forgeCharacter` action), 6 stat cards (display-only), AC, segmented HP bar (read-only — no HP controls, ADR 0020) |
+| `src/lib/d20.ts` | `getModifier`, `formatModifier`, `calculateArmorClass`, `classifyRoll`, `ARCHETYPE_PRESETS`, `ARCHETYPE_ORDER`, `ABILITY_SCORES`, `CONSUMABLE_EFFECTS`; zero imports, no randomness. Entropy lives in `src/lib/rng.ts` (rejection-sampled d20 from bytes) |
+| `src/components/CharacterSheetPanel.tsx` | Live `characters` record → Forge (`forgeCharacter`), 6 stat cards that **roll** (click → `rollSkillCheck` → toast + banner), AC, segmented HP bar (read-only — no HP controls, ADR 0020); preview cards stay inert |
 | `src/components/InventoryPanel.tsx` | Live `inventory` rows → Use (`useItem` action, heals) / Discard (owner-scoped `removeConfirmed` behind `ConfirmModal`), no add/edit |
-| `src/ai/tools.ts` | Built-in record tools only, generic prompt |
+| `src/components/vtt/ActionFeed.tsx` | Live `roll-logs` rows, newest 20, `feed-entry` per row, skeleton/read-error/empty states |
+| `src/components/vtt/RollBanner.tsx` | One fixed strip, d20 sprite, `d20(n) ±m = t vs DC n`, outcome badge, 6 s auto-dismiss; identical for roller (action result) and peers (presence) |
+| `src/ai/tools.ts` | Built-in record tools only, generic prompt — `records.delete` still listed, so `P5.4` is **reopened** |
 | `ai-chat` feature | **Not installed** — no `ChatPanel`, no `/api/ai/chat` |
-| `src/constants.ts` | `DEFAULT_CAMPAIGN_ID`, `DEFAULT_CAMPAIGN_PRESENCE_SCOPE` added by 2a |
-| Tests | `smoke` 6/6 + `api` 2/2 + `collab` 3/3; 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 5 files / 89 tests |
-| Git | scaffold + phases 0-3 committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
-| Deploy | live at <https://lorespace.app.space> (release `rel_01M7RNC780XXGENCASX5XPH9AQ`); **GitHub source claimed permanently** by `P3.8` — deploys ship the checkout, no commit lineage |
-| Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)); `/home` renders the live campaign row or `src/lib/preview-data.ts` |
-| Write policy | members **cannot write `characters` or `inventory`** directly: Forge/Use/delete are server actions (ADR 0015/0020), Discard is an owner-scoped delete, and `applyGmMutation` (owner credential, no caller until `P5.3`) is the only HP writer. `/home` seeds `campaigns/default-campaign` |
+| `src/constants.ts` | `DEFAULT_CAMPAIGN_ID`, `DEFAULT_CAMPAIGN_PRESENCE_SCOPE` (2a), `PREVIEW_PRESENCE_SCOPE` (4) |
+| Tests | `smoke` 6/6 + `api` 2/2 + `presence` 2/2 + `collab` 3/3 (collab's loading-state test races when four spec files run in parallel — `P6.2`); 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 8 files / 134 tests |
+| Git | scaffold + phases 0-4 committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
+| Deploy | live at <https://lorespace.app.space>; **GitHub source claimed permanently** by `P3.8` — deploys ship the checkout, no commit lineage |
+| Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)); `/home` renders live rows when they exist and `src/lib/preview-data.ts` when the table is empty |
+| Write policy | members **cannot write `characters`, `inventory` or `roll-logs`** directly: Forge/Use/delete/roll are server actions (ADR 0015/0020/0005), Discard is an owner-scoped delete, and `applyGmMutation` (owner credential, no caller until `P5.3`) is the only HP writer. `/home` seeds `campaigns/default-campaign` |
 | README | front door with local run, verification, real screenshots; live URL pending `P6.7` |
 
 ## Architecture map
@@ -130,7 +135,7 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 | 1 | Pixel theme, landing page, 3-column workspace shell | 10 | **done 2026-11-18** — obsidian 21 tokens + chrome utilities, split-hero landing, 3-col shell signed in/out |
 | 2 | `ensureDefaultCampaign`, `applyGmMutation` | 4 | **done 2026-11-18** — seed action + GM write path, 32 unit tests, seeded once in a live browser run |
 | 3 | d20 math, character sheet, inventory (read + use) | 7 | **done 2026-11-18** — d20, server-authored Forge/Use/delete, no player HP path, owner-scoped inventory, Marksman; live |
-| 4 | Presence roster, server-computed roll, roll banner | 5 | next — day 3 morning |
+| 4 | Presence roster, server-computed roll, roll banner | 5 | **done 2026-11-19** — gated presence, `rollSkillCheck`, two-window banner + live feed, 134 unit + presence 2/2, deployed |
 | 5 | AI GM: install ai-chat, GM tools, owner billing, console | 6 | todo — days 3-4 |
 | 6 | Gates, unit + smoke + one sync spec, deploy, README | 7 | todo — day 4 |
 | | **Planned total** | **39** | of ~40 available (30 planned + day-4 contingency) |
@@ -631,20 +636,23 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 
 ## Phase 4 — Party presence, dice engine
 
-- [ ] `P4.1` `src/components/PartyPresenceBar.tsx` —
+- [x] `P4.1` `src/components/PartyPresenceBar.tsx` —
       `usePresenceRoom('campaign:default-campaign')` (the scope is
       membership-gated per [ADR 0006](./adr/0006-presence-room-authorization.md)),
       broadcast `{characterId, characterName, archetype, lastRoll, isTypingAction}`.
-- [ ] `P4.2` Gate presence per
+      — 2026-11-19 phase 4: shipped as the roster's live half and **the only presence socket** (rendered signed in only). Broadcasts `{characterId, characterName, archetype}` plus `lastRoll` after a resolved roll — **deviation: no `isTypingAction`**, because nothing composes an action until the GM prompt exists; the field would be an always-`false` fixture in the payload. Deferred to `P5.9`. HP never crosses the socket (`P4.5`).
+- [x] `P4.2` Gate presence per
       [ADR 0006](./adr/0006-presence-room-authorization.md): resolve app
       membership in `src/server/realtime-routes.ts` `wsRoute`'s `extraIdentity`
       for `/ws/presence/*` (canvas and cron already do this), keep
       `campaign:preview` unauthenticated for sample data, and **still** filter
       `anon-` peers client-side so a preview peer can never render as a party
       member.
-- [ ] `P4.3` Roster join: presence peers × `useQuery('characters')` → avatar,
+      — 2026-11-19 phase 4: shipped as a **hand-written route**, not `extraIdentity`: the hook cannot refuse, is skipped for anonymous callers, and only returns a role the room checks *after* the socket is open. `src/server/realtime-routes.ts` now answers 401 (anonymous, non-preview, or bad token) / 503 (`resolveAppMembership` null = could not verify) / 403 (non-member) before `stub.fetch`, and `campaign:preview` (new `PREVIEW_PRESENCE_SCOPE`) stays open with no role. Client-side `anon-` filtering landed in `P4.3` as defence in depth. Covered by `tests/presence.spec.ts` (anonymous + bad-token 401 on both scopes, preview upgrade); 403/503 stay code-reviewed — no non-member JWT and no way to fail the users read on demand.
+- [x] `P4.3` Roster join: presence peers × `useQuery('characters')` → avatar,
       name, archetype badge, online dot, `hp/maxHp`.
-- [ ] `P4.4` Server-computed roll per
+      — 2026-11-19 phase 4: `src/lib/party-presence.ts` `buildParty()` joins peers to `characters` rows for name/archetype/`hp`/`maxHp`; self first, from the viewer's own row (the SDK excludes self and clears peers on every reconnect, so a peer-derived self row would flash away). `anon-` peers dropped, a peer with no resolvable character renders as "No adventurer" with no HP readout rather than being hidden, and peer dots follow `connected`. 25 unit tests pin the join and the payload guards.
+- [x] `P4.4` Server-computed roll per
       [ADR 0005](./adr/0005-dice-roll-authority.md): add `rollSkillCheck` to
       `src/actions/index.ts` — bearer-auth, verify the caller owns the character
       (RBAC is off inside actions), roll with `crypto.getRandomValues`,
@@ -654,27 +662,57 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       `{rawRoll, modifier, total, targetDc, outcome, rollLogId}`. The client
       then broadcasts that authoritative result over presence — durable before
       ephemeral. `src/components/DiceRoller.tsx` never rolls.
-- [ ] `P4.5` Keep presence payloads small — `updateState` merges arbitrary keys
+      — 2026-11-19 phase 4: shipped: `rollSkillCheck({characterId, statName})` → `character_not_found` / `not_owner` / foreign-campaign guard / `campaign_not_found` (missing or non-numeric `activeThreatDc`) → `crypto.getRandomValues` → `rollD20FromBytes` (`src/lib/rng.ts`, rejection sampling) → `getModifier` → `classifyRoll` → one `roll-logs` row → `{rawRoll, modifier, total, targetDc, outcome, rollLogId}`. **Deviations:** no `DiceRoller.tsx` (the six stat cards are the only roll path, so a second component would be a duplicate entry point); no `campaignId` in the request (read from the character row, so a client cannot aim a roll at another table); a `roll_failed` code for exhausted entropy instead of a 500. 13 action tests + 5 rng tests.
+- [x] `P4.5` Keep presence payloads small — `updateState` merges arbitrary keys
       with no size check and broadcasts to every peer.
-- [ ] `P4.6` Note in code: the action is the only roll authority. If the
+      — 2026-11-19 phase 4: payload is `{characterId, characterName, archetype, lastRoll{8 fixed keys}}`, replaced not accumulated (~200 bytes). **Correction to the task's premise:** 0.44.2 *does* enforce a size check — `MAX_PRESENCE_STATE_BYTES` 16 KiB (`worker.js:4204-4224`) — but `updateState` merges, so a growing payload hits the cap and then hard-fails; fixed keys avoid both. HP is read from the record room, never sent.
+- [x] `P4.6` Note in code: the action is the only roll authority. If the
       presence broadcast fails after the write, the feed shows the roll and
       peers miss the banner — accepted, and must not trigger a retry (a retry
       would roll twice).
+      — 2026-11-19 phase 4: noted in code at both ends: the action's docblock and the broadcast effect in `PartyPresenceBar` say the action is the only roll authority, a dropped `updateState` costs peers the banner and never the roll, and no retry path exists — a retry would roll twice. The roller's own banner is deliberately not gated on the socket, so a dropped broadcast still shows the result locally.
 - [ ] `P4.7` **Deploy #2 + two-window sync proof** (end of day 3): two signed-in
       browsers, one roll, banner and feed land in both without a reload. This is
       the milestone that decides whether the interview rests on the architecture
       or on the AI; do not slip it into day 4 without saying so.
-- [ ] `P4.8` Attribute-card click → `rollSkillCheck` and a toast with the
+- [x] `P4.8` Attribute-card click → `rollSkillCheck` and a toast with the
       authoritative result (no banner yet; `P4.4` owns the action). Added in
       phase 3: the click half of `P3.5` cannot be honest before the server action
       exists ([ADR 0005](./adr/0005-dice-roll-authority.md)), so phase 3 ships the
       cards display-only.
-- [ ] `P4.9` Signed-out preview follows ADR 0014's live-row rule once the roster
+      — 2026-11-19 phase 4: each stat card is a `Button` on the live own sheet (`stat-card-<key>`, per-card `loading`, one roll in flight), awaiting `callAction('rollSkillCheck')` and toasting the authoritative numbers; signed-out preview keeps the inert `<li>` so it cannot pretend it can roll (ADR 0005). A failure toasts and clears, never fabricating a roll. The banner is `P4.10`, so this task's "no banner yet" is satisfied twice over.
+- [x] `P4.9` Signed-out preview follows ADR 0014's live-row rule once the roster
       is live: with character rows present, `/home` signed out shows the first
       live character and its items instead of `PREVIEW_CHARACTERS[0]`. Deferred
       from phase 3 because the roster is still a fixture, so a live sheet beside
       a fixture roster would be incoherent; `P4.3` makes the roster real.
+      Extended in phase 4 to the roster and the feed: the same rule applied to
+      one surface and not its neighbours would put a fixture beside live rows.
+      — 2026-11-19 phase 4: `/home` signed out resolves one `previewFromLiveRows` flag from `characters` and feeds the sheet, the pack, the roster **and** the feed from it, so a live character never appears beside fixture items, a fixture roster, or `PREVIEW_ROLLS` attributed to fixture names. No liveness dot signed out (no socket, ADR 0006). `grep -n "online: true"` is gone from the page.
+- [x] `P4.10` Roll banner (`src/components/vtt/RollBanner.tsx`): the one
+      high-contrast strip that announces a resolved roll — `d20(16) + 3 = 19 vs
+      DC 13 [SUCCESS]` — for the roller and for every peer, with the d20 sprite
+      from ADR 0013 drawn once (extracted from the landing page so there is one
+      hand-authored sprite, not two). Dismisses itself; a later roll replaces
+      it. Added in phase 4: the phase board's scope says "roll banner" but no
+      task owned the component.
+      — 2026-11-19 phase 4: `src/components/vtt/RollBanner.tsx` — fixed top strip, `D20Mark` sprite (moved out of `src/pages/index.tsx`, one hand-authored die, `d20-trace` still animates, prerender verified), `d20(n) ±m = t vs DC n` in `pixel-numeral`, outcome badge, dismiss button, 6 s auto-dismiss keyed on `rollLogId` so the same roll cannot keep a stale banner alive. Roller gets it from the action result, peers from `freshRolls` — the two-window spec asserts the two windows' banner text is **equal**.
+- [x] `P4.11` Live Party Action Feed: `/home` reads `roll-logs`
+      (`where: { campaignId }`, newest first — the record layer already orders
+      by `_created_at DESC`) and `ActionFeed` renders those rows, with a
+      skeleton while loading and a visible notice on read failure. Signed out:
+      live rows when any exist, `PREVIEW_ROLLS` only when the collection is
+      empty (ADR 0014). Added in phase 4: `P4.4` writes the row and `P4.6`
+      refers to "the feed", but no task made the feed read it.
+      — 2026-11-19 phase 4: `useQuery('roll-logs', { where: { campaignId }, limit: 20 })` — no `orderBy`, because the record layer already sorts `_created_at DESC` (ADR 0003); `ActionFeed` now takes `RecordData<RollLogRow>[]` (keyed by `recordId`), renders live rows with `feed-entry`, a `feed-skeleton` while loading, `feed-read-error` on failure and an `EmptyState` when the table has not rolled. Band values uppercase at render, so the fixture's `DEX` and a live row's `dex` read alike.
+- [x] `P4.12` `roll-logs` member writes off (`create: false`, `update: false`,
+      `delete: false`), pinned in `src/schemas/__tests__/schemas.test.ts` the way
+      `P3.10` pinned `characters`. `P4.4` is pointless while a member can
+      `createConfirmed` a forged total: ADR 0005 calls the row "evidence rather
+      than a claim", and the action credential skips per-record RBAC, so nothing
+      needs member write access. Added in phase 4.
 
+      — 2026-11-19 phase 4: `roll-logs` member writes off (`create/update/delete: false`); `'*'`/`viewer`/`admin` unchanged. Pinned in `src/schemas/__tests__/schemas.test.ts`. The action credential skips per-record RBAC, so nothing needed member write access — a member-authored row could not be evidence (ADR 0005).
 ## Phase 5 — AI Game Master
 
 - [ ] `P5.1` Install the chat surface ([ADR 0004](./adr/0004-ai-chat-and-owner-billing.md)):
@@ -689,11 +727,16 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       30 KB tool-result cap), `modify_character_hp`, `grant_character_loot`,
       `update_campaign_scene`. Remember every tool in the `ToolSet` is
       auto-exposed over `/_deepspace/agent/*` HTTP **and MCP**, not just the panel.
-- [x] `P5.4` ~~Decide `records.delete`~~ **Resolved: drop it.** Remove
+- [ ] `P5.4` ~~Decide `records.delete`~~ **Resolved: drop it.** Remove
       `records.delete` from `ALLOWED_TOOL_NAMES` (`src/ai/tools.ts:18-27`): the GM
       never needs it, there is no soft delete or transaction to undo it, and
       every tool in the set is auto-exposed over MCP. Re-add only as a narrow,
       confirmed GM tool. — 2026-11-18 master
+      **Reopened 2026-11-18 phase 4 audit:** the decision is made but the
+      removal is not in the code — `src/ai/tools.ts:25` still lists
+      `records.delete` and `buildTools` still exposes it. The tick above claimed
+      a security-relevant removal that had not shipped; this task is not done
+      until the list and its test say so.
 - [ ] `P5.5` GM system prompt: snapshot-first, **two-stage resolution** (set DC
       via tool → ask for the roll → never fabricate dice), verify in
       `roll-logs`, narrate 2-4 short paragraphs, then mutate. Enforce the
@@ -714,6 +757,11 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 - [ ] `P5.8` `deepspace add ai-chat` also drops in `src/pages/assistant.tsx`.
       Leave it unlinked and unstyled — chat history UI is cut (ADR 0008). Do not
       invest in it; do not delete it either (the feature owns that file).
+- [ ] `P5.9` Broadcast presence `isTypingAction` while a GM message is being
+      composed, and render it on the roster member. Deferred from `P4.1` in
+      phase 4: nothing in the app composes an action until the GM prompt exists
+      (`P5.7`), so a field that is always `false` would be a fixture in the
+      presence payload.
 
 ## Phase 6 — Gates, tests, deploy
 
@@ -788,7 +836,11 @@ a bearer token.
 `registerPlatformProxyRoutes` (else the `/_deepspace/*` proxy shadows agent
 routes). Six DOs are declared in **both** `worker.ts:38` and `wrangler.toml:44`.
 Unmatched `/api/*` returns JSON 404, never the SPA shell. `/ws/presence/:scopeId`
-requires no token and has no role gate; anon clients get `anon-<uuid>` ids.
+is **gated since `P4.2`**: `src/server/realtime-routes.ts` hand-writes the route
+(the `wsRoute` `extraIdentity` hook cannot refuse, and is skipped for anonymous
+callers) — anonymous is refused except on `campaign:preview`, a bad token is 401,
+`resolveAppMembership` `null` is 503 and a non-member is 403, all before
+`stub.fetch`. Anonymous peers still get `anon-<uuid>` ids on the preview scope.
 
 **AI.**
 - `streamDeepSpaceAgent` / `createDeepSpaceAI` fall back to
