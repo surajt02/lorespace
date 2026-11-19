@@ -38,8 +38,9 @@ export interface CharacterRow {
   cha: number
 }
 
-/** `inventory` — 6 columns. `characterId` holds a character **recordId**. */
+/** `inventory` — 7 columns. `characterId` holds a character **recordId**. */
 export interface InventoryRow {
+  userId: string
   characterId: string
   campaignId: string
   itemName: string
@@ -129,11 +130,12 @@ export const PREVIEW_INVENTORY: RecordData<InventoryRow>[] = [
   {
     recordId: 'item-ashen-longsword',
     data: {
+      userId: 'preview-kaelen',
       characterId: 'char-kaelen',
       campaignId: DEFAULT_CAMPAIGN_ID,
       itemName: 'Ashen Longsword',
       category: 'weapon',
-      description: 'Pitted steel, still warm. The grip is wrapped in grave-linen.',
+      description: 'One-handed sword. Your main weapon in a fight.',
       quantity: 1,
     },
     ...ENVELOPE,
@@ -143,11 +145,12 @@ export const PREVIEW_INVENTORY: RecordData<InventoryRow>[] = [
   {
     recordId: 'item-cracked-buckler',
     data: {
+      userId: 'preview-kaelen',
       characterId: 'char-kaelen',
       campaignId: DEFAULT_CAMPAIGN_ID,
       itemName: 'Cracked Buckler',
       category: 'armor',
-      description: 'A knuckle-shaped dent from something that did not stop at the shield.',
+      description: 'Small shield. +5 to your AC',
       quantity: 1,
     },
     ...ENVELOPE,
@@ -157,11 +160,12 @@ export const PREVIEW_INVENTORY: RecordData<InventoryRow>[] = [
   {
     recordId: 'item-sunfire-vial',
     data: {
+      userId: 'preview-kaelen',
       characterId: 'char-kaelen',
       campaignId: DEFAULT_CAMPAIGN_ID,
       itemName: 'Sunfire Vial',
       category: 'consumable',
-      description: 'Sealed glass of noon. Burns the dark off a wound.',
+      description: 'Drink to restore 6 HP, up to your maximum. One use.',
       quantity: 2,
     },
     ...ENVELOPE,

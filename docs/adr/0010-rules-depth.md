@@ -1,6 +1,6 @@
 # 0010 — Rules depth: six attributes and nothing else
 
-- **Status:** Accepted
+- **Status:** Accepted — item-effects clause amended by [0016](./0016-item-uses.md)
 - **Date:** 2026-11-18
 - **Area:** game mechanics
 - **Constraints:** `P3.1`, `P3.5`, `P5.5`; schema already shipped in `P2a.2`

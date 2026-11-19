@@ -483,3 +483,79 @@ awaited `createConfirmed`/`putConfirmed`/`removeConfirmed` with toasts. The
   needs, `P4.3` can join the existing `characters` query, and `P4.8`/`P4.9`
   record the two things phase 3 deferred. No phase became blocked as a side
   effect of this one; phase 4 still owns its own deploy (#2).
+
+---
+
+## Revision — 2026-11-18 (post-deploy product review)
+
+Appended after the Outcome above; the Outcome is not rewritten. This section is
+the current contract. The phase was completed and deployed, then reviewed by the
+product owner, who changed four decisions. Recorded as
+[ADR 0015](../adr/0015-server-authored-character-state.md) and
+[ADR 0016](../adr/0016-item-uses.md), tasks `P3.10`-`P3.14`.
+
+**What changed and why**
+
+| Trigger | Change |
+| --- | --- |
+| Players could set their own HP | `hp` is server-authored: `adjustCharacterHp` accepts one of the five sheet steps (`minus5`, `minus1`, `plus1`, `plus5`, `rest`), never a delta or target. `characters` member create/update/delete are `false`. |
+| Forge was a client record write | `forgeCharacter({ name, archetype })` — server reads the preset, stamps `userId`, writes `hp = maxHp`, computes `ac`, creates the two starter items. The browser sends no stats. |
+| Inventory had no `userId`; any member could delete anything | `inventory.userId` (required, immutable, plain text so a GM action can stamp the owner), `ownerField: 'userId'`, member `delete: 'own'`, `create`/`update` off. Closes `P2.2`; `update` stays off because effects are keyed by item name, so a rename would mint charges. |
+| Items did not say what they do; Cleric read like Arcanist | Categories are `weapon|armor|consumable|quest` (relic dropped). Consumables heal through `useItem` (`CONSUMABLE_EFFECTS`: Sunfire Vial 6, Field Dressing 4), capped at `maxHp`, refusing at full HP. `Cleric` → `Marksman` (ranged). Copy states the mechanic first. |
+
+**Revised contracts**
+
+- `src/schemas/characters-schema.ts` — 13 columns, `ownerField: 'userId'`,
+  `uniqueOn ['userId','campaignId']`, `archetype` options
+  `Vanguard|Shadowblade|Arcanist|Marksman`; **member read-only**.
+- `src/schemas/inventory-schema.ts` — 7 columns:
+  `userId` (required, immutable), `characterId` (reference metadata),
+  `campaignId`, `itemName`, `category` (`weapon|armor|consumable|quest`, default
+  `quest`), `description`, `quantity`; `ownerField: 'userId'`; member
+  `delete: 'own'` only (no create, no update).
+- Actions (`POST /api/actions/:name`, bearer, RBAC off inside):
+  - `forgeCharacter({name: 1-40 chars, archetype})` →
+    `{characterId, name, archetype, itemsMissing[]}`; `already_forged`,
+    `invalid_params`, `write_failed` (`create_character`, `membership`).
+  - `adjustCharacterHp({characterId, step})` →
+    `{characterId, hp: {before, after, maxHp, appliedDelta}}`; `not_owner`,
+    `character_not_found`, `invalid_params`.
+  - `useItem({itemId})` →
+    `{itemId, itemName, heal: {requested, applied, hp, maxHp}, quantity|null}`
+    (`null` = last one removed); `not_owner`, `item_not_found`, `not_usable`,
+    `no_effect`, `at_full`, `write_failed` (`character_hp` with no prior write,
+    or `inventory` with applied `['character_hp']`).
+  - `applyGmMutation` — **owner credential only** (`not_gm` otherwise, ADR 0017);
+    `grant_loot` stamps the target character's `userId`; category enum shrank to
+    the four.
+- `src/lib/d20.ts` — presets (Vanguard 16 AC/24 HP, Shadowblade 14/17, Arcanist
+  14/18, Marksman 15/19), `CONSUMABLE_EFFECTS`, plain copy.
+- Panels — `CharacterSheetPanel` no longer writes records (Forge and HP are
+  actions); `InventoryPanel` keeps `removeConfirmed` for Discard only. The forge
+  panel no longer takes `campaignId`.
+- Review follow-ups (same session): `applyGmMutation` is owner-credential-only
+  (ADR 0017), `inventory` member `update` is off, and `adjustCharacterHp` reads
+  only `step` (a smuggled `delta` is ignored and tested). Accepted race:
+  `useItem`'s read-modify-write of `quantity` can spend one charge twice when the
+  owner races their own two tabs; no conditional-update API exists.
+- Data note: locally, items created before `P3.13` have no `userId` and are
+  read-only to members; production had no characters, so nothing to migrate.
+
+**Revised verification**
+
+- `npm run validate` → 5 files / 89 tests; `npm run lint` clean;
+  `npx tsc --noEmit` clean.
+- Throwaway signed-in specs (deleted before commit), three runs: Forge, `-5` HP,
+  Use (heal + clamp), full-HP refusal, Discard and reload all passed, and the
+  worker log shows `[action] "forgeCharacter"`, `"adjustCharacterHp"`,
+  `"useItem"` — the page makes no record writes.
+- Independent review found and closed two holes in the same session: member
+  `inventory.update` (rename a sword into a vial) and `applyGmMutation`'s
+  membership authority (any player could set their own HP). Both now have tests
+  that fail if the hole reopens.
+
+### Revised feature inventory (sections 1-5)
+
+See the phase close-out report in this session; it supersedes the Outcome's
+sections 1-5 above. The report's five sections are the authoritative inventory
+for the shipped state after `P3.10`-`P3.14`.

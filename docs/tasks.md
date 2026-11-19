@@ -79,20 +79,20 @@ GM console are still fixtures (Phases 4-5).
 | Theme | `obsidian` — 21 tokens, `--radius: 0`, amber `#d97706`, Silkscreen labels; no indigo anywhere |
 | `src/pages/index.tsx` | Split-hero landing, Design Direction block, inline-SVG d20, CTA `Enter the table` |
 | `src/pages/(app)/home.tsx` | 3-column shell; campaign banner, sheet and pack read live rows (seed skeleton + read-failure notices); roster/feed/GM fixture-backed |
-| `src/schemas.ts` | `users` + `settings` + `campaigns` + `characters` + `inventory` + `roll-logs` (six, `lintSchema`/`lintSchemas` clean) |
-| `src/actions/index.ts` | `ensureDefaultCampaign` + `applyGmMutation`; both reachable over `POST /api/actions/:name` (bearer) |
+| `src/schemas.ts` | `users` + `settings` + `campaigns` + `characters` + `inventory` (7 cols, `userId` owner) + `roll-logs` (six, `lintSchema`/`lintSchemas` clean) |
+| `src/actions/index.ts` | Five actions: `ensureDefaultCampaign`, `applyGmMutation`, `forgeCharacter`, `adjustCharacterHp`, `useItem`; all over `POST /api/actions/:name` (bearer) |
 | `src/lib/campaign-seed.ts` | `DEFAULT_CAMPAIGN_SEED` — the seed row and `PREVIEW_CAMPAIGN.data` are the same object |
-| `src/lib/d20.ts` | `getModifier`, `formatModifier`, `calculateArmorClass`, `classifyRoll`, `ARCHETYPE_PRESETS` (4), `ARCHETYPE_ORDER`, `ABILITY_SCORES`; zero imports, no randomness |
-| `src/components/CharacterSheetPanel.tsx` | Live `characters` record → Forge (name + 4 presets), 6 stat cards (display-only), AC, segmented HP, HP controls via `putConfirmed` |
-| `src/components/InventoryPanel.tsx` | Live `inventory` rows → Use (consumables, spends a charge) / Discard (`ConfirmModal`), no add/edit |
+| `src/lib/d20.ts` | `getModifier`, `formatModifier`, `calculateArmorClass`, `classifyRoll`, `ARCHETYPE_PRESETS` (Vanguard/Shadowblade/Arcanist/Marksman), `ARCHETYPE_ORDER`, `ABILITY_SCORES`, `CONSUMABLE_EFFECTS`; zero imports, no randomness |
+| `src/components/CharacterSheetPanel.tsx` | Live `characters` record → Forge (`forgeCharacter` action), 6 stat cards (display-only), AC, segmented HP, HP steps via `adjustCharacterHp` |
+| `src/components/InventoryPanel.tsx` | Live `inventory` rows → Use (`useItem` action, heals) / Discard (owner-scoped `removeConfirmed` behind `ConfirmModal`), no add/edit |
 | `src/ai/tools.ts` | Built-in record tools only, generic prompt |
 | `ai-chat` feature | **Not installed** — no `ChatPanel`, no `/api/ai/chat` |
 | `src/constants.ts` | `DEFAULT_CAMPAIGN_ID`, `DEFAULT_CAMPAIGN_PRESENCE_SCOPE` added by 2a |
-| Tests | `smoke` 6/6 + `api` 2/2 + `collab` 3/3; 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 5 files / 52 tests |
+| Tests | `smoke` 6/6 + `api` 2/2 + `collab` 3/3; 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 5 files / 87 tests |
 | Git | scaffold + phases 0-3 committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
 | Deploy | live at <https://lorespace.app.space> (release `rel_01M7RNC780XXGENCASX5XPH9AQ`); **GitHub source claimed permanently** by `P3.8` — deploys ship the checkout, no commit lineage |
 | Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)); `/home` renders the live campaign row or `src/lib/preview-data.ts` |
-| Write policy | signed-in browsers write `characters` (own row: Forge + `hp`) and `inventory` (create/update/delete) through awaited `*Confirmed` mutations; `/home` seeds `campaigns/default-campaign`; `applyGmMutation` still has no caller until `P5.3`. HP is client-authored by design (rolls stay server-side, ADR 0005) |
+| Write policy | members **cannot write `characters` or `inventory`** directly: Forge/HP/Use are server actions (ADR 0015), Discard is an owner-scoped delete, and `applyGmMutation` (no caller until `P5.3`) is the GM path. `/home` still seeds `campaigns/default-campaign` |
 | README | front door with local run, verification, real screenshots; live URL pending `P6.7` |
 
 ## Architecture map
@@ -128,7 +128,7 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 | 2a | Data model prelude: 4 schemas + registration + default campaign | — | **done 2026-11-18** — 6 registered, lint clean, 17 unit tests |
 | 1 | Pixel theme, landing page, 3-column workspace shell | 10 | **done 2026-11-18** — obsidian 21 tokens + chrome utilities, split-hero landing, 3-col shell signed in/out |
 | 2 | `ensureDefaultCampaign`, `applyGmMutation` | 4 | **done 2026-11-18** — seed action + GM write path, 32 unit tests, seeded once in a live browser run |
-| 3 | d20 math, character sheet, inventory (read + use) | 7 | **done 2026-11-18** — d20 + 20 tests, live sheet/Forge/HP, Use/Discard, deploy #1 live |
+| 3 | d20 math, character sheet, inventory (read + use) | 7 | **done 2026-11-18** — d20 + 25 tests, server-authored Forge/HP/Use, owner-scoped Discard, Marksman, deploy #1 live |
 | 4 | Presence roster, server-computed roll, roll banner | 5 | next — day 3 morning |
 | 5 | AI GM: install ai-chat, GM tools, owner billing, console | 6 | todo — days 3-4 |
 | 6 | Gates, unit + smoke + one sync spec, deploy, README | 7 | todo — day 4 |
@@ -373,6 +373,8 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       collection has no `userId` column. Acceptable for a two-character demo
       dataset ([ADR 0014](./adr/0014-public-read-table.md)); a real product adds
       `userId` and scopes delete to `'own'`. — 2026-11-18 grill
+      **Closed 2026-11-18 by `P3.13`:** inventory now has `userId`, and member
+      update/delete are `'own'`.
 - [x] `P2.3` `src/actions/index.ts` — `ensureDefaultCampaign`: `tools.query`
       then `tools.create(..., 'default-campaign')`. Known-id create is an
       **upsert**, so it is idempotent. Seed scene + enemy + DC per plan.
@@ -393,6 +395,11 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       must share the campaign. No caller until `P5.3`. `details.applied` is part
       of the wire shape but is always `[]` today, because every mutation kind
       performs exactly one write.
+      **Superseded 2026-11-18 by `P3.10`/ADR 0017:** authority is the app-owner
+      credential (`not_gm` otherwise), because table membership let any player
+      set their own HP through this action. The membership query is gone; the
+      target campaign check stays; loot is stamped with the target character's
+      `userId`.
 - [x] `P2.5` Wire `ensureDefaultCampaign` per
       [ADR 0007](./adr/0007-default-campaign-trigger.md): from the app tier on
       `/home` when `isSignedIn` && the `campaigns` query is empty && a `useRef`
@@ -478,6 +485,8 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       item write is named in an `error` toast ("Ash exists, but X did not
       save") — the character row still lands. Buttons gate on
       `characters.ready && inventory.ready && userId != null`.
+      **Revised by `P3.11`:** Forge is now the `forgeCharacter` action; the client
+      no longer creates the row or its items.
 - [x] `P3.5` 6 attribute cards (`font-mono tabular-nums`), click → skill check;
       HP bar (no `Progress` primitive — compose div + `bg-success|warning|
       destructive` + inline width) and −5/−1/+1/+5/Short Rest, clamped
@@ -489,6 +498,8 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       display-only with no pointer affordance; (2) numerals use
       `pixel-numeral` (Silkscreen, `tabular-nums`) rather than `font-mono`,
       because ADR 0013 gives every numeral in the shell the pixel register.
+      **Revised by `P3.10`:** HP buttons call `adjustCharacterHp` with a named
+      step; the browser no longer writes `hp`.
 - [x] `P3.6` `src/components/InventoryPanel.tsx` — list items, **Use/Discard
       only** (no add/edit form, cut by ADR 0008); discard via `ConfirmModal`
       naming the item.
@@ -498,6 +509,8 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       `putConfirmed`/`removeConfirmed` + toasts. **Deviation:** "Use" spends a
       charge and does nothing else — ADR 0010 has no item effects, so no
       healing was invented. No add/edit form (ADR 0008).
+      **Revised by `P3.12`:** consumables heal through the `useItem` action and
+      the categories are `weapon|armor|consumable|quest`.
 - [x] `P3.7` Empty states via local `EmptyState`, icons from `lucide-react`.
       — 2026-11-18 phase 3: Forge replaces the sheet's EmptyState when signed in
       with no row; "Nothing carried" stays for an empty pack; skeletons
@@ -519,6 +532,57 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       — 2026-11-18 phase 3: `sheet-read-error` / `inventory-read-error`. A
       `characters` read error also puts the pack in its read-error state, because
       the pack cannot be filtered to a character that was not resolved.
+
+- [x] `P3.10` **Server-authored HP**: `src/actions/index.ts` `adjustCharacterHp`,
+      ownership by `characters.userId === ctx.userId`, clamp `0..maxHp`, returns
+      the same `{before, after, maxHp, appliedDelta}` shape as `applyGmMutation`;
+      sheet buttons call it instead of `putConfirmed`; `characters` member
+      writes off ([ADR 0015](./adr/0015-server-authored-character-state.md)).
+      — 2026-11-18 phase 3 revision: shipped as `{ characterId, step }` where
+      `step` is `minus5|minus1|plus1|plus5|rest` — **no raw delta is accepted**,
+      so a client cannot name an arbitrary HP. Error codes `not_owner`,
+      `character_not_found`, `invalid_params`. Sheet calls `callAction`;
+      `characters` member create/update/delete are all `false`, pinned by
+      `schemas.test.ts`. **Review follow-up:** `applyGmMutation` is now
+      owner-credential-only (`not_gm`), so a player cannot set HP around the
+      five steps (ADR 0017).
+- [x] `P3.11` **Server-side Forge**: `forgeCharacter({name, archetype})` writes
+      `userId`, `hp = maxHp`, `ac` from the preset and the two starter items,
+      refuses a second character, reports `itemsMissing` (no transactions).
+      `characters`/`inventory` member create off.
+      — 2026-11-18 phase 3 revision: server derives everything from the preset;
+      the browser sends only a trimmed name (1-40) and the archetype. Duplicate
+      forge → `already_forged`; a failed starter item returns success with
+      `itemsMissing`; a concurrent double-forge still trips `uniqueOn` and
+      reports `write_failed` (`create_character`).
+- [x] `P3.12` **Item uses**: `useItem({itemId})` — owner check, consumable only,
+      heal from `CONSUMABLE_EFFECTS` capped at `maxHp`, refuses at full HP,
+      decrements/removes; categories become `weapon|armor|consumable|quest`
+      (`relic` dropped); plain descriptive copy
+      ([ADR 0016](./adr/0016-item-uses.md)).
+      — 2026-11-18 phase 3 revision: `Sunfire Vial` heals 6, `Field Dressing` 4;
+      unknown consumables → `no_effect`, full HP → `at_full` with zero writes.
+      Heal lands before the decrement; a failed decrement reports
+      `write_failed` with `applied: ['character_hp']` (no transaction). Copy is
+      descriptive first ("Small shield. +5 to your AC").
+      **Review follow-up:** `inventory` member `update` is `false` (not `'own'`),
+      because a member could rename a sword into a `Sunfire Vial` and mint
+      charges; Discard needs only `delete: 'own'`.
+- [x] `P3.13` **Inventory ownership**: `inventory.userId` (`ownerField`,
+      immutable, required), member `update/delete: 'own'`, create off; Forge,
+      `useItem` and `applyGmMutation` stamp the character owner's id; fixture
+      rows carry `userId`; `schemas.test.ts` pins the new shape.
+      — 2026-11-18 phase 3 revision: 7 columns; `userId` is plain text (not
+      `userBound`) so the GM action can stamp another player's id. This closes
+      `P2.2`'s accepted asymmetry. Locally, inventory rows created before this
+      change have no `userId` and are read-only to members; production had none.
+- [x] `P3.14` **Archetypes**: `Cleric` → `Marksman` (ranged, DEX/WIS, longbow +
+      field dressing); schema select options, presets, fixture drift test and
+      copy updated. Crisp blurbs for all four.
+      — 2026-11-18 phase 3 revision: Marksman `10/16/12/10/14/11`, HP 19,
+      armor +2 (AC 15), `Yew Longbow` + `Field Dressing`. Blurbs and item copy
+      rewritten to state the mechanic first. Vanguard/Shadowblade fixture drift
+      still pinned; Arcanist AC is 14.
 
 ## Phase 4 — Party presence, dice engine
 

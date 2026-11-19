@@ -7,15 +7,21 @@
  * the fixture read-only (no Forge, no HP controls), `live` renders what the
  * collection actually holds, including a skeleton and a read-failure notice.
  *
+ * The browser never writes `characters` (ADR 0015). Both writes here are server
+ * actions called with the bearer session: `forgeCharacter` creates the row with
+ * a server-computed `ac` and `hp = maxHp`, and `adjustCharacterHp` clamps and
+ * writes `hp`. The record it renders still arrives over the room subscription.
+ *
  * All rules come from `src/lib/d20.ts`; there is no local modifier arithmetic
  * and stat cards are deliberately not clickable — a browser-computed roll would
  * be the dice authority ADR 0005 rejects, so the click path is `P4.8`.
  */
 
 import { useState, type ReactNode } from 'react'
-import { useAuth, useMutations, type RecordData } from 'deepspace'
+import type { RecordData } from 'deepspace'
 import { Shield } from 'lucide-react'
 import { Badge, Button, EmptyState, Input, Label, useToast } from '@/components/ui'
+import { callAction } from '@/lib/actions'
 import {
   ABILITY_SCORES,
   ARCHETYPE_ORDER,
@@ -32,12 +38,33 @@ export type QueryStatus = 'loading' | 'ready' | 'error'
 
 /** HP buttons, in render order; `rest` is the whole bar, not a step. */
 const HP_STEPS = [
-  { key: 'minus-5', label: '-5', delta: -5 },
-  { key: 'minus-1', label: '-1', delta: -1 },
-  { key: 'plus-1', label: '+1', delta: 1 },
-  { key: 'plus-5', label: '+5', delta: 5 },
+  { step: 'minus5', label: '-5' },
+  { step: 'minus1', label: '-1' },
+  { step: 'plus1', label: '+1' },
+  { step: 'plus5', label: '+5' },
 ] as const
 
+type HpStep = (typeof HP_STEPS)[number]['step'] | 'rest'
+
+/** `forgeCharacter`'s success data, spelled out locally: importing the action
+ *  module for its type would put worker-only modules (zod, `deepspace/worker`)
+ *  in this panel's import graph — the same reason `home.tsx` spells out
+ *  `SeedResult`. */
+interface ForgeResult {
+  characterId: string
+  name: string
+  archetype: string
+  itemsMissing: string[]
+}
+
+/** `adjustCharacterHp`'s success data: the server's clamped result. */
+interface AdjustHpResult {
+  characterId: string
+  hp: { before: number; after: number; maxHp: number; appliedDelta: number }
+}
+
+/** Display-only: the server clamps the write, so this keeps the bar in range
+ *  while a stale row is still on screen. */
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
 }
@@ -48,29 +75,26 @@ function hpFill(ratio: number): string {
   return 'bg-destructive'
 }
 
-/** `createConfirmed`/`putConfirmed` reject with a plain `Error`; keep one wording. */
+/** Record mutations reject with a plain `Error`, and `callAction` with an
+ *  `ActionCallError` (also an `Error`), so one branch covers both. */
 function failureMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : 'The write was refused.'
+  return cause instanceof Error ? cause.message : 'The request was refused.'
 }
 
 export function CharacterSheetPanel({
-  campaignId,
   mode,
   status,
   character,
   items,
 }: {
-  campaignId: string
   mode: SheetMode
   status: QueryStatus
   character: RecordData<CharacterRow> | null
   items: RecordData<InventoryRow>[]
 }) {
   // Hooks run in every branch, so they live above the dispatch. `preview` simply
-  // never renders the surfaces that use them.
-  const characters = useMutations<CharacterRow>('characters')
-  const inventory = useMutations<InventoryRow>('inventory')
-  const { userId } = useAuth()
+  // never renders the surfaces that use them. No mutation hook: this panel reads
+  // `characters` and writes only through actions (ADR 0015).
   const { success, error } = useToast()
 
   const [name, setName] = useState('')
@@ -80,10 +104,11 @@ export function CharacterSheetPanel({
   const live = mode === 'live'
 
   /**
-   * Forge: one `characters` row (all 13 columns, `hp = maxHp`) then the preset's
-   * two starter `inventory` rows. Two collections, no transaction — a failed item
-   * write is named in the toast, because the sheet itself cannot show the gap
-   * once the character row lands.
+   * Forge: `forgeCharacter` writes the `characters` row (server-computed `ac`,
+   * `hp = maxHp`, `userId` from the bearer session) and the preset's two starter
+   * `inventory` rows. There is no transaction, so a failed item comes back in
+   * `itemsMissing` and is named in the toast — the character row exists either
+   * way, and the sheet cannot show the gap once it lands.
    */
   async function forge(presetName: ArchetypeName): Promise<void> {
     if (forging !== null) return
@@ -93,69 +118,48 @@ export function CharacterSheetPanel({
       return
     }
 
-    const preset = ARCHETYPE_PRESETS[presetName]
     setForging(presetName)
-
-    let characterId: string
     try {
-      characterId = await characters.createConfirmed({
-        userId: userId ?? '',
-        campaignId,
+      const result = await callAction<ForgeResult>('forgeCharacter', {
         name: trimmed,
-        archetype: preset.name,
-        hp: preset.maxHp,
-        maxHp: preset.maxHp,
-        ac: calculateArmorClass(preset.scores.dex, preset.armorBonus),
-        ...preset.scores,
+        archetype: presetName,
       })
-    } catch (cause) {
-      setForging(null)
-      error('Forge failed', failureMessage(cause))
-      return
-    }
-
-    const missing: string[] = []
-    let itemReason = ''
-    for (const item of preset.starterItems) {
-      try {
-        await inventory.createConfirmed({
-          characterId,
-          campaignId,
-          itemName: item.itemName,
-          category: item.category,
-          description: item.description,
-          quantity: item.quantity,
-        })
-      } catch (cause) {
-        missing.push(item.itemName)
-        itemReason = failureMessage(cause)
+      if (result.itemsMissing.length === 0) {
+        success(
+          'Adventurer Forged',
+          `${result.name} the ${result.archetype} takes a place at the table.`,
+        )
+      } else {
+        error(
+          'Items missing',
+          `${result.name} exists, but ${result.itemsMissing.join(' and ')} did not save.`,
+        )
       }
-    }
-
-    setForging(null)
-    if (missing.length === 0) {
-      success('Adventurer Forged', `${trimmed} the ${preset.name} takes a place at the table.`)
-    } else {
-      error(
-        'Items missing',
-        `${trimmed} exists, but ${missing.join(' and ')} did not save. ${itemReason}`,
-      )
+    } catch (cause) {
+      error('Forge failed', failureMessage(cause))
+    } finally {
+      setForging(null)
     }
   }
 
-  /** HP is the only column the browser updates, and only on the viewer's row. */
-  async function writeHp(
-    record: RecordData<CharacterRow>,
-    key: string,
-    next: number,
-  ): Promise<void> {
+  /**
+   * HP changes are server writes (`adjustCharacterHp`): the click sends one of
+   * the five steps, the server maps it, clamps to `0..maxHp` and reports where
+   * the bar landed. Only the owner's row can move — the action checks ownership
+   * itself, and a client cannot send an arbitrary delta.
+   */
+  async function adjustHp(record: RecordData<CharacterRow>, step: HpStep): Promise<void> {
     if (hpPending !== null) return
-    const maxHp = record.data.maxHp
-    const value = clamp(next, 0, maxHp)
-    setHpPending(key)
+    setHpPending(step)
     try {
-      await characters.putConfirmed(record.recordId, { hp: value })
-      success('HP updated', `${record.data.name} is at ${value}/${maxHp}.`)
+      const result = await callAction<AdjustHpResult>('adjustCharacterHp', {
+        characterId: record.recordId,
+        step,
+      })
+      success(
+        'HP updated',
+        `${record.data.name} is at ${result.hp.after}/${result.hp.maxHp}.`,
+      )
     } catch (cause) {
       error('HP not updated', failureMessage(cause))
     } finally {
@@ -173,9 +177,6 @@ export function CharacterSheetPanel({
         name={name}
         onNameChange={setName}
         forging={forging}
-        // `userBound` pins `userId` server-side; a null id would send `''` and be
-        // refused, so the Forge waits for the session to resolve.
-        ready={characters.ready && inventory.ready && userId != null}
         onForge={(presetName) => {
           void forge(presetName)
         }}
@@ -197,13 +198,15 @@ export function CharacterSheetPanel({
 
   const controls = live ? (
     <HpControls
-      ready={characters.ready && character.data.maxHp > 0}
+      // The action needs the bearer session, not the room's write readiness,
+      // so a zero maximum is the only reason to disable the buttons.
+      ready={character.data.maxHp > 0}
       pending={hpPending}
-      onStep={(key, delta) => {
-        void writeHp(character, key, character.data.hp + delta)
+      onStep={(step) => {
+        void adjustHp(character, step)
       }}
       onRest={() => {
-        void writeHp(character, 'rest', character.data.maxHp)
+        void adjustHp(character, 'rest')
       }}
     />
   ) : undefined
@@ -357,7 +360,7 @@ function HpControls({
 }: {
   ready: boolean
   pending: string | null
-  onStep: (key: string, delta: number) => void
+  onStep: (step: HpStep) => void
   onRest: () => void
 }) {
   return (
@@ -367,14 +370,14 @@ function HpControls({
       <div className="mt-1 flex flex-wrap gap-1">
         {HP_STEPS.map((step) => (
           <Button
-            key={step.key}
+            key={step.step}
             size="sm"
             variant="outline"
             className="pixel-numeral px-2"
             disabled={!ready || pending !== null}
-            loading={pending === step.key}
+            loading={pending === step.step}
             onClick={() => {
-              onStep(step.key, step.delta)
+              onStep(step.step)
             }}
           >
             {step.label}
@@ -394,18 +397,18 @@ function HpControls({
   )
 }
 
-/** No character row yet: the only way to get one (`P3.4`, ADR 0008 — no modal). */
+/** No character row yet: the only way to get one (`P3.4`, ADR 0008 — no modal).
+ *  `forgeCharacter` authenticates with the bearer session, not the room, so the
+ *  form is enabled as soon as it renders. */
 function ForgeForm({
   name,
   onNameChange,
   forging,
-  ready,
   onForge,
 }: {
   name: string
   onNameChange: (name: string) => void
   forging: ArchetypeName | null
-  ready: boolean
   onForge: (presetName: ArchetypeName) => void
 }) {
   return (
@@ -443,7 +446,7 @@ function ForgeForm({
                 variant="outline"
                 data-testid={`forge-preset-${presetName.toLowerCase()}`}
                 className="h-auto w-full flex-col items-stretch gap-1 whitespace-normal px-2 py-2 text-left"
-                disabled={!ready || (forging !== null && forging !== presetName)}
+                disabled={forging !== null && forging !== presetName}
                 loading={forging === presetName}
                 onClick={() => {
                   onForge(presetName)
@@ -463,12 +466,6 @@ function ForgeForm({
           )
         })}
       </ul>
-
-      {!ready && (
-        <p className="mt-2 text-xs text-muted-foreground">
-          The forge opens once the table finishes connecting.
-        </p>
-      )}
     </section>
   )
 }

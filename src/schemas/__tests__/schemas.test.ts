@@ -6,10 +6,11 @@ import { DEFAULT_CAMPAIGN_ID, DEFAULT_CAMPAIGN_PRESENCE_SCOPE } from '../../cons
 /**
  * The schema lint gate. `lintSchema` is warn-only — it returns problems and
  * logs them, it never throws — so without this test a mis-declared column
- * (an `ownerField` that is not `userBound`, a `userBound` column that is not
- * text, a `visibilityField` out of step with `read: true`) would ship silently
- * and surface as confusing RBAC behaviour at runtime. `lintSchemas` adds the
- * set-level rules, which `lintSchema` cannot see.
+ * (an `ownerField` that is not `userBound` on a collection a client may create
+ * in, a `userBound` column that is not text, a `visibilityField` out of step
+ * with `read: true`) would ship silently and surface as confusing RBAC
+ * behaviour at runtime. `lintSchemas` adds the set-level rules, which
+ * `lintSchema` cannot see.
  *
  * Runs in Node in well under a second (`npm run test:unit`).
  */
@@ -62,8 +63,8 @@ describe('default campaign constants', () => {
  * broadcasts into the presence scope, Phase 5's GM tools read the same column
  * names. Lint cannot see a rename or a changed default, so these assertions —
  * not `lintSchema` — are what make § Contracts in the phase plan enforceable.
- * The permission matrices are deliberately out of scope here; they are audited
- * in `P2.1`.
+ * The write side (who may create, update or delete a row) is pinned by
+ * ADR 0015/0016 in its own `describe` below.
  */
 describe('data-model contracts later phases depend on', () => {
   const schemaNamed = (name: string) => {
@@ -87,15 +88,38 @@ describe('data-model contracts later phases depend on', () => {
     expect(userId?.immutable).toBe(true)
   })
 
-  it('points inventory at its character by name, not by foreign key', () => {
+  it('keeps inventory at seven columns, owned by userId and named by character', () => {
     const inventory = schemaNamed('inventory')
+    const userId = inventory.columns.find((column) => column.name === 'userId')
     const characterId = inventory.columns.find((column) => column.name === 'characterId')
 
-    expect(inventory.columns).toHaveLength(6)
+    expect(inventory.columns).toHaveLength(7)
+    expect(inventory.ownerField).toBe('userId')
+    expect(userId?.required).toBe(true)
+    expect(userId?.immutable).toBe(true)
     expect(characterId?.interpretation).toEqual({
       kind: 'reference',
       targetTable: 'characters',
       displayColumn: 'name',
+    })
+  })
+
+  it('narrows inventory categories to the four that have a meaning', () => {
+    const category = schemaNamed('inventory').columns.find((column) => column.name === 'category')
+
+    expect(category?.interpretation).toEqual({
+      kind: 'select',
+      options: ['weapon', 'armor', 'consumable', 'quest'],
+    })
+    expect(category?.default).toBe('quest')
+  })
+
+  it('replaces the Cleric archetype with the ranged Marksman', () => {
+    const archetype = schemaNamed('characters').columns.find((column) => column.name === 'archetype')
+
+    expect(archetype?.interpretation).toEqual({
+      kind: 'select',
+      options: ['Vanguard', 'Shadowblade', 'Arcanist', 'Marksman'],
     })
   })
 
@@ -107,5 +131,40 @@ describe('data-model contracts later phases depend on', () => {
     expect(rolledAt?.storage).toBe('number')
     expect(rolledAt?.timestampTrigger).toEqual({ field: 'summary' })
     expect(rollLogs.columns.some((column) => column.name === 'createdAt')).toBe(false)
+  })
+})
+
+/**
+ * The write side of the two collections Phase 3 made live, pinned because the
+ * browser must not be able to author character state (ADR 0015). `characters`
+ * is read-only to members — Forge and HP are actions — and `inventory` writes
+ * are scoped to the row's owner, so `Use` and `Discard` cannot reach another
+ * player's pack.
+ */
+describe('character and inventory write permissions (ADR 0015/0016)', () => {
+  const schemaNamed = (name: string) => {
+    const schema = schemas.find((candidate) => candidate.name === name)
+    if (!schema) throw new Error(`collection '${name}' is not registered`)
+    return schema
+  }
+
+  it('makes character rows read-only for members', () => {
+    expect(schemaNamed('characters').permissions.member).toEqual({
+      read: true,
+      create: false,
+      update: false,
+      delete: false,
+    })
+  })
+
+  it('allows members to discard only their own items, never to edit them', () => {
+    // `update` is deliberately off: effects are keyed by item name, so a
+    // rename would mint charges (ADR 0015/0016). Discard needs `delete: 'own'`.
+    expect(schemaNamed('inventory').permissions.member).toEqual({
+      read: true,
+      create: false,
+      update: false,
+      delete: 'own',
+    })
   })
 })

@@ -9,11 +9,23 @@
  *
  * Armor class is display-only in this build — nothing attacks it, and no monster
  * or damage roll exists (ADR 0010, ADR 0011).
+ *
+ * It also holds the four Forge presets and the one meaning each item category
+ * carries (ADR 0016):
+ *
+ * - `weapon` — the character's attack weapon. No attack roll exists; the GM
+ *   narrates hits.
+ * - `armor` — light or heavy armor. Its bonus is already baked into
+ *   `characters.ac` at Forge; it is carried, not equipped.
+ * - `consumable` — drink or bind to restore HP. The server applies the heal and
+ *   spends a charge (`useItem`, ADR 0015); the amount lives in
+ *   `CONSUMABLE_EFFECTS` below, never in the request.
+ * - `quest` — a quest object (key, sigil): no mechanical effect, not usable.
  */
 
-export type ArchetypeName = 'Vanguard' | 'Shadowblade' | 'Arcanist' | 'Cleric'
+export type ArchetypeName = 'Vanguard' | 'Shadowblade' | 'Arcanist' | 'Marksman'
 
-export type ItemCategory = 'weapon' | 'armor' | 'consumable' | 'relic' | 'quest'
+export type ItemCategory = 'weapon' | 'armor' | 'consumable' | 'quest'
 
 export interface AbilityScores {
   str: number
@@ -87,7 +99,7 @@ export function classifyRoll(rawRoll: number, total: number, targetDc: number): 
 export const ARCHETYPE_PRESETS: Record<ArchetypeName, ArchetypePreset> = {
   Vanguard: {
     name: 'Vanguard',
-    blurb: 'Holds the line in mail and takes the hit others cannot.',
+    blurb: 'Front-line fighter. High STR and CON, heavy mail, the most HP.',
     armorBonus: 5,
     maxHp: 24,
     scores: { str: 16, dex: 12, con: 14, int: 8, wis: 10, cha: 11 },
@@ -95,20 +107,20 @@ export const ARCHETYPE_PRESETS: Record<ArchetypeName, ArchetypePreset> = {
       {
         itemName: 'Ashen Longsword',
         category: 'weapon',
-        description: 'Pitted steel, still warm. The grip is wrapped in grave-linen.',
+        description: 'One-handed sword. Your main weapon in a fight.',
         quantity: 1,
       },
       {
         itemName: 'Cracked Buckler',
         category: 'armor',
-        description: 'A knuckle-shaped dent from something that did not stop at the shield.',
+        description: 'Small shield. +5 to your AC',
         quantity: 1,
       },
     ],
   },
   Shadowblade: {
     name: 'Shadowblade',
-    blurb: 'Strikes from the dark and is gone before the shouting starts.',
+    blurb: 'Stealth and close work. High DEX and CHA, light armor.',
     armorBonus: 1,
     maxHp: 17,
     scores: { str: 10, dex: 17, con: 12, int: 12, wis: 10, cha: 14 },
@@ -116,57 +128,56 @@ export const ARCHETYPE_PRESETS: Record<ArchetypeName, ArchetypePreset> = {
       {
         itemName: 'Whisper Dagger',
         category: 'weapon',
-        description: 'Short, black, and quieter than the hand that holds it.',
+        description: 'Light blade for close work. Your main weapon.',
         quantity: 1,
       },
       {
         itemName: 'Grave-Linen Cloak',
         category: 'armor',
-        description:
-          'Stitched from winding sheets. It does not keep out the cold, only the notice.',
+        description: 'Light armor. Its +1 is already in your AC.',
         quantity: 1,
       },
     ],
   },
   Arcanist: {
     name: 'Arcanist',
-    blurb: 'Reads what was never meant to be written and pays for every word.',
+    blurb: 'Magic user. High INT and WIS, warded robes, a healing vial.',
     armorBonus: 2,
     maxHp: 18,
     scores: { str: 8, dex: 14, con: 12, int: 16, wis: 13, cha: 10 },
     starterItems: [
       {
-        itemName: 'Cinder Focus',
-        category: 'relic',
-        description: 'A thumb of obsidian that warms when a word is left unspoken.',
+        itemName: 'Emberwood Staff',
+        category: 'weapon',
+        description: 'Two-handed focus for casting. Your main weapon.',
         quantity: 1,
       },
       {
         itemName: 'Sunfire Vial',
         category: 'consumable',
-        description: 'Sealed glass of noon. Burns the dark off a wound.',
+        description: 'Drink to restore 6 HP, up to your maximum. One use.',
         quantity: 2,
       },
     ],
   },
-  Cleric: {
-    name: 'Cleric',
-    blurb: 'Carries a candle into the crypt and does not look away.',
-    armorBonus: 4,
-    maxHp: 22,
-    scores: { str: 12, dex: 10, con: 15, int: 10, wis: 16, cha: 11 },
+  Marksman: {
+    name: 'Marksman',
+    blurb: 'Ranged attacker. High DEX and WIS, a longbow and a field dressing.',
+    armorBonus: 2,
+    maxHp: 19,
+    scores: { str: 10, dex: 16, con: 12, int: 10, wis: 14, cha: 11 },
     starterItems: [
       {
-        itemName: 'Reliquary Maul',
+        itemName: 'Yew Longbow',
         category: 'weapon',
-        description: 'Iron worn smooth by hands that prayed before they swung.',
+        description: 'Ranged weapon for attacks at a distance. Your main weapon.',
         quantity: 1,
       },
       {
-        itemName: 'Vigil Candle',
+        itemName: 'Field Dressing',
         category: 'consumable',
-        description: 'It burns without being lit, for as long as someone is watching.',
-        quantity: 2,
+        description: 'Bind a wound to restore 4 HP, up to your maximum. One use.',
+        quantity: 1,
       },
     ],
   },
@@ -177,5 +188,23 @@ export const ARCHETYPE_ORDER: readonly ArchetypeName[] = [
   'Vanguard',
   'Shadowblade',
   'Arcanist',
-  'Cleric',
+  'Marksman',
 ]
+
+/** What a consumable does when used. The `heal` amount is the server's. */
+export interface ConsumableEffect {
+  heal: number
+}
+
+/**
+ * Server-owned item effects, keyed by item name (ADR 0016).
+ *
+ * `useItem` reads the heal from here, never from the request, and refuses an
+ * unknown consumable instead of silently spending a charge — the same trust
+ * model as rolls (ADR 0005, ADR 0015). A new consumable needs an entry here
+ * before it does anything, including one the GM grants (`P5.3`).
+ */
+export const CONSUMABLE_EFFECTS: Record<string, ConsumableEffect> = {
+  'Sunfire Vial': { heal: 6 },
+  'Field Dressing': { heal: 4 },
+}

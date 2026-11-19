@@ -3,6 +3,7 @@ import type { ActionContext, ActionHandler, ActionResult } from 'deepspace/worke
 import type { Env } from '../../worker'
 import { DEFAULT_CAMPAIGN_ID } from '../constants'
 import { DEFAULT_CAMPAIGN_SEED, isAtmosphereTag } from '../lib/campaign-seed'
+import { ARCHETYPE_PRESETS, CONSUMABLE_EFFECTS, calculateArmorClass } from '../lib/d20'
 
 /**
  * App server actions. Reached only over `POST /api/actions/:name`, which
@@ -10,28 +11,34 @@ import { DEFAULT_CAMPAIGN_SEED, isAtmosphereTag } from '../lib/campaign-seed'
  * per-record RBAC off (`src/server/action-routes.ts` states the trust model):
  * identity is established by the route, but **ownership is this file's job**.
  *
+ * Members cannot write `characters` at all and can only update/delete their own
+ * `inventory` rows (ADR 0015): the actions below are the only paths that create
+ * characters or items and the only ones that change `hp`. Each one therefore
+ * checks `userId` itself before writing.
+ *
  * There are no transactions across `tools.*` calls. Each action below writes in
  * a fixed order, stops at the first failure, and reports what already landed
  * instead of implying the change was atomic.
  */
 
-/** The `characters` columns `applyGmMutation` reads before writing. */
+/** The `characters` columns the actions read before writing (`userId` included). */
 interface CharacterTarget {
   [key: string]: unknown
+  userId: string
   campaignId: string
   hp: number
   maxHp: number
 }
 
-/** The `characters` columns the membership check needs. */
+/** The `characters` columns Forge's "one character per player" check needs. */
 interface MembershipRow {
   [key: string]: unknown
   userId: string
   campaignId: string
 }
 
-/** `inventory.category`'s select options, in schema order. */
-const ITEM_CATEGORIES = ['weapon', 'armor', 'consumable', 'relic', 'quest'] as const
+/** `inventory.category`'s select options, in schema order (ADR 0016: no `relic`). */
+const ITEM_CATEGORIES = ['weapon', 'armor', 'consumable', 'quest'] as const
 
 /** Scene columns `update_scene` may write, in write order. */
 const SCENE_COLUMNS = [
@@ -147,6 +154,19 @@ export async function ensureDefaultCampaign(
   return { success: true, data: { campaignId: DEFAULT_CAMPAIGN_ID, created: true } }
 }
 
+function invalidParams(error: z.ZodError) {
+  return {
+    success: false as const,
+    code: 'invalid_params',
+    error: 'Invalid parameters',
+    issues: error.issues.map((issue) => ({
+      path: issue.path.map(String),
+      message: issue.message,
+      code: issue.code,
+    })),
+  }
+}
+
 function writeFailed(stage: string, error: string, applied: string[]) {
   return {
     success: false as const,
@@ -159,13 +179,18 @@ function writeFailed(stage: string, error: string, applied: string[]) {
 /**
  * The AI GM's privileged write path — HP, loot and scene only (ADR 0008).
  *
- * Authorization is table membership, stated once here because `ctx.tools` runs
- * with per-record RBAC **off**: the caller must already own a character in
- * `DEFAULT_CAMPAIGN_ID`. That is checked before any target is read. The target
- * may then be any character in the same campaign, because ADR 0012 has no GM
- * seat and the AI GM acts for the table; client-side RBAC still restricts
- * direct `characters` writes to `'own'`, so this is the only cross-character
- * write path.
+ * Authorization is the **app owner credential** (ADR 0017), stated once here
+ * because `ctx.tools` runs with per-record RBAC **off**: `ctx.userId` must equal
+ * `ctx.env.OWNER_USER_ID`. Anything else is `not_gm`, refused before params are
+ * parsed and before any read or write — table membership is deliberately *not*
+ * enough, because a player owns a character and could otherwise rewrite their
+ * own HP around `adjustCharacterHp` (ADR 0015).
+ *
+ * The owner acts for the table, so it needs no character row of its own: the only
+ * target rule is that the character must be in `DEFAULT_CAMPAIGN_ID`, keeping
+ * one table's GM from reaching another's rows. Members cannot write `characters`
+ * or `inventory` directly (ADR 0015), so this is the only cross-character write
+ * path.
  *
  * Ordered best-effort, not atomic: with no transactions, each kind performs at
  * most one write and stops on failure, returning `details.stage` and
@@ -176,42 +201,18 @@ function writeFailed(stage: string, error: string, applied: string[]) {
 export async function applyGmMutation(
   ctx: ActionContext<Env>,
 ): Promise<ActionResult<GmMutationData>> {
-  const parsed = applyGmMutationParamsSchema.safeParse(ctx.params)
-  if (!parsed.success) {
+  if (ctx.userId !== ctx.env.OWNER_USER_ID) {
     return {
       success: false,
-      code: 'invalid_params',
-      error: 'Invalid mutation parameters',
-      issues: parsed.error.issues.map((issue) => ({
-        path: issue.path.map(String),
-        message: issue.message,
-        code: issue.code,
-      })),
+      code: 'not_gm',
+      error: 'Only the app owner credential may run GM mutations',
     }
   }
-  const { mutation } = parsed.data
-  const { tools, userId } = ctx
 
-  const membership = await tools.query<MembershipRow>('characters', {
-    where: { userId, campaignId: DEFAULT_CAMPAIGN_ID },
-    limit: 1,
-  })
-  if (!membership.success) {
-    // Fail closed: being unable to prove membership is not permission.
-    return {
-      success: false,
-      code: 'no_character',
-      error: membership.error,
-      details: { stage: 'membership' },
-    }
-  }
-  if (membership.data.records.length === 0) {
-    return {
-      success: false,
-      code: 'no_character',
-      error: `Caller has no character in campaign ${JSON.stringify(DEFAULT_CAMPAIGN_ID)}`,
-    }
-  }
+  const parsed = applyGmMutationParamsSchema.safeParse(ctx.params)
+  if (!parsed.success) return invalidParams(parsed.error)
+  const { mutation } = parsed.data
+  const { tools } = ctx
 
   // The scene is one record on its own row: no target character to check.
   if (mutation.kind === 'update_scene') {
@@ -235,8 +236,8 @@ export async function applyGmMutation(
     return { success: true, data: { kind: 'update_scene', scene: { applied } } }
   }
 
-  // Both remaining kinds target a character. It must share the campaign this
-  // caller is seated at, so a member of one table cannot reach another's rows.
+  // Both remaining kinds target a character. It must be in the one campaign
+  // this app serves, so a mutation cannot reach another table's rows.
   const target = await tools.get<CharacterTarget>('characters', mutation.characterId)
   if (!target.success) {
     return { success: false, code: 'character_not_found', error: target.error }
@@ -268,11 +269,15 @@ export async function applyGmMutation(
   }
 
   const { item } = mutation
-  // `campaignId` is forced, never read from params: the item belongs to the
-  // campaign membership proved, not to whatever the caller typed.
+  // `campaignId` is forced, never read from params: the item belongs to this
+  // campaign, not to whatever the caller typed.
   const quantity = item.quantity ?? 1
   const loot: Record<string, unknown> = {
     characterId: mutation.characterId,
+    // The GM writes for the table; the row belongs to the player whose
+    // character received it, so `inventory` ownership follows the target
+    // character's owner, not the caller (ADR 0015).
+    userId: target.data.record.data.userId,
     campaignId: DEFAULT_CAMPAIGN_ID,
     itemName: item.itemName,
     quantity,
@@ -294,7 +299,309 @@ export async function applyGmMutation(
   }
 }
 
+const forgeCharacterParamsSchema = z.object({
+  name: z.string().trim().min(1).max(40),
+  archetype: z.enum(['Vanguard', 'Shadowblade', 'Arcanist', 'Marksman']),
+})
+
+export interface ForgeCharacterData {
+  characterId: string
+  name: string
+  archetype: string
+  itemsMissing: string[]
+}
+
+/**
+ * Creates the caller's character from a preset (ADR 0015).
+ *
+ * The browser sends only `{ name, archetype }`: the server reads the preset, so
+ * `hp` (always `maxHp` on creation), `ac` and the ability scores cannot be
+ * supplied by the client. Then it writes the preset's two starter items, each
+ * stamped with the owner's `userId`.
+ *
+ * No transactions: if an item write fails the character still exists and the
+ * failed item names are reported in `itemsMissing` instead of rolling back.
+ */
+export async function forgeCharacter(
+  ctx: ActionContext<Env>,
+): Promise<ActionResult<ForgeCharacterData>> {
+  const parsed = forgeCharacterParamsSchema.safeParse(ctx.params)
+  if (!parsed.success) return invalidParams(parsed.error)
+
+  const { tools, userId } = ctx
+  const existing = await tools.query<MembershipRow>('characters', {
+    where: { userId, campaignId: DEFAULT_CAMPAIGN_ID },
+    limit: 1,
+  })
+  if (!existing.success) {
+    // Fail closed: being unable to prove there is no character is not permission.
+    return writeFailed('membership', existing.error, [])
+  }
+  if (existing.data.records.length > 0) {
+    return {
+      success: false,
+      code: 'already_forged',
+      error: `Caller already has a character in campaign ${JSON.stringify(DEFAULT_CAMPAIGN_ID)} (one character per player)`,
+    }
+  }
+
+  const preset = ARCHETYPE_PRESETS[parsed.data.archetype]
+  const created = await tools.create('characters', {
+    userId,
+    campaignId: DEFAULT_CAMPAIGN_ID,
+    name: parsed.data.name,
+    archetype: parsed.data.archetype,
+    hp: preset.maxHp,
+    maxHp: preset.maxHp,
+    ac: calculateArmorClass(preset.scores.dex, preset.armorBonus),
+    ...preset.scores,
+  })
+  if (!created.success) {
+    return writeFailed('create_character', created.error, [])
+  }
+
+  const characterId = created.data.recordId
+  const itemsMissing: string[] = []
+  for (const item of preset.starterItems) {
+    const row = await tools.create('inventory', {
+      userId,
+      characterId,
+      campaignId: DEFAULT_CAMPAIGN_ID,
+      itemName: item.itemName,
+      category: item.category,
+      description: item.description,
+      quantity: item.quantity,
+    })
+    if (!row.success) itemsMissing.push(item.itemName)
+  }
+
+  return {
+    success: true,
+    data: {
+      characterId,
+      name: parsed.data.name,
+      archetype: parsed.data.archetype,
+      itemsMissing,
+    },
+  }
+}
+
+/** The five HP steps the sheet offers. The server maps them; no raw delta is accepted. */
+const HP_STEP_DELTAS = {
+  minus5: -5,
+  minus1: -1,
+  plus1: 1,
+  plus5: 5,
+} as const
+
+const HP_STEPS = ['minus5', 'minus1', 'plus1', 'plus5', 'rest'] as const
+
+const adjustCharacterHpParamsSchema = z.object({
+  characterId: z.string().min(1),
+  step: z.enum(HP_STEPS),
+})
+
+export interface AdjustCharacterHpData {
+  characterId: string
+  hp: { before: number; after: number; maxHp: number; appliedDelta: number }
+}
+
+/**
+ * Damage and healing for the caller's own character (ADR 0015).
+ *
+ * The request carries one of the five sheet steps, never a free delta: the
+ * server maps `step` to a number (Short Rest fills the bar) and clamps to
+ * `0..maxHp`, so a client cannot set an arbitrary HP. Writes `hp` only — never
+ * `ac`, `maxHp` or `userId` — and refuses a character the caller does not own
+ * before any write.
+ */
+export async function adjustCharacterHp(
+  ctx: ActionContext<Env>,
+): Promise<ActionResult<AdjustCharacterHpData>> {
+  const parsed = adjustCharacterHpParamsSchema.safeParse(ctx.params)
+  if (!parsed.success) return invalidParams(parsed.error)
+
+  const { tools, userId } = ctx
+  const { characterId, step } = parsed.data
+  const target = await tools.get<CharacterTarget>('characters', characterId)
+  if (!target.success) {
+    return { success: false, code: 'character_not_found', error: target.error }
+  }
+  const character = target.data.record.data
+  if (character.campaignId !== DEFAULT_CAMPAIGN_ID) {
+    return {
+      success: false,
+      code: 'character_not_found',
+      error: `Character ${JSON.stringify(characterId)} is not in campaign ${JSON.stringify(DEFAULT_CAMPAIGN_ID)}`,
+    }
+  }
+  if (character.userId !== userId) {
+    return {
+      success: false,
+      code: 'not_owner',
+      error: `Character ${JSON.stringify(characterId)} does not belong to the caller`,
+    }
+  }
+
+  const { hp: before, maxHp } = character
+  const delta = step === 'rest' ? maxHp : HP_STEP_DELTAS[step]
+  const after = Math.min(maxHp, Math.max(0, before + delta))
+  const updated = await tools.update('characters', characterId, { hp: after })
+  if (!updated.success) {
+    return writeFailed('character_hp', updated.error, [])
+  }
+  return {
+    success: true,
+    data: { characterId, hp: { before, after, maxHp, appliedDelta: after - before } },
+  }
+}
+
+const useItemParamsSchema = z.object({ itemId: z.string().min(1) })
+
+/** The `inventory` columns `useItem` reads before writing. */
+interface InventoryTarget {
+  [key: string]: unknown
+  userId: string
+  characterId: string
+  campaignId: string
+  itemName: string
+  category: string
+  quantity: number
+}
+
+export interface UseItemData {
+  itemId: string
+  itemName: string
+  heal: { requested: number; applied: number; hp: number; maxHp: number }
+  /** `null` when the last one was used and the row was removed. */
+  quantity: number | null
+}
+
+/**
+ * Spends one charge of a consumable on the caller's own character (ADR 0015,
+ * ADR 0016).
+ *
+ * The heal comes from `CONSUMABLE_EFFECTS`, keyed by item name — never from
+ * `params` — and is clamped to `maxHp`. At full HP the action refuses without
+ * writing, so a charge is never wasted. Unknown consumables are `no_effect`
+ * rather than a silent no-op.
+ *
+ * Ordered: the character's `hp` lands first, then the inventory decrement (or
+ * removal). With no transactions, a failure on the second write reports the
+ * first as `details.applied`.
+ */
+export async function useItem(ctx: ActionContext<Env>): Promise<ActionResult<UseItemData>> {
+  const parsed = useItemParamsSchema.safeParse(ctx.params)
+  if (!parsed.success) return invalidParams(parsed.error)
+
+  const { tools, userId } = ctx
+  const { itemId } = parsed.data
+  const found = await tools.get<InventoryTarget>('inventory', itemId)
+  if (!found.success) {
+    return { success: false, code: 'item_not_found', error: found.error }
+  }
+  const item = found.data.record.data
+  if (item.campaignId !== DEFAULT_CAMPAIGN_ID) {
+    return {
+      success: false,
+      code: 'item_not_found',
+      error: `Item ${JSON.stringify(itemId)} is not in campaign ${JSON.stringify(DEFAULT_CAMPAIGN_ID)}`,
+    }
+  }
+  if (item.userId !== userId) {
+    return {
+      success: false,
+      code: 'not_owner',
+      error: `Item ${JSON.stringify(itemId)} does not belong to the caller`,
+    }
+  }
+  if (item.category !== 'consumable') {
+    return {
+      success: false,
+      code: 'not_usable',
+      error: `Only consumables can be used; ${JSON.stringify(item.category)} items are not usable`,
+    }
+  }
+  const effect = CONSUMABLE_EFFECTS[item.itemName]
+  if (!effect) {
+    return {
+      success: false,
+      code: 'no_effect',
+      error: `No server-side effect is registered for ${JSON.stringify(item.itemName)}`,
+    }
+  }
+
+  // The character carries the stat block; the item only points at it.
+  const target = await tools.get<CharacterTarget>('characters', item.characterId)
+  if (!target.success) {
+    return { success: false, code: 'character_not_found', error: target.error }
+  }
+  const character = target.data.record.data
+  if (character.campaignId !== DEFAULT_CAMPAIGN_ID) {
+    return {
+      success: false,
+      code: 'character_not_found',
+      error: `Character ${JSON.stringify(item.characterId)} is not in campaign ${JSON.stringify(DEFAULT_CAMPAIGN_ID)}`,
+    }
+  }
+  if (character.userId !== userId) {
+    return {
+      success: false,
+      code: 'not_owner',
+      error: `Character ${JSON.stringify(item.characterId)} does not belong to the caller`,
+    }
+  }
+  if (character.hp >= character.maxHp) {
+    return {
+      success: false,
+      code: 'at_full',
+      error: `HP is already at ${character.maxHp}; ${JSON.stringify(item.itemName)} was not used`,
+    }
+  }
+
+  const { hp: before, maxHp } = character
+  const after = Math.min(maxHp, before + effect.heal)
+  const updated = await tools.update('characters', item.characterId, { hp: after })
+  if (!updated.success) {
+    return writeFailed('character_hp', updated.error, [])
+  }
+
+  const { quantity } = item
+  if (quantity > 1) {
+    const spent = await tools.update('inventory', itemId, { quantity: quantity - 1 })
+    if (!spent.success) {
+      return writeFailed('inventory', spent.error, ['character_hp'])
+    }
+    return {
+      success: true,
+      data: {
+        itemId,
+        itemName: item.itemName,
+        heal: { requested: effect.heal, applied: after - before, hp: after, maxHp },
+        quantity: quantity - 1,
+      },
+    }
+  }
+
+  const removed = await tools.remove('inventory', itemId)
+  if (!removed.success) {
+    return writeFailed('inventory', removed.error, ['character_hp'])
+  }
+  return {
+    success: true,
+    data: {
+      itemId,
+      itemName: item.itemName,
+      heal: { requested: effect.heal, applied: after - before, hp: after, maxHp },
+      quantity: null,
+    },
+  }
+}
+
 export const actions: Record<string, ActionHandler<Env>> = {
   ensureDefaultCampaign,
   applyGmMutation,
+  forgeCharacter,
+  adjustCharacterHp,
+  useItem,
 }

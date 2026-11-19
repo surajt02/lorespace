@@ -3,11 +3,14 @@
  *
  * Rows arrive already filtered to the viewer's character, so this panel never
  * decides ownership. `preview` renders the fixture list read-only; `live` adds
- * `Use` (consumables only) and `Discard`, both backed by awaited confirmed
- * writes — a refused write surfaces as a toast, never as a silent no-op.
+ * `Use` (consumables only) and `Discard`.
  *
- * "Use" spends one charge and nothing else: this build has no healing, damage
- * or item effects (ADR 0010), and no add/edit form (ADR 0008).
+ * The two writes have different owners (ADR 0015): `Use` is a server action
+ * (`useItem`), which reads the heal from the server, clamps it to `maxHp` and
+ * spends the charge; `Discard` is an owner-scoped confirmed delete, safe because
+ * `inventory` rows carry `userId`. The browser never writes `characters`, and
+ * an awaited refusal surfaces as a toast, never as a silent no-op. There is no
+ * add/edit form (ADR 0008).
  */
 
 import { useState, type ReactNode } from 'react'
@@ -15,11 +18,21 @@ import { useMutations, type RecordData } from 'deepspace'
 import { Backpack } from 'lucide-react'
 import { Badge, Button, ConfirmModal, EmptyState, useToast } from '@/components/ui'
 import type { QueryStatus, SheetMode } from '@/components/CharacterSheetPanel'
+import { callAction } from '@/lib/actions'
 import type { InventoryRow } from '@/lib/preview-data'
 
-/** `removeConfirmed`/`putConfirmed` reject with a plain `Error`; keep one wording. */
+/** `useItem`'s success data: the server's heal and what is left of the stack. */
+interface UseItemResult {
+  itemId: string
+  itemName: string
+  heal: { requested: number; applied: number; hp: number; maxHp: number }
+  quantity: number | null
+}
+
+/** `removeConfirmed` rejects with a plain `Error`, and `callAction` with an
+ *  `ActionCallError` (also an `Error`), so one branch covers both. */
 function failureMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : 'The write was refused.'
+  return cause instanceof Error ? cause.message : 'The request was refused.'
 }
 
 export function InventoryPanel({
@@ -42,19 +55,23 @@ export function InventoryPanel({
   const live = mode === 'live'
 
   async function spendItem(item: RecordData<InventoryRow>): Promise<void> {
-    if (pendingId !== null || !inventory.ready) return
-    const { itemName, quantity } = item.data
+    // One write at a time across the list. No room-readiness gate: `useItem`
+    // authenticates with the bearer session, not the room.
+    if (pendingId !== null) return
     setPendingId(item.recordId)
     try {
-      if (quantity > 1) {
-        await inventory.putConfirmed(item.recordId, { quantity: quantity - 1 })
-        success(`Used ${itemName}`, `${quantity - 1} left.`)
-      } else {
-        await inventory.removeConfirmed(item.recordId)
-        success(`Used ${itemName}`, 'That was the last one.')
-      }
+      const result = await callAction<UseItemResult>('useItem', { itemId: item.recordId })
+      const healed =
+        result.heal.applied > 0
+          ? `${result.itemName}: restored ${result.heal.applied} HP.`
+          : `${result.itemName}: used.`
+      // `quantity` is `null` when the last charge removed the row.
+      const left =
+        result.quantity === null ? 'That was the last one.' : `${result.quantity} left.`
+      success('Item used', `${healed} ${left}`)
     } catch (cause) {
-      error(`Could not use ${itemName}`, failureMessage(cause))
+      // The server's refusal is the feedback, e.g. "Already at full HP".
+      error(`Could not use ${item.data.itemName}`, failureMessage(cause))
     } finally {
       setPendingId(null)
     }
@@ -242,6 +259,7 @@ function ItemActions({
   onDiscard,
 }: {
   item: RecordData<InventoryRow>
+  /** Room write readiness. Gates `Discard` only: `Use` is a server action. */
   ready: boolean
   busy: boolean
   writing: boolean
@@ -257,7 +275,7 @@ function ItemActions({
           size="sm"
           variant="outline"
           className="h-7 px-2 font-pixel text-[10px] uppercase"
-          disabled={!ready || busy}
+          disabled={busy}
           loading={writing}
           onClick={onUse}
         >

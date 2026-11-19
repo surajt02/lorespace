@@ -38,3 +38,6 @@ an accident.
 | [0012](./0012-gm-turn-policy.md) | GM answers the latest message, auto-resolves rolls | Accepted | AI |
 | [0013](./0013-visual-register.md) | Visual register: Diablo-ward pixel chrome | Accepted | UI |
 | [0014](./0014-public-read-table.md) | The table is public-read by link | Accepted | security |
+| [0015](./0015-server-authored-character-state.md) | Character state is server-authored | Accepted | game integrity |
+| [0016](./0016-item-uses.md) | Items have explicit uses: consumables heal, quest items are story | Accepted | game mechanics |
+| [0017](./0017-gm-owner-credential.md) | GM mutations require the app-owner credential | Accepted | security |

@@ -3,6 +3,7 @@ import {
   ABILITY_SCORES,
   ARCHETYPE_ORDER,
   ARCHETYPE_PRESETS,
+  CONSUMABLE_EFFECTS,
   calculateArmorClass,
   classifyRoll,
   formatModifier,
@@ -23,13 +24,7 @@ import { PREVIEW_CHARACTERS, PREVIEW_INVENTORY } from '@/lib/preview-data'
  * jsdom, no randomness: `classifyRoll` is given its d20.
  */
 
-const VALID_CATEGORIES: readonly ItemCategory[] = [
-  'weapon',
-  'armor',
-  'consumable',
-  'relic',
-  'quest',
-]
+const VALID_CATEGORIES: readonly ItemCategory[] = ['weapon', 'armor', 'consumable', 'quest']
 
 const SCORE_KEYS: readonly (keyof AbilityScores)[] = ['str', 'dex', 'con', 'int', 'wis', 'cha']
 
@@ -76,7 +71,7 @@ describe('ARCHETYPE_PRESETS', () => {
   const names = Object.keys(ARCHETYPE_PRESETS) as ArchetypeName[]
 
   it('has four archetypes', () => {
-    expect(names.sort()).toEqual(['Arcanist', 'Cleric', 'Shadowblade', 'Vanguard'])
+    expect(names.sort()).toEqual(['Arcanist', 'Marksman', 'Shadowblade', 'Vanguard'])
   })
 
   it.each(names)('%s is a forge-ready row', (name) => {
@@ -153,6 +148,75 @@ describe('ARCHETYPE_PRESETS', () => {
         quantity: record.data.quantity,
       })),
     ).toEqual(ARCHETYPE_PRESETS.Vanguard.starterItems)
+  })
+
+  it('gives Marksman AC 15 and a blurb that describes no spellcaster', () => {
+    const marksman = ARCHETYPE_PRESETS.Marksman
+
+    expect(calculateArmorClass(marksman.scores.dex, marksman.armorBonus)).toBe(15)
+    expect(marksman.blurb).not.toMatch(/cleric|magic|spell/i)
+  })
+
+  it('stocks only weapon, armor and consumable starters — never a quest item', () => {
+    // ADR 0016: a quest item is story, not a starting kit.
+    for (const name of names) {
+      const categories = ARCHETYPE_PRESETS[name].starterItems.map((item) => item.category)
+      expect(categories).not.toContain('quest')
+      for (const category of categories) {
+        expect(['weapon', 'armor', 'consumable']).toContain(category)
+      }
+    }
+  })
+
+  it('gives every consumable starter a positive server-owned heal', () => {
+    for (const name of names) {
+      for (const item of ARCHETYPE_PRESETS[name].starterItems) {
+        if (item.category !== 'consumable') continue
+
+        const effect = CONSUMABLE_EFFECTS[item.itemName]
+        expect(effect).toBeDefined()
+        expect(effect.heal).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  it('has no effect entry for a non-consumable starter', () => {
+    // An effect on a sword would promise a mechanic the build does not have.
+    for (const name of names) {
+      for (const item of ARCHETYPE_PRESETS[name].starterItems) {
+        if (item.category === 'consumable') continue
+        expect(CONSUMABLE_EFFECTS[item.itemName]).toBeUndefined()
+      }
+    }
+  })
+
+  it('spells the buckler bonus and every consumable heal in the description', () => {
+    const buckler = ARCHETYPE_PRESETS.Vanguard.starterItems[1]
+    expect(buckler.description).toBe('Small shield. +5 to your AC')
+
+    // Copy and effect must agree for every consumable: a player reads the row.
+    for (const name of names) {
+      for (const item of ARCHETYPE_PRESETS[name].starterItems) {
+        if (item.category !== 'consumable') continue
+        const effect = CONSUMABLE_EFFECTS[item.itemName]
+        expect(item.description).toContain(`${effect.heal} HP`)
+      }
+    }
+  })
+
+  it('pins the shipped AC and HP of all four presets', () => {
+    const expected = {
+      Vanguard: { ac: 16, hp: 24 },
+      Shadowblade: { ac: 14, hp: 17 },
+      Arcanist: { ac: 14, hp: 18 },
+      Marksman: { ac: 15, hp: 19 },
+    } as const
+
+    for (const name of names) {
+      const preset = ARCHETYPE_PRESETS[name]
+      expect(calculateArmorClass(preset.scores.dex, preset.armorBonus)).toBe(expected[name].ac)
+      expect(preset.maxHp).toBe(expected[name].hp)
+    }
   })
 })
 

@@ -10,9 +10,10 @@
  * (party → feed → sheet) and the page scrolls normally.
  *
  * Signed in, the sheet and the pack are live: `/home` reads `characters` and
- * `inventory` for this campaign and hands each panel the viewer's rows, so the
- * writes those panels make come back over the room subscription. Signed out,
- * every panel falls back to the deterministic `PREVIEW_*` table (ADR 0014).
+ * `inventory` for this campaign and hands each panel the viewer's rows. Those
+ * panels write through server actions and owner-scoped deletes (ADR 0015), and
+ * the results come back over the room subscription. Signed out, every panel
+ * falls back to the deterministic `PREVIEW_*` table (ADR 0014).
  * The roster and the action feed stay fixtures until `P4.3`, the GM console
  * until `P5`.
  *
@@ -215,7 +216,6 @@ export default function HomePage() {
 
             <aside className="flex min-h-0 flex-col gap-3 bg-shell-panel lg:overflow-y-auto">
               <CharacterSheetPanel
-                campaignId={DEFAULT_CAMPAIGN_ID}
                 mode={sheetMode}
                 status={isSignedIn ? charactersStatus : 'ready'}
                 character={myCharacter}
