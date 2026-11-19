@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { RecordData } from 'deepspace'
 import {
   GM_CHIPS,
+  buildOpeningPrompt,
   buildQuickPrompt,
   buildRollPrompt,
   unresolvedRolls,
@@ -71,18 +72,42 @@ describe('buildQuickPrompt', () => {
     }
   })
 
-  it('carries the latest roll numbers for resolve and attack', () => {
-    for (const kind of ['resolve', 'attack'] as const) {
-      const prompt = buildQuickPrompt(kind, {
-        characterName: 'Kaelen',
-        latestRoll: KAELEN_DOOR.data,
-      })
-      expect(prompt).toContain('d20(14)')
-      expect(prompt).toContain('+3')
-      expect(prompt).toContain('= 17')
-      expect(prompt).toContain('DC 12')
-      expect(prompt).toContain('success')
+  it('carries the latest roll numbers for resolve', () => {
+    const prompt = buildQuickPrompt('resolve', {
+      characterName: 'Kaelen',
+      latestRoll: KAELEN_DOOR.data,
+    })
+    expect(prompt).toContain('d20(14)')
+    expect(prompt).toContain('+3')
+    expect(prompt).toContain('= 17')
+    expect(prompt).toContain('DC 12')
+    expect(prompt).toContain('success')
+  })
+
+  it('narrates an attack in the first person instead of ordering one (ADR 0024)', () => {
+    const prompt = buildQuickPrompt('attack', {
+      characterName: 'Kaelen',
+      enemyName: 'Runebound Sentinel',
+    })
+    expect(prompt).toContain('Kaelen')
+    expect(prompt).toContain('I move to strike Runebound Sentinel')
+    expect(prompt).toMatch(/tell me what to roll/)
+    // Narration, not a menu: no verb-first order, and no dice line before the
+    // GM has called for a check.
+    expect(prompt).not.toMatch(/^attack/i)
+    expect(prompt).not.toMatch(/d20\(/)
+  })
+
+  it('names a generic enemy when the scene has none, and never a placeholder', () => {
+    for (const enemyName of [undefined, null, '', '   ']) {
+      const prompt = buildQuickPrompt('attack', { characterName: 'Kaelen', enemyName })
+      expect(prompt).toContain('I move to strike the enemy')
+      expect(prompt).not.toContain('undefined')
+      expect(prompt).not.toContain('null')
     }
+    // Readable without a character either: the sentence still stands alone.
+    const anonymous = buildQuickPrompt('attack', { enemyName: 'Runebound Sentinel' })
+    expect(anonymous.startsWith('I move to strike Runebound Sentinel')).toBe(true)
   })
 
   it('asks for a check instead of referencing a roll it does not have', () => {
@@ -134,6 +159,40 @@ describe('buildRollPrompt', () => {
   it('names the row it must be verified against', () => {
     expect(prompt).toContain(KAELEN_DOOR.recordId)
     expect(prompt).toContain('roll-logs')
+  })
+})
+
+describe('buildOpeningPrompt', () => {
+  const prompt = buildOpeningPrompt('Act I · Scene 2 of 5')
+
+  it('opens at the act and scene the engine reports', () => {
+    expect(prompt).toContain('Act I · Scene 2 of 5')
+    expect(prompt).toMatch(/^Begin the campaign at /)
+  })
+
+  it('asks for the narration and then a decision or a check', () => {
+    expect(prompt).toMatch(/[Nn]arrate/)
+    expect(prompt).toMatch(/decision or check/)
+    expect(prompt).toContain('campaigns row')
+  })
+
+  it('never invents a roll', () => {
+    expect(prompt).not.toMatch(/d20/)
+    expect(prompt).not.toMatch(/\bDC \d+/)
+    expect(prompt).not.toMatch(/success|failure|critical/i)
+    expect(prompt).toMatch(/[Dd]o not roll/)
+  })
+
+  it('names the scene title when one is passed, and stays readable without it', () => {
+    expect(buildOpeningPrompt('Act II · Scene 3 of 5', 'The Sentinel')).toContain(
+      'Act II · Scene 3 of 5 (The Sentinel)',
+    )
+    // A blank label must not become an empty sentence or a placeholder.
+    for (const label of ['', '   ']) {
+      const blank = buildOpeningPrompt(label)
+      expect(blank).toContain('the opening scene')
+    }
+    expect(buildOpeningPrompt('Act I · Scene 1 of 5', '  ')).not.toContain('()')
   })
 })
 

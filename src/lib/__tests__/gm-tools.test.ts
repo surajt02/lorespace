@@ -20,14 +20,15 @@ import {
  */
 
 describe('GM tool names', () => {
-  it('names one read tool and three write tools', () => {
+  it('names one read tool and four write tools', () => {
     expect(GM_READ_TOOLS).toEqual(['get_campaign_snapshot'])
     expect(GM_WRITE_TOOLS).toEqual([
       'modify_character_hp',
       'grant_character_loot',
       'update_campaign_scene',
+      'damage_enemy',
     ])
-    expect(GM_TOOL_NAMES).toHaveLength(4)
+    expect(GM_TOOL_NAMES).toHaveLength(5)
   })
 })
 
@@ -134,6 +135,40 @@ describe('toGmMutation', () => {
         enemyMaxHp: 12,
       },
     })
+  })
+
+  it('maps damage_enemy to an enemy_damage mutation', () => {
+    expect(
+      toGmMutation('damage_enemy', { amount: 6, reason: 'The arrow finds the gap' }),
+    ).toEqual({ kind: 'enemy_damage', amount: 6, reason: 'The arrow finds the gap' })
+    // `reason` stays absent rather than arriving as `undefined`.
+    expect(toGmMutation('damage_enemy', { amount: 1 })).toEqual({
+      kind: 'enemy_damage',
+      amount: 1,
+    })
+  })
+
+  it('refuses an enemy damage amount outside 1..50 or a non-integer', () => {
+    expect(toGmMutation('damage_enemy', { amount: 0 })).toBeNull()
+    expect(toGmMutation('damage_enemy', { amount: 51 })).toBeNull()
+    expect(toGmMutation('damage_enemy', { amount: 2.5 })).toBeNull()
+    expect(toGmMutation('damage_enemy', { amount: 3, reason: 'x'.repeat(201) })).toBeNull()
+    expect(toGmMutation('damage_enemy', {})).toBeNull()
+  })
+
+  it('carries sceneIndex on an update_campaign_scene advance only when given', () => {
+    expect(
+      toGmMutation('update_campaign_scene', { sceneIndex: 3 }),
+    ).toEqual({ kind: 'update_scene', scene: { sceneIndex: 3 } })
+    expect(
+      toGmMutation('update_campaign_scene', { locationName: 'The Vault' }),
+    ).toEqual({ kind: 'update_scene', scene: { locationName: 'The Vault' } })
+  })
+
+  it('refuses an out-of-arc sceneIndex', () => {
+    expect(toGmMutation('update_campaign_scene', { sceneIndex: 5 })).toBeNull()
+    expect(toGmMutation('update_campaign_scene', { sceneIndex: -1 })).toBeNull()
+    expect(toGmMutation('update_campaign_scene', { sceneIndex: 1.5 })).toBeNull()
   })
 
   it('strips unknown keys instead of forwarding a model object', () => {

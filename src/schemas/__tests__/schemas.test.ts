@@ -77,8 +77,14 @@ describe('data-model contracts later phases depend on', () => {
     return schema
   }
 
-  it('keeps the campaign scene at eight columns', () => {
-    expect(schemaNamed('campaigns').columns).toHaveLength(8)
+  it('keeps the campaign scene at nine columns, with the arc position a number', () => {
+    const campaigns = schemaNamed('campaigns')
+    const sceneIndex = campaigns.columns.find((column) => column.name === 'sceneIndex')
+
+    expect(campaigns.columns).toHaveLength(9)
+    expect(sceneIndex?.storage).toBe('number')
+    expect(sceneIndex?.default).toBe(0)
+    expect(sceneIndex?.required).toBeUndefined()
   })
 
   it('keeps one character row per user per campaign, owned via userId', () => {

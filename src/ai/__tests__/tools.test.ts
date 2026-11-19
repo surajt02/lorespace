@@ -32,12 +32,13 @@ const ALLOWED_KEYS = [
   'user_current',
 ]
 
-/** The four GM tools `P5.3` adds. */
+/** The five GM tools `P5.3`/`P5.18` add. */
 const GM_KEYS = [
   'get_campaign_snapshot',
   'modify_character_hp',
   'grant_character_loot',
   'update_campaign_scene',
+  'damage_enemy',
 ]
 
 const OWNER_USER_ID = 'owner-user'
@@ -73,6 +74,29 @@ function fakeRecordRoom() {
       calls.push({ tool: body.tool, params: body.params, headers: request.headers })
       switch (body.tool) {
         case 'records.get':
+          // The GM's writes read either a character (HP) or the campaign row
+          // (enemy damage, scene advance), so the stub answers by collection.
+          if (body.params.collection === 'campaigns') {
+            return jsonResponse({
+              success: true,
+              data: {
+                record: {
+                  recordId: DEFAULT_CAMPAIGN_ID,
+                  data: {
+                    title: 'Chronicles of the Obsidian Vault',
+                    sceneIndex: 2,
+                    locationName: 'The Sunken Reliquary',
+                    atmosphereTag: 'combat',
+                    sceneSummary: 'The Sentinel wakes.',
+                    activeThreatDc: 13,
+                    enemyName: 'Runebound Sentinel',
+                    enemyHp: 24,
+                    enemyMaxHp: 24,
+                  },
+                },
+              },
+            })
+          }
           return jsonResponse({
             success: true,
             data: {
@@ -138,12 +162,12 @@ async function run(
 }
 
 describe('buildTools', () => {
-  it('builds the seven allowed built-ins plus the four GM tools', () => {
+  it('builds the seven allowed built-ins plus the five GM tools', () => {
     const { context } = fakeContext(CHAT_URL)
     const tools = buildTools(fakeExecutor(), context)
 
     expect(Object.keys(tools).sort()).toEqual([...ALLOWED_KEYS, ...GM_KEYS].sort())
-    expect(Object.keys(tools)).toHaveLength(11)
+    expect(Object.keys(tools)).toHaveLength(12)
   })
 
   it('never exposes a delete tool', () => {
@@ -437,6 +461,42 @@ describe('GM write tools inside the GM chat turn', () => {
     })
   })
 
+  it('runs a damage_enemy write as the owner and logs a combat row', async () => {
+    const { context, calls } = fakeContext(CHAT_URL)
+    const tools = buildTools(fakeExecutor(), context)
+
+    const result = await run(tools, 'damage_enemy', {
+      amount: 6,
+      reason: 'The arrow finds the gap',
+    })
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        kind: 'enemy_damage',
+        enemy: { name: 'Runebound Sentinel', before: 24, after: 18, maxHp: 24, applied: 6 },
+        logged: true,
+      },
+    })
+    const update = calls.find((call) => call.tool === 'records.update')
+    expect(update?.params).toMatchObject({
+      collection: 'campaigns',
+      recordId: DEFAULT_CAMPAIGN_ID,
+      data: { enemyHp: 18 },
+    })
+    for (const call of calls) {
+      expect(call.headers.get('X-User-Id')).toBe(OWNER_USER_ID)
+    }
+    const logWrite = calls.find(
+      (call) => call.tool === 'records.create' && call.params.collection === 'roll-logs',
+    )
+    expect(logWrite?.params.data).toMatchObject({
+      entryType: 'combat',
+      characterName: 'Runebound Sentinel',
+    })
+    expect(JSON.stringify(logWrite?.params.data)).toContain('The arrow finds the gap')
+  })
+
   it('refuses invalid input before building the owner action context', async () => {
     const { context, calls, roomGet } = fakeContext(CHAT_URL)
     const tools = buildTools(fakeExecutor(), context)
@@ -474,6 +534,17 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('no turn order')
     expect(prompt).toContain('Tool first, prose second')
     expect(prompt).not.toContain('ADR')
+  })
+
+  it('states the combat and arc rules the actions enforce', () => {
+    expect(prompt).toContain('damage_enemy')
+    expect(prompt).toContain('sceneIndex')
+    expect(prompt).toContain('five scenes')
+    expect(prompt).toContain('COMBAT IS CONVERSATION')
+    expect(prompt).toContain('THE ARC')
+    // Narration first, then the check, then the verified consequence (ADR 0024).
+    expect(prompt).toContain('attack')
+    expect(prompt.toLowerCase()).toContain('never invent')
   })
 
   it('drops the generic app-assistant framing and stays short', () => {

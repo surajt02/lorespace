@@ -9,7 +9,7 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeHighlight from 'rehype-highlight'
-import { Check, Copy } from 'lucide-react'
+import { Check, Copy, Loader2, X } from 'lucide-react'
 import 'highlight.js/styles/atom-one-dark.css'
 import type {
   MessagePart,
@@ -18,6 +18,8 @@ import type {
 
 type MessageTurnProps = {
   role: 'user' | 'assistant' | 'system'
+  /** Silkscreen role label above the turn ("Game Master", "You"). */
+  label: string
   content: string
   parts?: unknown[]
   isStreaming: boolean
@@ -26,6 +28,7 @@ type MessageTurnProps = {
 /** Finished turns remain memoized while the active turn streams token-by-token. */
 export const MessageTurn = memo(function MessageTurn({
   role,
+  label,
   content,
   parts,
   isStreaming,
@@ -37,8 +40,9 @@ export const MessageTurn = memo(function MessageTurn({
 
   if (role === 'user') {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 leading-relaxed text-foreground whitespace-pre-wrap break-words">
+      <div className="flex flex-col items-end">
+        <RoleLabel>{label}</RoleLabel>
+        <div className="max-w-[85%] border border-border bg-shell-panel px-3 py-2 leading-relaxed text-foreground whitespace-pre-wrap break-words">
           {content}
         </div>
       </div>
@@ -48,8 +52,8 @@ export const MessageTurn = memo(function MessageTurn({
   if (role === 'system') {
     const summary = content.replace(/^Earlier conversation summary:\n?/, '')
     return (
-      <div className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground">
-        <div className="mb-1 font-medium tracking-tight text-foreground/80">
+      <div className="border border-dashed border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground">
+        <div className="mb-1 font-pixel text-[10px] uppercase text-muted-foreground">
           Earlier conversation summary
         </div>
         <div className="whitespace-pre-wrap leading-relaxed">{summary}</div>
@@ -58,18 +62,28 @@ export const MessageTurn = memo(function MessageTurn({
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      {orderedParts.map((part, index) => {
-        if (part.type === 'text') {
-          if (!part.text) return null
-          return <MarkdownText key={index}>{part.text}</MarkdownText>
-        }
-        return <ToolRow key={index} invocation={part.toolInvocation} />
-      })}
-      {isStreaming && <LiveIndicator />}
+    <div className="border-l-2 border-primary pl-3">
+      <RoleLabel>{label}</RoleLabel>
+      <div className="flex flex-col gap-2">
+        {orderedParts.map((part, index) => {
+          if (part.type === 'text') {
+            if (!part.text) return null
+            return <MarkdownText key={index}>{part.text}</MarkdownText>
+          }
+          return <ToolRow key={index} invocation={part.toolInvocation} />
+        })}
+        {isStreaming && <LiveIndicator />}
+      </div>
     </div>
   )
 })
+
+/** One register for both roles: Silkscreen, 10px, uppercase, muted (ADR 0013). */
+function RoleLabel({ children }: { children: string }) {
+  return (
+    <p className="mb-1 font-pixel text-[10px] uppercase text-muted-foreground">{children}</p>
+  )
+}
 
 export function EmptyState({
   prompts,
@@ -89,9 +103,7 @@ export function EmptyState({
         </p>
       </div>
       <div className="flex flex-col gap-0.5 pt-2">
-        <div className="pb-1 text-[10.5px] font-medium tracking-[0.08em] uppercase text-muted-foreground">
-          Try
-        </div>
+        <div className="pb-1 font-pixel text-[10px] uppercase text-muted-foreground">Try</div>
         {prompts.map((prompt) => (
           <button
             key={prompt}
@@ -110,9 +122,9 @@ export function EmptyState({
 
 export function ThinkingIndicator() {
   return (
-    <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+    <div className="flex items-center gap-2">
       <EllipsisDots />
-      <span>Thinking</span>
+      <span className="font-pixel text-[10px] uppercase text-muted-foreground">Thinking</span>
     </div>
   )
 }
@@ -161,8 +173,8 @@ function MarkdownText({ children }: { children: string }) {
                  [&_li]:my-0.5
                  [&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground
                  [&_hr]:my-3 [&_hr]:border-border
-                 [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[0.9em]
-                 [&_pre]:bg-zinc-900 [&_pre]:text-zinc-100 [&_pre]:rounded-md [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto
+                 [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded-none [&_code]:text-[0.9em]
+                 [&_pre]:bg-zinc-900 [&_pre]:text-zinc-100 [&_pre]:rounded-none [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto
                  [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:rounded-none [&_pre_code]:text-inherit
                  [&_table]:my-2 [&_table]:w-full [&_table]:border-collapse
                  [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1 [&_th]:font-semibold [&_th]:text-left
@@ -181,36 +193,49 @@ function MarkdownText({ children }: { children: string }) {
 
 function LiveIndicator() {
   return (
-    <div className="flex items-center gap-2 text-[12px] text-muted-foreground" aria-live="polite">
+    <div className="flex items-center gap-2" aria-live="polite">
       <span className="relative flex h-1.5 w-1.5">
-        <span className="absolute inset-0 rounded-full bg-primary/50 animate-ping" />
-        <span className="relative h-1.5 w-1.5 rounded-full bg-primary" />
+        <span className="absolute inset-0 animate-ping bg-primary/50" />
+        <span className="relative h-1.5 w-1.5 bg-primary" />
       </span>
-      <span className="tracking-wide">Working</span>
+      <span className="font-pixel text-[10px] uppercase text-muted-foreground">Working</span>
     </div>
   )
 }
 
+/**
+ * One compact line per tool call: the state as a Silkscreen micro-label, a lucide
+ * icon, then the tool's human label and its path. Reads say READING, writes say
+ * WRITING when they land, so a loot grant is never described as a read.
+ */
 function ToolRow({ invocation }: { invocation: ToolInvocation }) {
   const done = invocation.state === 'result'
   const failed = done && isFailedResult(invocation.result)
-  const { label, path } = describeTool(invocation.toolName, invocation.args)
+  const { label, path, kind } = describeTool(invocation.toolName, invocation.args)
+  const state = !done ? 'Running' : failed ? 'Failed' : kind === 'write' ? 'Writing' : 'Reading'
 
   return (
-    <div className={`flex items-center gap-2 text-[13px] leading-tight ${done ? '' : 'animate-[pulse_2s_ease-in-out_infinite]'}`}>
-      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
-        {!done
-          ? <Spinner />
-          : failed
-            ? <FailDot />
-            : <Check className="h-3 w-3 shrink-0 text-foreground/60" aria-hidden="true" />}
+    <div className="flex items-center gap-2 border-l border-border pl-2 text-[12px] leading-tight">
+      <span
+        className={`shrink-0 font-pixel text-[10px] uppercase ${failed ? 'text-destructive' : 'text-muted-foreground'}`}
+      >
+        {state}
       </span>
-      <span className={done ? 'text-muted-foreground' : 'text-foreground'}>{label}</span>
+      <span className="inline-flex size-3.5 shrink-0 items-center justify-center">
+        {!done ? (
+          <Loader2 className="size-3 animate-spin text-primary" aria-hidden="true" />
+        ) : failed ? (
+          <X className="size-3 text-destructive" aria-hidden="true" />
+        ) : (
+          <Check className="size-3 text-foreground/60" aria-hidden="true" />
+        )}
+      </span>
+      <span className={done && !failed ? 'text-muted-foreground' : 'text-foreground'}>
+        {label}
+      </span>
       {path && (
-        <code className="truncate font-mono text-[12.5px] text-foreground/70">{path}</code>
+        <code className="truncate font-mono text-[11.5px] text-foreground/70">{path}</code>
       )}
-      {failed && <span className="text-destructive">Failed</span>}
-      {!done && <EllipsisDots />}
     </div>
   )
 }
@@ -227,7 +252,7 @@ function isFailedResult(result: unknown): boolean {
 function describeTool(
   name: string,
   args: unknown,
-): { label: string; path?: string } {
+): { label: string; path?: string; kind: 'read' | 'write' } {
   const values = args && typeof args === 'object'
     ? args as Record<string, unknown>
     : undefined
@@ -243,53 +268,37 @@ function describeTool(
 
   switch (name) {
     case 'schema_list':
-      return { label: 'Listing collections' }
+      return { label: 'Listing collections', kind: 'read' }
     case 'schema_describe':
-      return { label: 'Describing', path: collection }
+      return { label: 'Describing', path: collection, kind: 'read' }
     case 'records_query':
-      return { label: 'Reading', path: collection }
+      return { label: 'Reading', path: collection, kind: 'read' }
     case 'records_get':
-      return { label: 'Fetching', path: recordPath }
+      return { label: 'Fetching', path: recordPath, kind: 'read' }
     case 'records_create':
-      return { label: 'Creating record in', path: collection }
+      return { label: 'Creating record in', path: collection, kind: 'write' }
     case 'records_update':
-      return { label: 'Updating', path: recordPath }
+      return { label: 'Updating', path: recordPath, kind: 'write' }
     case 'records_delete':
-      return { label: 'Deleting', path: recordPath }
+      return { label: 'Deleting', path: recordPath, kind: 'write' }
     case 'user_current':
-      return { label: 'Checking current user' }
+      return { label: 'Checking current user', kind: 'read' }
     default:
-      return { label: 'Running', path: name }
+      // Unknown tools (the GM's own) are named by their id alone: the state
+      // micro-label already says what is happening, so a second verb ("Running")
+      // would only repeat it.
+      return { label: name, kind: 'read' }
   }
 }
 
 function EllipsisDots() {
   return (
     <span className="inline-flex items-center gap-[3px]" aria-hidden="true">
-      <span className="h-1 w-1 rounded-full bg-muted-foreground animate-[pulse_1.4s_ease-in-out_0ms_infinite]" />
-      <span className="h-1 w-1 rounded-full bg-muted-foreground animate-[pulse_1.4s_ease-in-out_180ms_infinite]" />
-      <span className="h-1 w-1 rounded-full bg-muted-foreground animate-[pulse_1.4s_ease-in-out_360ms_infinite]" />
+      <span className="h-1 w-1 bg-muted-foreground animate-[pulse_1.4s_ease-in-out_0ms_infinite]" />
+      <span className="h-1 w-1 bg-muted-foreground animate-[pulse_1.4s_ease-in-out_180ms_infinite]" />
+      <span className="h-1 w-1 bg-muted-foreground animate-[pulse_1.4s_ease-in-out_360ms_infinite]" />
     </span>
   )
-}
-
-function Spinner() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 12 12"
-      className="animate-spin text-foreground/70"
-      aria-hidden="true"
-    >
-      <circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="1.5" />
-      <path d="M10.5 6 A 4.5 4.5 0 0 1 6 10.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function FailDot() {
-  return <span className="h-1.5 w-1.5 rounded-full bg-destructive" aria-hidden="true" />
 }
 
 type MarkdownElementProps<Tag extends 'a' | 'pre'> =
@@ -316,7 +325,7 @@ const CodeBlock = ({ children, node: _node, ...props }: MarkdownElementProps<'pr
         type="button"
         onClick={copy}
         aria-label={copied ? 'Copied' : 'Copy code'}
-        className="absolute right-2 top-2 inline-flex h-6 items-center gap-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 text-[11px] font-medium text-zinc-200 opacity-0 transition-opacity hover:bg-zinc-700 focus-visible:opacity-100 group-hover:opacity-100"
+        className="absolute right-2 top-2 inline-flex h-6 items-center gap-1 border border-zinc-700 bg-zinc-800 px-2 text-[11px] font-medium text-zinc-200 opacity-0 transition-opacity hover:bg-zinc-700 focus-visible:opacity-100 group-hover:opacity-100"
       >
         {copied
           ? <Check className="h-3 w-3" aria-hidden="true" />

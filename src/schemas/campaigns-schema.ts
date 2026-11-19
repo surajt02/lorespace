@@ -4,6 +4,12 @@
  * The single shared campaign every player reads. `DEFAULT_CAMPAIGN_ID` names
  * the seeded record (Phase 2); this file only declares the columns.
  *
+ * `sceneIndex` is where the table is in the five-scene arc (ADR 0023): the
+ * position, not the content — location, DC and enemy stay in the columns
+ * ADR 0011 named, and `src/lib/campaign-arc.ts` is the one thing that maps an
+ * index onto them. It is additive with a default, so existing rows read as
+ * scene 0.
+ *
  * `'*'` and `viewer` both carry read-only access on purpose: `viewer` is the
  * anonymous role today, `'*'` is the SDK's catch-all fallback for any role
  * added later. Members play (update), they do not delete the campaign.
@@ -22,6 +28,7 @@ export const campaignsSchema: CollectionSchema = {
     { name: 'enemyName', storage: 'text', interpretation: 'plain', default: '' },
     { name: 'enemyHp', storage: 'number', interpretation: 'plain', default: 0 },
     { name: 'enemyMaxHp', storage: 'number', interpretation: 'plain', default: 0 },
+    { name: 'sceneIndex', storage: 'number', interpretation: 'plain', default: 0 },
   ],
   permissions: {
     '*': { read: true, create: false, update: false, delete: false },

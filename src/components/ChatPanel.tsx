@@ -23,6 +23,7 @@ import {
   Square,
 } from 'lucide-react'
 import { listDeepSpaceAgentModels, useQuery } from 'deepspace'
+import { cn } from '@/lib/utils'
 import { EmptyState, MessageTurn, ThinkingIndicator } from './ChatPanel.messages'
 import { useStreamingChat } from './ChatPanel.stream'
 
@@ -58,6 +59,15 @@ export type ChatPanelProps = {
   models?: ModelOption[]
   /** Clickable prompts shown when the conversation is empty. */
   emptyStatePrompts?: string[]
+  /**
+   * Replaces the built-in empty state entirely. The GM console supplies its own
+   * silent-table block so the four chip prompts are not printed twice.
+   */
+  emptyState?: ReactNode
+  /** Composer placeholder. Defaults to the assistant's own copy. */
+  placeholder?: string
+  /** Silkscreen micro-labels above each turn (ADR 0013). */
+  roleLabels?: { user: string; assistant: string }
   /** Applied to the outer container. */
   className?: string
   /** Optional content rendered above the messages. */
@@ -76,6 +86,8 @@ export type ChatPanelProps = {
 }
 
 const MODEL_STORAGE_KEY = 'deepspace-ai-model'
+const DEFAULT_PLACEHOLDER = 'Message the assistant…'
+const DEFAULT_ROLE_LABELS = { user: 'You', assistant: 'Assistant' }
 const DEFAULT_PROMPTS = [
   'What can you help with?',
   'Summarize recent activity',
@@ -94,6 +106,9 @@ export function ChatPanel({
   onChatCreated,
   models: modelOptions,
   emptyStatePrompts = DEFAULT_PROMPTS,
+  emptyState,
+  placeholder,
+  roleLabels = DEFAULT_ROLE_LABELS,
   className,
   header,
   compact = false,
@@ -267,11 +282,16 @@ export function ChatPanel({
   const waitingForAssistant = isLoading && lastMessage?.role === 'user'
   const horizontalPadding = compact ? 'px-4' : 'px-6'
   const textSize = compact ? 'text-[13px]' : 'text-[14px]'
-  const turnGap = compact ? 'gap-6' : 'gap-8'
+  const turnGap = compact ? 'gap-4' : 'gap-8'
+  const verticalPadding = compact ? 'py-4' : 'py-8'
 
   return (
     <div
-      className={`relative flex h-full min-h-0 flex-col bg-background text-foreground ${textSize} ${className ?? ''}`}
+      className={cn(
+        'relative flex h-full min-h-0 flex-col bg-background text-foreground',
+        textSize,
+        className,
+      )}
     >
       {header && <div className="shrink-0">{header}</div>}
 
@@ -281,16 +301,17 @@ export function ChatPanel({
         aria-live="polite"
         aria-atomic="false"
         aria-label="Assistant conversation"
-        className={`min-h-0 flex-1 overflow-y-auto ${horizontalPadding} py-8`}
+        className={`min-h-0 flex-1 overflow-y-auto ${horizontalPadding} ${verticalPadding}`}
       >
         {messages.length === 0 ? (
-          <EmptyState prompts={emptyStatePrompts} onPick={selectPrompt} />
+          (emptyState ?? <EmptyState prompts={emptyStatePrompts} onPick={selectPrompt} />)
         ) : (
           <div className={`mx-auto flex max-w-[44rem] flex-col ${turnGap}`}>
             {messages.map((message) => (
               <MessageTurn
                 key={message.id}
                 role={message.role}
+                label={message.role === 'user' ? roleLabels.user : roleLabels.assistant}
                 content={message.content}
                 parts={message.parts}
                 isStreaming={message.id === streamingAssistantId}
@@ -303,13 +324,13 @@ export function ChatPanel({
 
       {error && (
         <div className={`mx-auto mb-2 w-full max-w-[44rem] ${horizontalPadding}`} role="alert">
-          <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive">
+          <div className="flex items-start gap-2 border border-destructive/40 bg-destructive/5 px-2 py-2 text-destructive">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
             <div className="flex-1 text-[13px] leading-relaxed">{error.message}</div>
             <button
               type="button"
               onClick={retry}
-              className="rounded-md border border-destructive/30 px-2 py-0.5 text-[12px] font-medium transition-colors hover:bg-destructive/10"
+              className="border border-destructive/40 px-2 py-0.5 font-pixel text-[10px] uppercase text-destructive transition-colors hover:bg-destructive/10"
             >
               Retry
             </button>
@@ -317,7 +338,7 @@ export function ChatPanel({
         </div>
       )}
 
-      <div className={`shrink-0 border-t border-border/60 ${horizontalPadding} pb-4 pt-3`}>
+      <div className={`shrink-0 border-t border-border ${horizontalPadding} pb-2 pt-1.5`}>
         <form
           onSubmit={(event) => {
             event.preventDefault()
@@ -325,7 +346,11 @@ export function ChatPanel({
           }}
           className="mx-auto w-full max-w-[44rem]"
         >
-          <div className="relative rounded-2xl border border-border bg-background transition-colors focus-within:border-foreground/25 focus-within:ring-4 focus-within:ring-foreground/[0.04]">
+          {/* One chrome bar, not a floating bubble: the textarea grows upward and
+              the controls stay on the baseline. The console is given as little as
+              192px of column height (the feed's window), and a two-row composer
+              overflowed that box — its model row was clipped by the frame. */}
+          <div className="@container flex items-end gap-1.5 border border-border bg-background py-1 pl-2.5 pr-1.5 transition-colors focus-within:border-primary">
             <textarea
               ref={inputRef}
               rows={1}
@@ -336,40 +361,38 @@ export function ChatPanel({
               }}
               onKeyDown={handleKeyDown}
               disabled={disabled}
-              placeholder={disabled ? 'Creating chat…' : 'Message the assistant…'}
-              className="block w-full resize-none bg-transparent px-4 pt-3 pb-12 leading-[1.5] text-foreground placeholder:text-muted-foreground/60 outline-none disabled:cursor-not-allowed"
+              placeholder={disabled ? 'Creating chat…' : (placeholder ?? DEFAULT_PLACEHOLDER)}
+              className="block min-w-0 flex-1 resize-none bg-transparent py-1 leading-[1.4] text-foreground placeholder:text-muted-foreground/60 outline-none disabled:cursor-not-allowed"
             />
 
-            <div className="pointer-events-none absolute inset-x-2 bottom-2 flex items-center justify-between">
-              {groupedModels.length > 0 && modelId && selectedModel ? (
-                <ModelPicker
-                  grouped={groupedModels}
-                  modelId={modelId}
-                  label={selectedModel.label}
-                  onChange={selectModel}
-                />
-              ) : <span />}
+            {groupedModels.length > 0 && modelId && selectedModel ? (
+              <ModelPicker
+                grouped={groupedModels}
+                modelId={modelId}
+                label={selectedModel.label}
+                onChange={selectModel}
+              />
+            ) : <span />}
 
-              {isLoading ? (
-                <button
-                  type="button"
-                  onClick={stop}
-                  aria-label="Stop generating"
-                  className="pointer-events-auto inline-flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-90"
-                >
-                  <Square className="h-3 w-3 fill-current" aria-hidden="true" />
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={!canSend}
-                  aria-label="Send message"
-                  className="pointer-events-auto inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground transition-all hover:opacity-90 disabled:bg-muted disabled:text-muted-foreground/60 disabled:cursor-not-allowed"
-                >
-                  <ArrowUp className="h-4 w-4" aria-hidden="true" />
-                </button>
-              )}
-            </div>
+            {isLoading ? (
+              <button
+                type="button"
+                onClick={stop}
+                aria-label="Stop generating"
+                className="inline-flex size-7 shrink-0 items-center justify-center border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+              >
+                <Square className="h-3 w-3 fill-current" aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!canSend}
+                aria-label="Send message"
+                className="inline-flex size-7 shrink-0 items-center justify-center border border-primary bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:border-border disabled:bg-transparent disabled:text-muted-foreground/60"
+              >
+                <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            )}
           </div>
         </form>
       </div>
@@ -436,23 +459,29 @@ function ModelPicker({
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+        className="inline-flex items-center gap-1.5 border border-border bg-card px-1.5 py-1 transition-colors hover:border-primary hover:text-foreground"
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <span className="max-w-[10rem] truncate">{label}</span>
-        <ChevronDown className="h-3 w-3 opacity-70" aria-hidden="true" />
+        <span className="font-pixel text-[10px] uppercase text-muted-foreground">Model</span>
+        {/* The console column can be ~340px wide; the model name would then
+            squeeze the placeholder to "Speak to the". Below 24rem the trigger
+            keeps the MODEL label and the chevron and drops the name. */}
+        <span className="hidden max-w-[10rem] truncate font-pixel text-[10px] text-foreground @min-[24rem]:inline">
+          {label}
+        </span>
+        <ChevronDown className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
       </button>
 
       {open && (
         <div
           role="menu"
-          className="absolute bottom-full left-0 z-30 mb-2 w-64 max-h-[22rem] overflow-y-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-lg"
+          className="pixel-frame absolute bottom-full left-0 z-30 mb-2 max-h-[22rem] w-64 overflow-y-auto bg-popover text-popover-foreground"
         >
           {grouped.map(([provider, items], providerIndex) => (
             <div key={provider}>
               {providerIndex > 0 && <div className="border-t border-border/60" />}
-              <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <div className="px-2 pt-2 pb-1 font-pixel text-[10px] uppercase text-muted-foreground">
                 {provider}
               </div>
               {items.map((model) => {
@@ -466,7 +495,7 @@ function ModelPicker({
                       onChange(model.id)
                       setOpen(false)
                     }}
-                    className={`flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[12.5px] transition-colors ${active ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'}`}
+                    className={`flex w-full items-center justify-between gap-3 px-2 py-1.5 text-left text-[12px] transition-colors ${active ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'}`}
                   >
                     <span className="truncate">{model.label}</span>
                     {active && <Check className="h-3 w-3 shrink-0 text-foreground/60" aria-hidden="true" />}

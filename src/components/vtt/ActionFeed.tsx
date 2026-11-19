@@ -42,12 +42,11 @@ const ENTRY_LABELS: Record<string, string> = {
  * Rows shown before the expand toggle. A display cap only: the query reads the
  * whole collection, so "show all" means every row the table has (`P4.18`).
  *
- * Three, not five (`P4.20`): minimised, the panel is its own height so there is
- * nothing to scroll, and every extra row is height taken from the GM console.
- * Five compact rows are ~360px, which either squeezes the GM below a usable
- * height or forces the panel into a box a few pixels short of its content — the
- * half-row scrollbar this fixes. One constant to raise if the GM can give up the
- * room.
+ * Four, because the minimised panel is sized to its content rather than to a
+ * fixed window (`P5.14`): the GM console below it is guaranteed a floor, and
+ * every row beyond the fourth would have to come out of that. One constant to
+ * raise if the GM can give up the room, and `/home`'s feed cap plus the
+ * console's floor move with it.
  */
 const RECENT_COUNT = 4
 

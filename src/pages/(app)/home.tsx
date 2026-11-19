@@ -24,17 +24,23 @@
  * roster cannot show two different parties — the anonymous viewer reads the same
  * collections, so an empty one just means nobody has seeded yet. The GM console
  * is live when signed in (`P5.7`): it embeds the SDK chat panel, sends quick
- * chips, and fires one automatic turn per resolved `roll-logs` roll. Signed out
- * it keeps its preview script, and that preview is the last fixture on the
- * page. The GM composer's emptiness is owned here too (`P5.9`), because the
- * roster's typing marker is a presence payload read by another window.
+ * chips, opens the story when a game starts (`P5.17`) and fires one automatic
+ * turn per resolved `roll-logs` roll — the console is no longer a fixture in any
+ * signed-in state. Signed out it keeps its preview script, and that preview is
+ * the last fixture on the page. The GM composer's emptiness is owned here too
+ * (`P5.9`), because the roster's typing marker is a presence payload read by
+ * another window.
  *
- * The one write this page makes itself is the seed (ADR 0007, `P2.5`): signed in
- * on an empty `campaigns` collection, `/home` POSTs
- * `/api/actions/ensureDefaultCampaign` once per mount, renders a skeleton until
- * it resolves, and shows a notice if it fails — never a silent fixture fallback.
- * No record write, no mutation hook here: the seeded row reaches the UI over the
- * room subscription.
+ * Two writes belong to this page itself: the seed (ADR 0007, `P2.5`) and the
+ * new-game reset (ADR 0026, `P5.16`). Signed in on an empty `campaigns`
+ * collection, `/home` POSTs `/api/actions/ensureDefaultCampaign` once per mount,
+ * renders a skeleton until it resolves, and shows a notice if it fails — never
+ * a silent fixture fallback. The banner owns the campaign control
+ * (`SceneBanner`): it renders the act/scene progress and "Start New Campaign"
+ * from `campaign-arc.ts`, and the confirm modal here calls `startCampaign`,
+ * toasts what happened, and mints the beat id that makes the GM open Act I. No
+ * record write, no mutation hook here: the rows reach the UI over the room
+ * subscription.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -49,9 +55,10 @@ import { RollBannerLayer } from '@/components/vtt/RollBannerLayer'
 import { newestFirst } from '@/lib/roll-announcements'
 import { SceneBanner } from '@/components/vtt/SceneBanner'
 import { SignInBanner } from '@/components/vtt/SignInBanner'
-import { useToast } from '@/components/ui'
+import { ConfirmModal, useToast } from '@/components/ui'
 import { DEFAULT_CAMPAIGN_ID } from '@/constants'
 import { callAction, ActionCallError } from '@/lib/actions'
+import { progressLabel } from '@/lib/campaign-arc'
 import { DEFAULT_CAMPAIGN_SEED, type CampaignRow } from '@/lib/campaign-seed'
 import type { AbilityScoreKey } from '@/lib/party-presence'
 import {
@@ -107,13 +114,22 @@ export default function HomePage() {
   const liveRolls = useMemo(() => newestFirst(rollRecords), [rollRecords])
 
   // The feed's own height depends on this, so `/home` owns it: minimised, the
-  // feed is five rows and the GM console takes the rest of the column; expanded,
-  // the feed takes the column and scrolls (`P4.19`).
+  // feed sizes to its four rows and the GM console takes the rest of the column
+  // above its floor; expanded, the feed takes the column and scrolls (`P4.19`,
+  // `P5.14`).
   const [feedExpanded, setFeedExpanded] = useState(false)
   // True while the viewer is composing a GM message; `PartyPresenceBar`
   // broadcasts it as `isTypingAction` for the other windows' rosters (`P5.9`).
   const [gmComposing, setGmComposing] = useState(false)
-  const { error: toastError } = useToast()
+  const { error: toastError, success: toastSuccess } = useToast()
+
+  // "Start New Campaign" (ADR 0025, ADR 0026): the modal is the gate, `starting`
+  // is the button's own spinner, and `openBeatId` is the one-shot signal that
+  // makes the GM narrate Act I. A fresh id per reset, so resetting twice opens
+  // twice and a re-render opens nothing.
+  const [startOpen, setStartOpen] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const [openBeatId, setOpenBeatId] = useState<string | null>(null)
 
   const [seedState, setSeedState] = useState<SeedState>('idle')
   // Set on dispatch, not on success: one attempt per mount (ADR 0007 — a failed
@@ -173,6 +189,21 @@ export default function HomePage() {
   // or signed in after a failed seed, where a notice sits above the table.
   const campaign =
     liveCampaign ?? (seedState === 'seeded' ? DEFAULT_CAMPAIGN_SEED : PREVIEW_CAMPAIGN.data)
+
+  // Where the table is (ADR 0023). `?? 0` because `sceneIndex` is an additive
+  // column: a row written before it existed reads as scene 0, and the fixture
+  // seed carries it too, so neither branch can render an empty label.
+  const sceneIndex = campaign.sceneIndex ?? 0
+  const progress = progressLabel(sceneIndex)
+  // Anything the player has done counts as a game under way. A scene past the
+  // first is proof the engine advanced; a non-empty feed is proof the table has
+  // been played at all — including the one row a reset leaves behind ("A new
+  // game begins", ADR 0026), which is exactly what makes the label read "Start
+  // New Campaign" the moment a game starts rather than the moment the first die
+  // is rolled. A freshly seeded table has no rows, so it offers "Start
+  // campaign".
+  const hasActiveGame = sceneIndex > 0 || liveRolls.length > 0
+  const startLabel = hasActiveGame ? 'Start New Campaign' : 'Start campaign'
 
   // Signed in, your sheet is the row bound to your user id — no row yet means no
   // character, so the panel renders the Forge. Signed out you are watching the
@@ -242,6 +273,31 @@ export default function HomePage() {
         ? 'error'
         : inventoryStatus
 
+  /**
+   * The one write the banner's control makes: reset the table (ADR 0025) and
+   * clear the log (ADR 0026), both server-side. The action's own refusal text is
+   * the explanation — `not_at_table` means this viewer has no character here — so
+   * a failure closes the modal and toasts instead of inventing a reason.
+   */
+  async function startNewGame() {
+    if (starting) return
+    setStarting(true)
+    try {
+      await callAction('startCampaign')
+      toastSuccess('A new game begins', 'The table is back at Act I, Scene 1.')
+      // A fresh id is what tells the console to open the campaign once; the
+      // narration is a consequence of this click, not of a mount timer (ADR 0023).
+      setOpenBeatId(String(Date.now()))
+      setStartOpen(false)
+    } catch (error) {
+      const message = error instanceof ActionCallError ? error.message : 'The reset request failed.'
+      toastError('The table could not be reset', message)
+      setStartOpen(false)
+    } finally {
+      setStarting(false)
+    }
+  }
+
   return (
     <div
       data-testid="workspace-shell"
@@ -258,8 +314,32 @@ export default function HomePage() {
           <RollBannerLayer entries={liveRolls} status={rollStatus} />
 
           <div className="shrink-0">
-            <SceneBanner campaign={campaign} />
+            <SceneBanner
+              campaign={campaign}
+              progress={progress}
+              startLabel={startLabel}
+              starting={starting}
+              // Signed out there is no control: the reset is a member-at-the-table
+              // action (ADR 0025), and a dead button is worse than no button.
+              {...(isSignedIn ? { onStartCampaign: () => setStartOpen(true) } : {})}
+            />
           </div>
+
+          {isSignedIn && (
+            <ConfirmModal
+              open={startOpen}
+              onClose={() => setStartOpen(false)}
+              onConfirm={() => {
+                void startNewGame()
+              }}
+              title="Start a new game?"
+              description="Scene, HP, every pack and the roll log return to the start. Characters stay."
+              confirmText="Start new game"
+              cancelText="Keep playing"
+              variant="destructive"
+              loading={starting}
+            />
+          )}
 
           {!isSignedIn && (
             <div className="shrink-0">
@@ -294,11 +374,11 @@ export default function HomePage() {
               </div>
             </aside>
 
-            {/* Whichever panel is not reading its oldest rows gets the leftover
-                height (`P4.19`): minimised, the feed is five rows and the GM
-                console fills the column and scrolls its own messages; expanded,
-                the feed fills and scrolls and the GM keeps its natural height at
-                the bottom, so it is never pushed off screen (`P4.14`). */}
+            {/* Both panels share the column height (`P4.19`, `P5.14`): minimised,
+                the feed sizes to its four rows but is capped so the GM console
+                always keeps a usable floor; expanded, the feed fills and scrolls
+                and the GM keeps its natural height at the bottom, so it is never
+                pushed off screen (`P4.14`). */}
             <section className="flex min-h-0 flex-col gap-3 bg-shell-panel lg:overflow-hidden">
               <div
                 className={
@@ -307,14 +387,16 @@ export default function HomePage() {
                       // the rows do not fit, so a short feed has no scrollbar and a
                       // long one scrolls inside its frame (`P4.21`).
                       'pixel-frame flex min-h-0 flex-col bg-card lg:max-h-full lg:overflow-y-auto'
-                    : // A fixed window while minimised (`P4.20`): four compact rows
-                      // plus the header, the same height whether the table has one
-                      // roll or four, so the GM console below does not jump as rows
-                      // arrive. Scrolls only if a short viewport cannot give it
-                      // that height. Written as a literal class: Tailwind scans
-                      // source text, so an interpolated class name is never
-                      // generated.
-                      'pixel-frame flex flex-col bg-card lg:h-[21.5rem] lg:max-h-full lg:overflow-y-auto'
+                    : // Sized to its content while minimised (`P5.14`): four
+                      // compact rows plus the header, capped so whatever the
+                      // column height, the GM console below keeps its floor
+                      // (`lg:min-h-[15rem]`). The two numbers are one decision —
+                      // 15rem of console plus the 0.75rem gap is the 15.75rem
+                      // taken off the column here, so cap + floor fill it. At
+                      // 1024x768 the cap is 281px and the rows need 278. Written
+                      // as literal classes: Tailwind scans source text, so an
+                      // interpolated class name is never generated.
+                      'pixel-frame flex flex-col bg-card lg:max-h-[calc(100%_-_15.75rem)] lg:overflow-y-auto'
                 }
               >
                 <ActionFeed
@@ -326,12 +408,14 @@ export default function HomePage() {
                   }}
                 />
               </div>
-              {/* Fills whatever the feed leaves, and gives a few pixels back
-                  before the feed is forced to scroll: `flex-1` grows into empty
-                  space, and `min-h-48` (header + input + a scrollable message
-                  list) is the floor, so the expanded feed only scrolls when the
-                  rows genuinely cannot share the column (`P4.19`, `P4.21`). */}
-              <div className="flex min-h-0 flex-col lg:min-h-48 lg:flex-1 lg:overflow-hidden">
+              {/* Fills whatever the feed leaves: `flex-1` grows into empty
+                  space, and `lg:min-h-[15rem]` is the floor — the feed's cap
+                  above is this number plus the gap, so together they fill the
+                  column. The floor keeps the header, the message list, the
+                  composer and all four chips on screen at 1024x768, where the
+                  chips wrap to two rows and the message list keeps ~82px — two
+                  lines (`P5.14`). */}
+              <div className="flex min-h-0 flex-col lg:min-h-[15rem] lg:flex-1 lg:overflow-hidden">
                 <GmConsolePanel
                   signedIn={isSignedIn}
                   userId={userId ?? undefined}
@@ -342,6 +426,9 @@ export default function HomePage() {
                   }
                   rolls={liveRolls}
                   preview={PREVIEW_GM_MESSAGES}
+                  openBeatId={openBeatId}
+                  progress={progress}
+                  enemyName={campaign.enemyName}
                   onDraftChange={setGmComposing}
                 />
               </div>

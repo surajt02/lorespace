@@ -417,3 +417,54 @@ panel, user-scoped `read: 'own'`); `roll-logs` by `applyGmMutation` (one
 | taste | Chips sit under the composer, not above it | `ChatPanel` owns its composer; the alternative was forking the panel | One look at the console: does the chip row read as part of the composer? | `src/components/GmConsolePanel.tsx` |
 | taste | GM prose renders in ChatPanel's own markdown/rounded style | The rest of the table is square pixel chrome (`--radius: 0`) | Say if the console should be chrome-styled (squared, Silkscreen labels) before Phase 6 screenshots | `src/components/ChatPanel.messages.tsx` |
 | taste | Error copy is raw provider text ("Payment Required") | It is honest but reads as a stack trace | Say if a failed turn should say "The Game Master is unavailable" instead | `src/components/ChatPanel.tsx:282` |
+
+### Revision — 2026-11-19 (after the phase closed)
+
+Requested after using the console; recorded rather than folded into the Outcome
+above, which stays as it shipped.
+
+- **Console chrome (`P5.14`, `P5.13`).** `ChatPanel*` + `GmConsolePanel` restyled
+  to ADR 0013: zero radius, Silkscreen role/model/tool labels, amber left rule on
+  GM prose, one-bar square composer ("Speak to the Game Master"), a GM empty
+  state instead of the generic assistant copy (the four prompts no longer print
+  twice). `ChatPanel` gained three additive props (`emptyState`, `placeholder`,
+  `roleLabels`). The console's model list is reordered so `claude-haiku-5-5` is
+  first — a reorder, not an allowlist, after measuring the free plan: 487/500
+  credits after ~85 turns; Opus 5.5 is the only plan-refused model.
+- **Layout (`P5.14`).** The minimised feed is content-sized, capped at
+  `calc(100% - 15.75rem)`, with a 15rem console floor; measured at 1440x900 and
+  1024x768, four rows + composer + four chips fit. The stale "three, not five"
+  comment is gone.
+- **Duplicate names (`P5.15`).** Two test accounts had both forged "Ash"; one
+  stale row was deleted from the dev table and Forge now refuses a name another
+  adventurer at the table already uses (`name_taken`, case-insensitive).
+- **Campaign flow (`P5.16`, `P5.17`) — ADR 0023/0025/0026.** Five scenes across
+  three acts in `src/lib/campaign-arc.ts`; additive `campaigns.sceneIndex`;
+  `startCampaign` is a **new game** (scene 0, HP to max, packs back to archetype
+  starter kits, roll log drained except its own marker row, `not_at_table` for a
+  caller with no character); the banner carries `Act I · Scene 1 of 5`, the enemy
+  name + HP, and `Start campaign` / `Start New Campaign` behind a confirm modal;
+  `update_campaign_scene` may only advance one scene and only when the engine
+  agrees the scene is over (`invalid_scene` / `scene_not_complete`); the reset's
+  click sends one opening beat, so the GM opens the story.
+- **Narrative combat (`P5.18`) — ADR 0024.** No attack action or button: a
+  player narrates, the GM sets the DC and asks for the check, and applies one
+  engine-clamped consequence — `damage_enemy` (new, clamped to `0..enemyMaxHp`,
+  one `combat` row, chat-turn gated) on a hit, `modify_character_hp` on a miss.
+- **Two prompt defects found by the live probe, fixed.** The auto-resolve message
+  did not say to apply the consequence, and the GM attributed a roll to whoever
+  last wrote `sceneSummary`; both are now explicit in `buildRollPrompt` and the
+  GM brief (attribution, no repeat checks, `sceneSummary` is scenery not action).
+  The brief was re-cut to stay under the 700-word test cap.
+
+**Live evidence (temporary probes, deleted):** the reset wrote
+`{"sceneIndex":0,"clearedRolls":2,"clearedItems":4,"healedCharacters":2,"grantedItems":4}`
+and the feed held exactly `A new game begins — Act I, Scene 1`; the opening beat
+narrated the threshold and asked for the first decision with no dice; a narrated
+arrow at the sentinel produced `COMBAT | Runebound Sentinel | … takes 4 damage
+(12/24) — … d20(16) +2 = 18 vs DC 12`, the banner read `16/24`, and the scene did
+not advance while the enemy stood.
+
+**Still open:** `P6.*` (gates, e2e, deploy); the deployed app needs a deploy
+before its `campaigns` table gains `sceneIndex` (additive, automatic at room
+init).

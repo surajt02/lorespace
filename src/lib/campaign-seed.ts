@@ -1,16 +1,22 @@
 /**
  * The seeded campaign row — one source for the scene every table starts in.
  *
- * `ensureDefaultCampaign` (ADR 0007) writes this row and the signed-out preview
- * (`PREVIEW_CAMPAIGN`) renders it, so both import from here: an edit reaches
- * the live seed and the fixture together instead of letting them drift.
+ * The scene columns are `sceneColumns(0)` of `campaign-arc.ts` (ADR 0023), not
+ * a second copy of them: a fresh seed and a "Start New Campaign" reset open on
+ * the same location, atmosphere, summary, DC and enemy state, and neither can
+ * drift from the other. `ensureDefaultCampaign` (ADR 0007) writes this row and
+ * the signed-out preview (`PREVIEW_CAMPAIGN`) renders it.
  *
  * No React and no `deepspace` import — worker code imports this module.
  */
 
-/** `campaigns` — the eight columns registered in `campaigns-schema.ts`. */
+import { sceneColumns } from './campaign-arc'
+import type { CampaignAtmosphereTag } from './campaign-arc'
+
+/** `campaigns` — the nine columns registered in `campaigns-schema.ts`. */
 export interface CampaignRow {
   title: string
+  sceneIndex: number
   locationName: string
   atmosphereTag: string
   sceneSummary: string
@@ -21,24 +27,17 @@ export interface CampaignRow {
 }
 
 /**
- * ADR 0011's first scene state — the threshold: exploration, DC 12, no enemy
- * in play. The dungeon/Sentinel state arrives later through `update_scene`,
- * not through the seed.
+ * ADR 0023's first scene — the threshold: Act I, exploration, DC 12, no enemy in
+ * play. The dungeon/Sentinel states arrive through scene progression, not
+ * through the seed.
  */
 export const DEFAULT_CAMPAIGN_SEED: CampaignRow = {
   title: 'Chronicles of the Obsidian Vault',
-  locationName: 'The Ashen Threshold',
-  atmosphereTag: 'exploration',
-  sceneSummary:
-    'Ash drifts across a broken causeway. Runic fire burns green in the braziers, and a sealed door waits beyond them.',
-  activeThreatDc: 12,
-  enemyName: '',
-  enemyHp: 0,
-  enemyMaxHp: 0,
+  ...sceneColumns(0),
 }
 
 /** `campaigns.atmosphereTag`'s select options, in schema order. */
-const ATMOSPHERE_TAGS: readonly string[] = [
+const ATMOSPHERE_TAGS: readonly CampaignAtmosphereTag[] = [
   'exploration',
   'combat',
   'tavern',
@@ -52,5 +51,5 @@ const ATMOSPHERE_TAGS: readonly string[] = [
  * value the caller could have checked up front.
  */
 export function isAtmosphereTag(value: string): boolean {
-  return ATMOSPHERE_TAGS.includes(value)
+  return (ATMOSPHERE_TAGS as readonly string[]).includes(value)
 }

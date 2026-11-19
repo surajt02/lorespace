@@ -3,8 +3,10 @@ import type { ActionContext, ActionHandler, ActionResult } from 'deepspace/worke
 import type { Env } from '../../worker'
 import { DEFAULT_CAMPAIGN_ID } from '../constants'
 import { DEFAULT_CAMPAIGN_SEED, isAtmosphereTag } from '../lib/campaign-seed'
+import { progressLabel, sceneAt, sceneColumns } from '../lib/campaign-arc'
+import type { CampaignScene } from '../lib/campaign-arc'
 import { ARCHETYPE_PRESETS, CONSUMABLE_EFFECTS, calculateArmorClass, classifyRoll, formatModifier, getModifier } from '../lib/d20'
-import type { RollOutcome } from '../lib/d20'
+import type { ArchetypePreset, RollOutcome } from '../lib/d20'
 import { rollD20FromBytes } from '../lib/rng'
 
 /**
@@ -64,6 +66,30 @@ interface RollCampaignTarget {
   activeThreatDc: number
 }
 
+/**
+ * The `campaigns` columns a GM mutation reads: where the table is in the arc
+ * (`sceneIndex`), and the scene enemy's name and HP. Absent fields are treated
+ * as "scene 0 / no enemy" rather than trusted blindly.
+ */
+interface CampaignStateTarget {
+  [key: string]: unknown
+  sceneIndex: number
+  enemyName: string
+  enemyHp: number
+  enemyMaxHp: number
+}
+
+/** The `characters` columns a reset reads: whose row it is and what it forges. */
+interface ResetCharacterRow {
+  [key: string]: unknown
+  userId: string
+  campaignId: string
+  name: string
+  archetype: string
+  hp: number
+  maxHp: number
+}
+
 /** `inventory.category`'s select options, in schema order (ADR 0016: no `relic`). */
 const ITEM_CATEGORIES = ['weapon', 'armor', 'consumable', 'quest'] as const
 
@@ -88,7 +114,9 @@ const itemSchema = z.object({
 })
 
 // Unknown keys are stripped (zod's default), and `title` is not a key here at
-// all — `update_scene` can never rename the campaign.
+// all — `update_scene` can never rename the campaign. `sceneIndex` is not a
+// scene column either: it is the arc position, and `applyGmMutation` gates it
+// as an advance rather than a free write (ADR 0023).
 const sceneSchema = z.object({
   locationName: z.string().optional(),
   atmosphereTag: z
@@ -103,6 +131,9 @@ const sceneSchema = z.object({
   enemyName: z.string().optional(),
   enemyHp: z.number().optional(),
   enemyMaxHp: z.number().optional(),
+  // The only legal value is "current + 1" with the current scene's exit met;
+  // the bound keeps an out-of-arc index from reaching `sceneColumns`.
+  sceneIndex: z.number().int().min(0).max(4).optional(),
 })
 
 const gmMutationSchema = z.discriminatedUnion('kind', [
@@ -123,6 +154,13 @@ const gmMutationSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('update_scene'),
     scene: sceneSchema,
+  }),
+  // ADR 0024: the GM's hit. It moves the scene enemy's HP only, and the engine
+  // clamps it — there is no absolute "enemyHp" field to pass.
+  z.object({
+    kind: z.literal('enemy_damage'),
+    amount: z.number().int().min(1).max(50),
+    reason: z.string().trim().max(200).optional(),
   }),
 ])
 
@@ -159,7 +197,11 @@ export type GmMutationData = GmMutationLogReport &
         characterId: string
         item: { recordId: string; itemName: string; quantity: number }
       }
-    | { kind: 'update_scene'; scene: { applied: string[] } }
+    | { kind: 'update_scene'; scene: { applied: SceneColumn[]; sceneIndex?: number } }
+    | {
+        kind: 'enemy_damage'
+        enemy: { name: string; before: number; after: number; maxHp: number; applied: number }
+      }
   )
 
 /**
@@ -263,6 +305,75 @@ function sceneSummary(
 }
 
 /**
+ * The `combat` summary line for `enemy_damage` (ADR 0024): the enemy, the damage
+ * the engine actually applied, the HP it now sits at, and the GM's reason when
+ * it gave one. `applied` is the clamped number, never the requested one.
+ */
+function enemyDamageSummary(
+  name: string,
+  change: { after: number; maxHp: number; applied: number; reason?: string },
+): string {
+  const line = `${name} takes ${change.applied} damage (${change.after}/${change.maxHp})`
+  return change.reason === undefined ? line : `${line} — ${change.reason}`
+}
+
+function invalidScene(error: string) {
+  return { success: false as const, code: 'invalid_scene', error }
+}
+
+/** One page of roll history the scene's exit check reads. */
+const SCENE_EXIT_ROLL_SCAN = 500
+
+type SceneExitResult =
+  | { ok: true }
+  | { ok: false; code: 'scene_not_complete' | 'write_failed'; error: string }
+
+/**
+ * Whether the current scene's `exit` is satisfied by **records** (ADR 0023):
+ * `defeat` reads the campaign row's `enemyHp`, `check` reads one successful
+ * `roll-logs` row at this scene's DC. The model never gets to say a scene is
+ * over — ADR 0009's rule, applied to the story's own unit.
+ */
+async function sceneExitMet(
+  tools: ActionContext<Env>['tools'],
+  campaign: CampaignStateTarget,
+  scene: CampaignScene,
+): Promise<SceneExitResult> {
+  if (scene.exit === 'defeat') {
+    const enemyHp = typeof campaign.enemyHp === 'number' ? campaign.enemyHp : 0
+    if (enemyHp <= 0) return { ok: true }
+    return {
+      ok: false,
+      code: 'scene_not_complete',
+      error: `${scene.title} ends when the enemy is at 0 HP; enemyHp is ${enemyHp}`,
+    }
+  }
+
+  // Bounded on purpose: a scene that has not been closed cannot have hundreds of
+  // rolls at its own DC in this build, and hitting the cap fails closed (the
+  // advance is refused, never guessed).
+  const rolls = await tools.query<{ outcome: string }>('roll-logs', {
+    where: {
+      campaignId: DEFAULT_CAMPAIGN_ID,
+      entryType: 'roll',
+      targetDc: scene.activeThreatDc,
+    },
+    limit: SCENE_EXIT_ROLL_SCAN,
+  })
+  if (!rolls.success) return { ok: false, code: 'write_failed', error: rolls.error }
+  const met = rolls.data.records.some(
+    (record) =>
+      record.data.outcome === 'success' || record.data.outcome === 'critical_success',
+  )
+  if (met) return { ok: true }
+  return {
+    ok: false,
+    code: 'scene_not_complete',
+    error: `${scene.title} ends on one successful roll at DC ${scene.activeThreatDc}; none is recorded`,
+  }
+}
+
+/**
  * Writes the one `roll-logs` row a GM mutation is evidence of (ADR 0009,
  * `P5.10`): the mutation already happened by the time this runs, so a failed log
  * write never turns the result into a failure — it reports `logged: false` with
@@ -288,7 +399,8 @@ async function logGmEvidence(
 }
 
 /**
- * The AI GM's privileged write path — HP, loot and scene only (ADR 0008).
+ * The AI GM's privileged write path — character HP, loot, the scene, and the
+ * scene enemy's HP (ADR 0008, ADR 0023, ADR 0024).
  *
  * Authorization is the **app owner credential** (ADR 0017), stated once here
  * because `ctx.tools` runs with per-record RBAC **off**: `ctx.userId` must equal
@@ -298,10 +410,15 @@ async function logGmEvidence(
  * their own HP (ADR 0020).
  *
  * The owner acts for the table, so it needs no character row of its own: the only
- * target rule is that the character must be in `DEFAULT_CAMPAIGN_ID`, keeping
- * one table's GM from reaching another's rows. Members cannot write `characters`
- * or `inventory` directly (ADR 0015), so this is the only cross-character write
+ * target rule is that a character must be in `DEFAULT_CAMPAIGN_ID`, keeping one
+ * table's GM from reaching another's rows. Members cannot write `characters` or
+ * `inventory` directly (ADR 0015), so this is the only cross-character write
  * path.
+ *
+ * Two kinds move the campaign row rather than a character: `update_scene` (and,
+ * with `sceneIndex`, an engine-gated advance that only moves the table when the
+ * current scene's exit is recorded) and `enemy_damage` (clamped to
+ * `0..enemyMaxHp`, so a fight's every number is the engine's).
  *
  * Ordered best-effort, not atomic: with no transactions, each kind performs one
  * mutation and, after it succeeds, one `roll-logs` evidence row (`P5.10`,
@@ -336,6 +453,63 @@ export async function applyGmMutation(
       patch[column] = value
       applied.push(column)
     }
+
+    // Scene advance (ADR 0023): `sceneIndex` moves the table, so the engine
+    // decides whether the current scene is over. Without it this is the same
+    // in-scene write it has always been, and nothing below runs.
+    if (mutation.scene.sceneIndex !== undefined) {
+      const next = mutation.scene.sceneIndex
+      const campaign = await tools.get<CampaignStateTarget>('campaigns', DEFAULT_CAMPAIGN_ID)
+      if (!campaign.success) {
+        return { success: false, code: 'campaign_not_found', error: campaign.error }
+      }
+      const state = campaign.data.record.data
+      const current = typeof state.sceneIndex === 'number' ? state.sceneIndex : 0
+      const currentScene = sceneAt(current)
+      if (!currentScene) {
+        return invalidScene(`The campaign's sceneIndex ${current} is not in the arc`)
+      }
+      // One step at a time: no skipping and no going back, whatever the model
+      // asked for.
+      if (next !== current + 1) {
+        return invalidScene(`sceneIndex may only advance by one from ${current}`)
+      }
+      const exit = await sceneExitMet(tools, state, currentScene)
+      if (!exit.ok) {
+        return exit.code === 'write_failed'
+          ? writeFailed('scene_exit', exit.error, [])
+          : { success: false, code: 'scene_not_complete', error: exit.error }
+      }
+
+      // A new scene's own columns, with the model's whitelisted scene fields on
+      // top: the GM names the place; the engine names the position and the arc.
+      const write: Record<string, string | number> = { ...sceneColumns(next) }
+      for (const column of SCENE_COLUMNS) {
+        const value = mutation.scene[column]
+        if (value !== undefined) write[column] = value
+      }
+      const advanced = await tools.update('campaigns', DEFAULT_CAMPAIGN_ID, write)
+      if (!advanced.success) return writeFailed('update_scene', advanced.error, [])
+      const log = await logGmEvidence(
+        tools,
+        {
+          campaignId: DEFAULT_CAMPAIGN_ID,
+          characterName: 'Game Master',
+          entryType: 'gm_event',
+          summary: `The scene advances to ${progressLabel(next)} — ${String(write.locationName)}`,
+        },
+        `campaigns:${DEFAULT_CAMPAIGN_ID}`,
+      )
+      return {
+        success: true,
+        data: {
+          kind: 'update_scene',
+          scene: { applied: [...SCENE_COLUMNS], sceneIndex: next },
+          ...log,
+        },
+      }
+    }
+
     // Nothing whitelisted arrived (only stripped keys): no empty write, and
     // nothing to log — an evidence row for a no-op would be a false claim.
     if (applied.length === 0) {
@@ -363,7 +537,55 @@ export async function applyGmMutation(
     return { success: true, data: { kind: 'update_scene', scene: { applied }, ...log } }
   }
 
-  // Both remaining kinds target a character. It must be in the one campaign
+  // A hit in narrative combat (ADR 0024): the enemy is a pair of campaign
+  // columns, so there is no character target and nothing for the caller to
+  // claim — the engine reads HP, clamps it and logs what it actually applied.
+  if (mutation.kind === 'enemy_damage') {
+    const campaign = await tools.get<CampaignStateTarget>('campaigns', DEFAULT_CAMPAIGN_ID)
+    if (!campaign.success) {
+      return { success: false, code: 'campaign_not_found', error: campaign.error }
+    }
+    const state = campaign.data.record.data
+    const enemyName = typeof state.enemyName === 'string' ? state.enemyName.trim() : ''
+    const enemyMaxHp = typeof state.enemyMaxHp === 'number' ? state.enemyMaxHp : 0
+    if (enemyName === '' || enemyMaxHp <= 0) {
+      return {
+        success: false,
+        code: 'enemy_not_found',
+        error: 'The current scene has no enemy to damage',
+      }
+    }
+    const before = typeof state.enemyHp === 'number' ? state.enemyHp : 0
+    const after = Math.min(enemyMaxHp, Math.max(0, before - mutation.amount))
+    const applied = before - after
+    const updated = await tools.update('campaigns', DEFAULT_CAMPAIGN_ID, { enemyHp: after })
+    if (!updated.success) return writeFailed('enemy_damage', updated.error, [])
+    const log = await logGmEvidence(
+      tools,
+      {
+        campaignId: DEFAULT_CAMPAIGN_ID,
+        characterName: enemyName,
+        entryType: 'combat',
+        summary: enemyDamageSummary(enemyName, {
+          after,
+          maxHp: enemyMaxHp,
+          applied,
+          reason: mutation.reason,
+        }),
+      },
+      `campaigns:${DEFAULT_CAMPAIGN_ID}`,
+    )
+    return {
+      success: true,
+      data: {
+        kind: 'enemy_damage',
+        enemy: { name: enemyName, before, after, maxHp: enemyMaxHp, applied },
+        ...log,
+      },
+    }
+  }
+
+  // The remaining kinds target a character. It must be in the one campaign
   // this app serves, so a mutation cannot reach another table's rows.
   const target = await tools.get<CharacterTarget>('characters', mutation.characterId)
   if (!target.success) {
@@ -499,6 +721,34 @@ export async function forgeCharacter(
       success: false,
       code: 'already_forged',
       error: `Caller already has a character in campaign ${JSON.stringify(DEFAULT_CAMPAIGN_ID)} (one character per player)`,
+    }
+  }
+
+  // Two adventurers with the same name are two sheets the GM cannot tell apart
+  // (`P5.15`). `query`'s `where` matches primitives exactly, so the case fold
+  // happens here — and the caller's own future row is excluded by `userId`,
+  // though the check above already proves they have none.
+  const taken = await tools.query<MembershipRow>('characters', {
+    where: { campaignId: DEFAULT_CAMPAIGN_ID },
+    limit: 200,
+  })
+  if (!taken.success) {
+    // Fail closed: being unable to prove the name is free is not permission.
+    return writeFailed('name_check', taken.error, [])
+  }
+  const wanted = parsed.data.name.toLowerCase()
+  const clash = taken.data.records.find((record) => {
+    const row = record.data
+    if (row.userId === userId) return false
+    const name = row.name
+    return typeof name === 'string' && name.trim().toLowerCase() === wanted
+  })
+  if (clash) {
+    const clashName = typeof clash.data.name === 'string' ? clash.data.name.trim() : parsed.data.name
+    return {
+      success: false,
+      code: 'name_taken',
+      error: `Another adventurer at this table is already called "${clashName}"`,
     }
   }
 
@@ -907,6 +1157,205 @@ export async function deleteCharacter(
   return { success: true, data: { characterId, deletedItems } }
 }
 
+/** `deleteWhere`'s page size for a reset drain (SDK default 100, max 500). */
+const RESET_DRAIN_PAGE = 100
+
+/**
+ * Defensive cap on a reset's drain pages: 50 pages × 100 rows is far past any
+ * table this build can produce, and a broken `deleted` count must not spin the
+ * action forever. Hitting it stops the reset and is reported, never ignored.
+ */
+const RESET_DRAIN_MAX_PAGES = 50
+
+/** The campaign's character rows a reset reads, bounded like Forge's name check. */
+const RESET_ROSTER_LIMIT = 200
+
+type DrainOutcome = { ok: true; deleted: number } | { ok: false; error: string }
+
+/**
+ * Deletes every row matching `where`, one bounded page at a time, and reports
+ * how many went. `deleteWhere` removes at most `limit` per call, so a full page
+ * means "ask again"; a short page is the end of the collection.
+ */
+async function drainCollection(
+  tools: ActionContext<Env>['tools'],
+  collection: string,
+  where: Record<string, unknown>,
+): Promise<DrainOutcome> {
+  let deleted = 0
+  for (let page = 1; ; page += 1) {
+    if (page > RESET_DRAIN_MAX_PAGES) {
+      return {
+        ok: false,
+        error: `${collection} drain stopped after ${RESET_DRAIN_MAX_PAGES} pages (${deleted} rows deleted)`,
+      }
+    }
+    const drained = await tools.deleteWhere(collection, where, RESET_DRAIN_PAGE)
+    if (!drained.success) return { ok: false, error: drained.error }
+    deleted += drained.data.deleted
+    if (drained.data.deleted < RESET_DRAIN_PAGE) return { ok: true, deleted }
+  }
+}
+
+/** The archetype preset a reset restores a pack from, or `undefined` if unknown. */
+function presetFor(archetype: string): ArchetypePreset | undefined {
+  return (ARCHETYPE_PRESETS as Record<string, ArchetypePreset | undefined>)[archetype]
+}
+
+/** The one row a reset leaves behind, and the boundary it marks (ADR 0026). */
+const NEW_GAME_MARKER = 'A new game begins — Act I, Scene 1'
+
+export interface StartCampaignData {
+  sceneIndex: number
+  progress: string
+  clearedRolls: number
+  clearedItems: number
+  healedCharacters: number
+  grantedItems: number
+  /** Starter items a reset could not write, and any character it could not kit. */
+  itemsMissing: string[]
+  /** Whether the marker row was written; a reset that landed is still a success. */
+  logged: boolean
+  details?: { applied: string[]; logError?: string }
+}
+
+/**
+ * "Start New Campaign" — a new game at the same table (ADR 0023, ADR 0025,
+ * ADR 0026).
+ *
+ * The caller must have a character in the campaign (`not_at_table` otherwise):
+ * this is a table action, not a GM write, and a drive-by visitor must not be
+ * able to wipe a live table. Then, in this order, stopping at the first failure
+ * and reporting the stages that already landed (`details.applied`):
+ *
+ * 1. drain `inventory` for the campaign, 2. drain `roll-logs` (ADR 0026 — a new
+ * game starts with one feed row, not last run's dice), 3. upsert `campaigns` at
+ * `sceneColumns(0)` keeping the existing `title`, 4. set every character's `hp`
+ * to its own `maxHp` (engine-authored, so this is not a player HP path,
+ * ADR 0020), 5. re-create each character's archetype starter kit for its owner
+ * (the same rows Forge writes, ADR 0025), and 6. **last**, one `gm_event` marker
+ * row — last so the reset cannot delete its own evidence.
+ *
+ * There are no transactions across `tools.*`, so a character healed before a
+ * failed item write stays healed; the result names the counts that landed rather
+ * than implying all-or-nothing. Starter-item failures are reported in
+ * `itemsMissing` (Forge's pattern) instead of discarding the reset.
+ */
+export async function startCampaign(
+  ctx: ActionContext<Env>,
+): Promise<ActionResult<StartCampaignData>> {
+  const { tools, userId } = ctx
+
+  const membership = await tools.query<MembershipRow>('characters', {
+    where: { userId, campaignId: DEFAULT_CAMPAIGN_ID },
+    limit: 1,
+  })
+  if (!membership.success) return writeFailed('membership', membership.error, [])
+  if (membership.data.records.length === 0) {
+    return {
+      success: false,
+      code: 'not_at_table',
+      error: `The caller has no character in campaign ${JSON.stringify(DEFAULT_CAMPAIGN_ID)}`,
+    }
+  }
+
+  const applied: string[] = []
+
+  const items = await drainCollection(tools, 'inventory', { campaignId: DEFAULT_CAMPAIGN_ID })
+  if (!items.ok) return writeFailed('inventory', items.error, applied)
+  applied.push('inventory')
+
+  const rolls = await drainCollection(tools, 'roll-logs', { campaignId: DEFAULT_CAMPAIGN_ID })
+  if (!rolls.ok) return writeFailed('roll-logs', rolls.error, applied)
+  applied.push('roll-logs')
+
+  // The scene is an upsert of the known id; only the title is taken from the
+  // existing row, so a reset never renames the campaign.
+  const existing = await tools.query<{ title?: string }>('campaigns', {
+    where: { recordId: DEFAULT_CAMPAIGN_ID },
+    limit: 1,
+  })
+  if (!existing.success) return writeFailed('campaign', existing.error, applied)
+  const existingTitle = existing.data.records[0]?.data.title
+  const title =
+    typeof existingTitle === 'string' && existingTitle !== ''
+      ? existingTitle
+      : DEFAULT_CAMPAIGN_SEED.title
+  const opening = sceneColumns(0)
+  const scene = await tools.create(
+    'campaigns',
+    { title, ...opening },
+    DEFAULT_CAMPAIGN_ID,
+  )
+  if (!scene.success) return writeFailed('campaign', scene.error, applied)
+  applied.push('campaigns')
+
+  const roster = await tools.query<ResetCharacterRow>('characters', {
+    where: { campaignId: DEFAULT_CAMPAIGN_ID },
+    limit: RESET_ROSTER_LIMIT,
+  })
+  if (!roster.success) return writeFailed('characters', roster.error, applied)
+
+  let healedCharacters = 0
+  let grantedItems = 0
+  const itemsMissing: string[] = []
+  for (const record of roster.data.records) {
+    const character = record.data
+    // Engine-authored: the value is the row's own `maxHp`, never a caller's.
+    const maxHp = typeof character.maxHp === 'number' ? character.maxHp : 0
+    const healed = await tools.update('characters', record.recordId, { hp: maxHp })
+    if (!healed.success) return writeFailed('character_hp', healed.error, applied)
+    healedCharacters += 1
+    applied.push(`characters:${record.recordId}`)
+
+    const preset = presetFor(character.archetype)
+    if (!preset) {
+      // Never invent a kit for an archetype this build does not know: name it
+      // and move on, so one odd row cannot take the whole reset down.
+      itemsMissing.push(`${character.name}: unknown archetype ${JSON.stringify(character.archetype)}`)
+      continue
+    }
+    for (const item of preset.starterItems) {
+      const created = await tools.create('inventory', {
+        // The pack belongs to the character's owner, not to whoever reset.
+        userId: character.userId,
+        characterId: record.recordId,
+        campaignId: DEFAULT_CAMPAIGN_ID,
+        itemName: item.itemName,
+        category: item.category,
+        description: item.description,
+        quantity: item.quantity,
+      })
+      if (created.success) grantedItems += 1
+      else itemsMissing.push(`${character.name}: ${item.itemName}`)
+    }
+  }
+  applied.push('starter-kits')
+
+  const marker = await tools.create('roll-logs', {
+    campaignId: DEFAULT_CAMPAIGN_ID,
+    characterName: 'Game Master',
+    entryType: 'gm_event',
+    outcome: 'info',
+    summary: NEW_GAME_MARKER,
+  })
+
+  return {
+    success: true,
+    data: {
+      sceneIndex: opening.sceneIndex,
+      progress: progressLabel(opening.sceneIndex),
+      clearedRolls: rolls.deleted,
+      clearedItems: items.deleted,
+      healedCharacters,
+      grantedItems,
+      itemsMissing,
+      logged: marker.success,
+      ...(marker.success ? {} : { details: { applied, logError: marker.error } }),
+    },
+  }
+}
+
 export const actions: Record<string, ActionHandler<Env>> = {
   ensureDefaultCampaign,
   applyGmMutation,
@@ -914,4 +1363,5 @@ export const actions: Record<string, ActionHandler<Env>> = {
   useItem,
   rollSkillCheck,
   deleteCharacter,
+  startCampaign,
 }

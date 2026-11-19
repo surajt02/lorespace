@@ -46,3 +46,7 @@ an accident.
 | [0020](./0020-no-player-hp-path.md) | Players have no HP write path | Accepted | game integrity |
 | [0021](./0021-roll-banner-reads-roll-logs.md) | The roll banner reads `roll-logs`; presence carries identity only | Accepted | realtime / game integrity |
 | [0022](./0022-gm-tools-confined-to-chat-turn.md) | GM write tools run only inside the in-app GM chat turn | Accepted | security |
+| [0023](./0023-campaign-reset-and-scene-progression.md) | Campaign reset and engine-gated scene progression | Accepted | content / game flow |
+| [0024](./0024-narrative-combat.md) | Combat is narration, a DC, and an engine-clamped consequence | Accepted | game mechanics / AI |
+| [0025](./0025-new-game-reset.md) | "Start New Campaign" is a new game: HP and packs reset too | Accepted | content / game flow |
+| [0026](./0026-reset-clears-roll-log.md) | The new-game reset clears the roll log too | Accepted | content / game flow |

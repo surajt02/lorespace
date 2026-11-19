@@ -13,6 +13,14 @@
  *   cap: it reports rows this window has not announced, and the panel marks
  *   every unseen id as announced when it sends, so a burst collapses to one turn
  *   and a row never fires twice.
+ * - **The GM opens the story** (ADR 0023). `buildOpeningPrompt` is the click's
+ *   message, and the only one that is not a reply: it names the act and scene so
+ *   the opening narration is attributable to "Start campaign" rather than a
+ *   mount timer.
+ * - **Combat is narration** (ADR 0024). The `attack` chip writes the sentence a
+ *   player would say — first person, naming the enemy, asking what to roll —
+ *   instead of ordering an attack. The chat is the interface, so the chip is a
+ *   writer of prose, not an action.
  *
  * Pure: no React, no network, no clock.
  */
@@ -46,6 +54,8 @@ export interface QuickPromptContext {
   characterName?: string | null
   /** The viewer's newest `roll-logs` roll row, when one exists. */
   latestRoll?: RollLogRow | null
+  /** The campaign's current enemy (`campaigns.enemyName`), when one is on the table. */
+  enemyName?: string | null
 }
 
 /** `critical_failure` → `critical failure`. The row's own word, unembellished. */
@@ -67,14 +77,19 @@ function rollLine(row: RollLogRow): string {
  *
  * The character name prefixes the line when the viewer has a sheet; without one
  * the line simply starts with the action, because a placeholder like
- * `undefined inspects the room` is worse than no attribution. `resolve` and
- * `attack` carry the newest roll when there is one and say plainly that there
- * is not when there isn't — asking the GM to verify a roll it was never given is
- * exactly the fabrication ADR 0009 forbids.
+ * `undefined inspects the room` is worse than no attribution. `resolve` carries
+ * the newest roll when there is one and says plainly that there is not when
+ * there isn't — asking the GM to verify a roll it was never given is exactly the
+ * fabrication ADR 0009 forbids.
+ *
+ * `attack` is narration, not an order (ADR 0024): the player says what they do
+ * in the first person and asks what to roll, and the GM answers with a DC. There
+ * is deliberately no dice line — the check has not been called yet, and the
+ * resolved roll arrives as its own automatic turn.
  */
 export function buildQuickPrompt(
   kind: GmChipKind,
-  { characterName, latestRoll }: QuickPromptContext = {},
+  { characterName, latestRoll, enemyName }: QuickPromptContext = {},
 ): string {
   const name = characterName?.trim() ?? ''
   const prefix = name.length > 0 ? `${name}: ` : ''
@@ -82,6 +97,7 @@ export function buildQuickPrompt(
   const rollSuffix = roll ? `\nMy latest roll: ${rollLine(roll)}.` : ''
   const noRollSuffix =
     '\nNo roll of mine is on the log yet — call for the check first, then verify it in roll-logs.'
+  const enemy = enemyName?.trim() ?? ''
 
   switch (kind) {
     case 'inspect':
@@ -89,10 +105,35 @@ export function buildQuickPrompt(
     case 'resolve':
       return `${prefix}resolve my latest roll.${roll ? rollSuffix : noRollSuffix}`
     case 'attack':
-      return `${prefix}attack the active enemy.${roll ? rollSuffix : noRollSuffix}`
+      return `${prefix}I move to strike ${enemy.length > 0 ? enemy : 'the enemy'} — set the stakes and tell me what to roll.`
     case 'rest':
       return `${prefix}take a short rest — what does the party recover, and what happens while we rest?`
   }
+}
+
+/**
+ * The opening turn "Start campaign" sends (ADR 0023, `P5.17`).
+ *
+ * One user message that puts the GM at the top of the arc: it reads the record
+ * and the party, narrates the scene, and stops where a story actually needs the
+ * table — at the first decision or check. It names the act and scene from the
+ * engine's label (`progressLabel`), so the GM opens where the row says the table
+ * is, not where the model guesses it is.
+ *
+ * It must never contain a dice result: no roll has happened, and the whole point
+ * of the boundary (ADR 0005, ADR 0009) is that the numbers come from
+ * `roll-logs`. `announce` is the only thing the GM does for free here.
+ */
+export function buildOpeningPrompt(progress: string, sceneTitle?: string): string {
+  const where = progress.trim().length > 0 ? progress.trim() : 'the opening scene'
+  const title = sceneTitle?.trim() ?? ''
+  const named = title.length > 0 ? ` (${title})` : ''
+  return [
+    `Begin the campaign at ${where}${named}.`,
+    'Read the campaigns row and the party before you speak: the location, the atmosphere, the scene summary, the active DC and the character sheets.',
+    'Narrate where the party is, what they can see and what is at stake in three or four sentences, then stop and say what the first decision or check is.',
+    'Do not roll for anyone and do not state a dice result — the players roll, and you verify it in roll-logs.',
+  ].join(' ')
 }
 
 /**
@@ -115,6 +156,9 @@ export function buildRollPrompt(row: RecordData<RollLogRow>): string {
   return [
     `${data.characterName} rolls ${rollLine(data)}.`,
     `Resolve it from the roll-logs row ${row.recordId}; do not roll again and do not invent a result.`,
+    `This is the resolution of the check you asked ${data.characterName} for: attribute it to ${data.characterName}, not to another sheet.`,
+    'Apply its consequence in this turn with one write tool — `damage_enemy` on a hit,',
+    `\`modify_character_hp\` on a miss — and then narrate what the table sees.`,
     `Roll payload: ${payload}`,
   ].join('\n')
 }

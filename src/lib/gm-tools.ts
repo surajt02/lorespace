@@ -1,5 +1,5 @@
 /**
- * The AI GM's four tools as pure data: names, the chat-turn gate and the input
+ * The AI GM's five tools as pure data: names, the chat-turn gate and the input
  * validators that map a model's arguments onto `applyGmMutation`'s wire shape.
  *
  * Nothing here touches the worker, a record or the AI SDK, so the gate and the
@@ -8,7 +8,7 @@
  * Two rules this file exists to keep:
  *
  * 1. **Writes only inside the GM turn.** Every tool in the `ToolSet` is also
- *    auto-exposed over HTTP and MCP. The three write tools therefore refuse
+ *    auto-exposed over HTTP and MCP. The four write tools therefore refuse
  *    unless the request they were built for is the in-app chat turn; the
  *    read-only snapshot stays available everywhere, because the table is
  *    already readable by link (ADR 0014).
@@ -28,6 +28,7 @@ export const GM_WRITE_TOOLS = [
   'modify_character_hp',
   'grant_character_loot',
   'update_campaign_scene',
+  'damage_enemy',
 ] as const
 
 export const GM_TOOL_NAMES = [...GM_READ_TOOLS, ...GM_WRITE_TOOLS] as const
@@ -67,7 +68,12 @@ export const grantCharacterLootInputSchema = z.object({
   quantity: z.number().int().positive().optional(),
 })
 
-/** `update_campaign_scene` — the scene half of the campaign row, never `title`. */
+/**
+ * `update_campaign_scene` — the scene half of the campaign row, never `title`.
+ * `sceneIndex` is the arc position (ADR 0023): the action refuses anything but
+ * `current + 1` with the current scene's exit met, so a model can ask to
+ * advance but cannot skip or rewind.
+ */
 export const updateCampaignSceneInputSchema = z.object({
   locationName: z.string().optional(),
   atmosphereTag: z.enum(ATMOSPHERE_TAGS).optional(),
@@ -76,6 +82,16 @@ export const updateCampaignSceneInputSchema = z.object({
   enemyName: z.string().optional(),
   enemyHp: z.number().optional(),
   enemyMaxHp: z.number().optional(),
+  sceneIndex: z.number().int().min(0).max(4).optional(),
+})
+
+/**
+ * `damage_enemy` — one hit against the scene enemy (ADR 0024). An amount, never
+ * an absolute HP value: the engine reads `enemyHp`, clamps and logs it.
+ */
+export const damageEnemyInputSchema = z.object({
+  amount: z.number().int().min(1).max(50),
+  reason: z.string().max(200).optional(),
 })
 
 /** Model-facing input schema per write tool, for `tool({ inputSchema })`. */
@@ -83,6 +99,7 @@ export const gmWriteInputSchemas = {
   modify_character_hp: modifyCharacterHpInputSchema,
   grant_character_loot: grantCharacterLootInputSchema,
   update_campaign_scene: updateCampaignSceneInputSchema,
+  damage_enemy: damageEnemyInputSchema,
 } satisfies Record<GmWriteToolName, z.ZodType>
 
 // ============================================================================
@@ -129,8 +146,10 @@ export type GmMutation =
         enemyName?: string
         enemyHp?: number
         enemyMaxHp?: number
+        sceneIndex?: number
       }
     }
+  | { kind: 'enemy_damage'; amount: number; reason?: string }
 
 /**
  * Maps a model's tool call onto the action's mutation shape, or `null` when the
@@ -175,6 +194,7 @@ export function toGmMutation(toolName: string, args: unknown): GmMutation | null
         enemyName,
         enemyHp,
         enemyMaxHp,
+        sceneIndex,
       } = parsed.data
       return {
         kind: 'update_scene',
@@ -186,8 +206,17 @@ export function toGmMutation(toolName: string, args: unknown): GmMutation | null
           ...(enemyName === undefined ? {} : { enemyName }),
           ...(enemyHp === undefined ? {} : { enemyHp }),
           ...(enemyMaxHp === undefined ? {} : { enemyMaxHp }),
+          ...(sceneIndex === undefined ? {} : { sceneIndex }),
         },
       }
+    }
+    case 'damage_enemy': {
+      const parsed = damageEnemyInputSchema.safeParse(input)
+      if (!parsed.success) return null
+      const { amount, reason } = parsed.data
+      return reason === undefined
+        ? { kind: 'enemy_damage', amount }
+        : { kind: 'enemy_damage', amount, reason }
     }
     default:
       return null

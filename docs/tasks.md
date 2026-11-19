@@ -69,15 +69,15 @@ document; this file stays the cross-phase index of what is done.
 
 ## Current state
 
-As of 2026-11-19 (after phase 5): a signed-in player forges an adventurer, sees
-who is actually at the table, rolls a stat check the **server** resolves, and
-takes it to a **streamed AI Game Master** that reads the table through a tool,
-asks for the roll it wants, verifies the `roll-logs` row, and mutates HP, loot or
-the scene through owner-authorized tools that each leave a feed row. A resolved
-roll fires exactly one automatic GM turn. Presence is membership-gated and now
-carries a typing flag. Signed out, the console keeps its preview. Two things are
-open: the console's default model is the one a free plan refuses (`P5.13`), and
-the gates/deploy are Phase 6.
+As of 2026-11-19 (after phase 5 + its campaign revision): a signed-in player
+starts a **new game** from the banner (scene, HP, packs and the roll log reset
+under one marker row), forges an adventurer, and plays a **five-scene arc** whose
+scene the **streamed AI Game Master** opens, narrates and never jumps — the
+engine decides when a scene is over. Rolls are server-computed; combat is
+narration → GM-set DC → check → engine-clamped consequence, with every change
+leaving a `combat` or `gm_event` row. Presence is membership-gated and carries a
+typing flag. The console defaults to Claude Haiku 5.5 (Opus is plan-blocked).
+Remaining: Phase 6's gates, e2e and deploy.
 
 | Thing | State |
 | --- | --- |
@@ -142,7 +142,7 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 | 2 | `ensureDefaultCampaign`, `applyGmMutation` | 4 | **done 2026-11-18** — seed action + GM write path, 32 unit tests, seeded once in a live browser run |
 | 3 | d20 math, character sheet, inventory (read + use) | 7 | **done 2026-11-18** — d20, server-authored Forge/Use/delete, no player HP path, owner-scoped inventory, Marksman; live |
 | 4 | Presence roster, server-computed roll, roll banner | 5 | **done 2026-11-19** — gated presence, `rollSkillCheck`, two-window banner + live feed, 134 unit + presence 2/2, deployed |
-| 5 | AI GM: install ai-chat, GM tools, owner billing, console | 6 | **done 2026-11-19** — `ai-chat` live, four GM tools, owner billing, console + chips + auto-resolve, typing presence; live turn + loot write proven; `P5.13` (default model) open, Phase 6 ready |
+| 5 | AI GM: install ai-chat, GM tools, owner billing, console | 6 | **done 2026-11-19** — `ai-chat` live, five GM tools, owner billing, chrome console + chips + auto-resolve, typing presence; campaign revision: five-scene arc, new-game reset, engine-gated advance, narrative combat; live turn + loot + enemy damage proven, 240 unit tests |
 | 6 | Gates, unit + smoke + one sync spec, deploy, README | 7 | todo — day 4 |
 | | **Planned total** | **39** | of ~40 available (30 planned + day-4 contingency) |
 
@@ -896,14 +896,56 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       system prompt's two-stage / tool-first rules. Nothing imports this module
       today, which is how `P5.4` was ticked twice without shipping.
 
-- [ ] `P5.13` Decide the GM console's default model. `ChatPanel` defaults to
+- [x] `P5.13` Decide the GM console's default model. `ChatPanel` defaults to
       the catalog's first entry, `claude-opus-5-5`, which answers **402 Payment
       Required** on a free-plan credit balance (`npx deepspace app usage`: 500
       credits, free plan). Haiku 5.5, GPT-6 Luna and GPT-6 Sol all stream. The
       panel is usable today by picking a model (the choice persists in
       `localStorage['deepspace-ai-model']`), so this is a default/pin decision,
       not a broken surface — but the demo's first turn fails until it is made.
-      Evidence: phase 5's temporary probe, four models, one 402.
+      Evidence: phase 5's temporary probe, four models, one 402. — 2026-11-19
+      **Resolved:** pin `claude-haiku-5-5` as the console's default (catalog
+      reordered, not an allowlist, so the picker keeps every model). Measured
+      cost after ~31 live turns: free plan, 493/500 credits, anthropic $0.03 +
+      openai $0.04 — no external provider needed.
+
+- [x] `P5.14` The minimised table feed must show all four `RECENT_COUNT` rows: — done: feed is content-sized, capped at `calc(100% - 15.75rem)` with a 15rem console floor; four rows + composer + four chips verified by bounding box at 1440x900 and 1024x768
+      today the fixed `lg:h-[21.5rem]` frame clips the fourth at narrow/tall
+      viewports (measured at 1024x768), and the GM console is squeezed to a
+      192px floor that hides its message area. Size the feed to its content with
+      a cap, give the GM a floor that keeps the composer, chips and a couple of
+      message lines visible, and drop the stale "three, not five" comment.
+- [x] `P5.15` Forge refuses a character name already used at this table — done: `name_taken` guard + 4 tests; the stale duplicate row was deleted from the dev table
+      (case-insensitively), `code: 'name_taken'`. Two players can currently both
+      be "Ash", and the roster, the `roll-logs` attribution and the GM all read
+      only `characterName` — the GM ended up asking "which Ash?". Read the
+      campaign's character rows and compare case-folded; the client toasts the
+      action's message. (Data fix done in the phase-5 revision session: a stale
+      duplicate row was removed.)
+- [x] `P5.16` Campaign reset + scene progression — done: `campaign-arc.ts`, `sceneIndex`, `startCampaign` (drains packs + roll log, scene 0, HP to max, starter kits, marker last), banner button + confirm, engine-gated advance
+      ([ADR 0023](./adr/0023-campaign-reset-and-scene-progression.md),
+      [ADR 0025](./adr/0025-new-game-reset.md)):
+      `src/lib/campaign-arc.ts` (five scenes / three acts, `exit: 'check' |
+      'defeat'`), `campaigns.sceneIndex` (additive number, default 0),
+      `startCampaign` action (scene 0 + every character at `maxHp` + every pack
+      back to its archetype starter kit + every `roll-logs` row cleared except
+      the reset's own `gm_event` marker, written last
+      ([ADR 0026](./adr/0026-reset-clears-roll-log.md)); `not_at_table` unless
+      the caller has a character), "Start New Campaign" in the
+      banner behind `ConfirmModal`, "Act I · Scene 2 of 5" progress, and
+      engine-gated `update_campaign_scene` (`+1` only, correct exit only, else
+      `scene_not_complete`).
+- [x] `P5.17` The GM opens and turns the story ([ADR 0023](./adr/0023-campaign-reset-and-scene-progression.md)): — done: opening beat fires on the reset (live: GM named the scene and asked the first decision, no dice)
+      "Start New Campaign" sends one synthetic opening turn; a scene advance
+      narrates in the advancing turn; a resolved roll keeps its auto-resolve.
+      Exactly three moments of GM initiative, each attributable to a click or a
+      record — no idle or timed turns.
+- [x] `P5.18` Narrative combat ([ADR 0024](./adr/0024-narrative-combat.md)): — done: `damage_enemy` + prompt rules; live: `COMBAT | Runebound Sentinel | … takes 4 damage (12/24) — … d20(16) +2 = 18 vs DC 12`, banner `16/24`, scene gate held
+      `damage_enemy({ amount, reason })` GM tool (engine clamps `0..enemyMaxHp`,
+      writes one `combat` row, refuses without a scene enemy, chat-turn gated per
+      ADR 0022); prompt rules for the two-stage attack (narration → DC → check →
+      verified consequence, never a fabricated roll); `enemyHp === 0` satisfies
+      the scene's `defeat` exit. No attack button, no `enemyAc`/`enemyDamage`.
 
 ## Phase 6 — Gates, tests, deploy
 

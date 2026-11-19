@@ -3,6 +3,7 @@ import type { ActionTools, ActionResult } from 'deepspace/worker'
 import type { Env } from '../../../worker'
 import { DEFAULT_CAMPAIGN_ID } from '../../constants'
 import { DEFAULT_CAMPAIGN_SEED } from '../../lib/campaign-seed'
+import { progressLabel, sceneColumns } from '../../lib/campaign-arc'
 import { ARCHETYPE_PRESETS, CONSUMABLE_EFFECTS, calculateArmorClass } from '../../lib/d20'
 import { PREVIEW_CAMPAIGN } from '../../lib/preview-data'
 import {
@@ -11,6 +12,7 @@ import {
   deleteCharacter,
   ensureDefaultCampaign,
   forgeCharacter,
+  startCampaign,
   useItem,
 } from '../index'
 
@@ -160,14 +162,16 @@ describe('action surface', () => {
   // buttons is not enough: the route itself must be gone. This pins the
   // registered set so a player-facing HP path cannot quietly grow back.
   // `rollSkillCheck` is the sixth and the only roll authority (ADR 0005), so a
-  // second roll path would have to be added here on purpose.
-  it('registers exactly the six server actions', () => {
+  // second roll path would have to be added here on purpose. `startCampaign` is
+  // the seventh: a new game, not a second HP path (ADR 0025).
+  it('registers exactly the seven server actions', () => {
     expect(Object.keys(actions).sort()).toEqual([
       'applyGmMutation',
       'deleteCharacter',
       'ensureDefaultCampaign',
       'forgeCharacter',
       'rollSkillCheck',
+      'startCampaign',
       'useItem',
     ])
   })
@@ -869,6 +873,79 @@ describe('forgeCharacter', () => {
     })
     expect(tools.create).not.toHaveBeenCalled()
   })
+
+  /**
+   * Another player's sheet at the same table (`P5.15`). The fake `query` filters
+   * canned rows by `where`, so the same record answers the membership query with
+   * nothing (different `userId`) and the name query with this row.
+   */
+  function tableWith(name: string) {
+    return createFakeTools({
+      query: ok({
+        records: [
+          {
+            recordId: 'char-bob',
+            data: { userId: 'user-bob', campaignId: DEFAULT_CAMPAIGN_ID, name },
+          },
+        ],
+        count: 1,
+      }),
+    })
+  }
+
+  it('refuses a name another adventurer at the table already has', async () => {
+    const tools = tableWith('Ash')
+
+    const result = await forgeCharacter(context(tools, { name: 'Ash', archetype: 'Vanguard' }))
+
+    if (result.success) throw new Error('expected name_taken, got success')
+    expect(result.code).toBe('name_taken')
+    expect(result.error).toBe('Another adventurer at this table is already called "Ash"')
+    expect(tools.create).not.toHaveBeenCalled()
+  })
+
+  it('refuses a duplicate name that differs only by case and whitespace', async () => {
+    const tools = tableWith('Ash')
+
+    const result = await forgeCharacter(context(tools, { name: '  aSH ', archetype: 'Vanguard' }))
+
+    if (result.success) throw new Error('expected name_taken, got success')
+    expect(result.code).toBe('name_taken')
+    // The existing row's spelling, not the requested one: the message names the
+    // character the player will actually meet.
+    expect(result.error).toContain('"Ash"')
+    expect(tools.create).not.toHaveBeenCalled()
+  })
+
+  it('forges a different name at a table that has characters', async () => {
+    const tools = tableWith('Borin')
+
+    const result = await forgeCharacter(context(tools, { name: 'Ash', archetype: 'Vanguard' }))
+
+    expect(result.success).toBe(true)
+    expect(tools.create).toHaveBeenCalledTimes(3)
+    expect(tools.create.mock.calls[0][1]).toMatchObject({ name: 'Ash' })
+  })
+
+  it('fails closed when the name check fails and writes nothing', async () => {
+    let call = 0
+    const tools = createFakeTools()
+    tools.query.mockImplementation(async () => {
+      call += 1
+      if (call === 1) return ok({ records: [], count: 0 })
+      return failed('do_unavailable', 'record room unavailable')
+    })
+
+    const result = await forgeCharacter(context(tools, { name: 'Ash', archetype: 'Vanguard' }))
+
+    expect(result).toEqual({
+      success: false,
+      code: 'write_failed',
+      error: 'record room unavailable',
+      details: { stage: 'name_check', applied: [] },
+    })
+    expect(tools.create).not.toHaveBeenCalled()
+  })
 })
 
 describe('useItem', () => {
@@ -1173,5 +1250,509 @@ describe('deleteCharacter', () => {
       details: { stage: 'character', applied: ['inventory'] },
     })
     expect(tools.deleteWhere).toHaveBeenCalledTimes(1)
+  })
+})
+
+
+/**
+ * The `campaigns` row a GM mutation reads, with the arc position and enemy the
+ * test cares about spelled out. Every other collection answers not_found.
+ */
+function campaignGet(overrides: Record<string, unknown> = {}) {
+  return (collection: string) =>
+    collection === 'campaigns'
+      ? ok({
+          record: {
+            recordId: DEFAULT_CAMPAIGN_ID,
+            data: {
+              sceneIndex: 0,
+              enemyName: '',
+              enemyHp: 0,
+              enemyMaxHp: 0,
+              ...overrides,
+            },
+          },
+        })
+      : failed('not_found', `${collection} not found`)
+}
+
+describe('applyGmMutation scene advance (ADR 0023)', () => {
+  it('advances exactly one scene when the check exit is recorded', async () => {
+    const tools = createFakeTools({
+      get: campaignGet({ sceneIndex: 0 }),
+      query: ok({
+        records: [
+          {
+            recordId: 'roll-1',
+            data: {
+              campaignId: DEFAULT_CAMPAIGN_ID,
+              entryType: 'roll',
+              targetDc: 12,
+              outcome: 'success',
+            },
+          },
+        ],
+        count: 1,
+      }),
+    })
+
+    const result = await applyGmMutation(
+      context(tools, { mutation: { kind: 'update_scene', scene: { sceneIndex: 1 } } }),
+    )
+
+    if (!result.success) throw new Error(`expected success, got ${result.code}`)
+    expect(result.data).toMatchObject({
+      kind: 'update_scene',
+      scene: { sceneIndex: 1 },
+      logged: true,
+    })
+    expect(tools.query).toHaveBeenCalledWith('roll-logs', {
+      where: {
+        campaignId: DEFAULT_CAMPAIGN_ID,
+        entryType: 'roll',
+        targetDc: 12,
+      },
+      limit: 500,
+    })
+    expect(tools.update).toHaveBeenCalledWith(
+      'campaigns',
+      DEFAULT_CAMPAIGN_ID,
+      sceneColumns(1),
+    )
+    const marker = tools.create.mock.calls.find((call) => call[0] === 'roll-logs')
+    expect(marker?.[1]).toMatchObject({
+      entryType: 'gm_event',
+      summary: `The scene advances to ${progressLabel(1)} — The Rune-Ward`,
+    })
+  })
+
+  it('lets the model override the new scene columns without changing the position', async () => {
+    const tools = createFakeTools({
+      get: campaignGet({ sceneIndex: 0 }),
+      query: ok({
+        records: [
+          {
+            recordId: 'roll-1',
+            data: {
+              campaignId: DEFAULT_CAMPAIGN_ID,
+              entryType: 'roll',
+              targetDc: 12,
+              outcome: 'critical_success',
+            },
+          },
+        ],
+        count: 1,
+      }),
+    })
+
+    await applyGmMutation(
+      context(tools, {
+        mutation: {
+          kind: 'update_scene',
+          scene: { sceneIndex: 1, activeThreatDc: 16, sceneSummary: 'The ward burns.' },
+        },
+      }),
+    )
+
+    expect(tools.update).toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, {
+      ...sceneColumns(1),
+      activeThreatDc: 16,
+      sceneSummary: 'The ward burns.',
+    })
+  })
+
+  it('refuses the advance when the scene DC has no success recorded', async () => {
+    const tools = createFakeTools({
+      get: campaignGet({ sceneIndex: 0 }),
+      query: ok({
+        records: [
+          {
+            recordId: 'roll-1',
+            data: {
+              campaignId: DEFAULT_CAMPAIGN_ID,
+              entryType: 'roll',
+              targetDc: 12,
+              outcome: 'failure',
+            },
+          },
+        ],
+        count: 1,
+      }),
+    })
+
+    const result = await applyGmMutation(
+      context(tools, { mutation: { kind: 'update_scene', scene: { sceneIndex: 1 } } }),
+    )
+
+    if (result.success) throw new Error('expected scene_not_complete, got success')
+    expect(result.code).toBe('scene_not_complete')
+    expect(result.error).toContain('DC 12')
+    expect(tools.update).not.toHaveBeenCalled()
+    expect(tools.create).not.toHaveBeenCalled()
+  })
+
+  it('refuses a jump of more than one scene before reading rolls', async () => {
+    const tools = createFakeTools({ get: campaignGet({ sceneIndex: 0 }) })
+
+    const result = await applyGmMutation(
+      context(tools, { mutation: { kind: 'update_scene', scene: { sceneIndex: 2 } } }),
+    )
+
+    if (result.success) throw new Error('expected invalid_scene, got success')
+    expect(result.code).toBe('invalid_scene')
+    expect(tools.query).not.toHaveBeenCalled()
+    expect(tools.update).not.toHaveBeenCalled()
+  })
+
+  it('refuses the advance while the fight is unfinished', async () => {
+    const tools = createFakeTools({
+      get: campaignGet({
+        sceneIndex: 2,
+        enemyName: 'Runebound Sentinel',
+        enemyHp: 6,
+        enemyMaxHp: 24,
+      }),
+    })
+
+    const result = await applyGmMutation(
+      context(tools, { mutation: { kind: 'update_scene', scene: { sceneIndex: 3 } } }),
+    )
+
+    if (result.success) throw new Error('expected scene_not_complete, got success')
+    expect(result.code).toBe('scene_not_complete')
+    expect(result.error).toContain('0 HP')
+    expect(tools.update).not.toHaveBeenCalled()
+  })
+
+  it('advances a defeat scene once the enemy is at 0 HP', async () => {
+    const tools = createFakeTools({
+      get: campaignGet({
+        sceneIndex: 2,
+        enemyName: 'Runebound Sentinel',
+        enemyHp: 0,
+        enemyMaxHp: 24,
+      }),
+    })
+
+    const result = await applyGmMutation(
+      context(tools, { mutation: { kind: 'update_scene', scene: { sceneIndex: 3 } } }),
+    )
+
+    if (!result.success) throw new Error(`expected success, got ${result.code}`)
+    expect(tools.update).toHaveBeenCalledWith(
+      'campaigns',
+      DEFAULT_CAMPAIGN_ID,
+      sceneColumns(3),
+    )
+  })
+
+  it('keeps the in-scene write ungated when no sceneIndex arrives', async () => {
+    const tools = createFakeTools({ get: campaignGet() })
+
+    const result = await applyGmMutation(
+      context(tools, {
+        mutation: { kind: 'update_scene', scene: { locationName: 'The Drowned Stair' } },
+      }),
+    )
+
+    if (!result.success) throw new Error(`expected success, got ${result.code}`)
+    expect(tools.get).not.toHaveBeenCalled()
+    expect(tools.query).not.toHaveBeenCalled()
+    expect(tools.update).toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, {
+      locationName: 'The Drowned Stair',
+    })
+    if (result.data.kind !== 'update_scene') throw new Error('expected update_scene')
+    expect(result.data.scene.sceneIndex).toBeUndefined()
+  })
+})
+
+describe('applyGmMutation enemy damage (ADR 0024)', () => {
+  it('clamps at 0, writes the HP and logs exactly one combat row', async () => {
+    const tools = createFakeTools({
+      get: campaignGet({
+        enemyName: 'Runebound Sentinel',
+        enemyHp: 4,
+        enemyMaxHp: 24,
+      }),
+    })
+
+    const result = await applyGmMutation(
+      context(tools, {
+        mutation: { kind: 'enemy_damage', amount: 10, reason: 'The arrow finds the gap' },
+      }),
+    )
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        kind: 'enemy_damage',
+        enemy: { name: 'Runebound Sentinel', before: 4, after: 0, maxHp: 24, applied: 4 },
+        logged: true,
+      },
+    })
+    expect(tools.update).toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, { enemyHp: 0 })
+    const logs = tools.create.mock.calls.filter((call) => call[0] === 'roll-logs')
+    expect(logs).toHaveLength(1)
+    expect(logs[0][1]).toMatchObject({
+      campaignId: DEFAULT_CAMPAIGN_ID,
+      characterName: 'Runebound Sentinel',
+      entryType: 'combat',
+      summary: 'Runebound Sentinel takes 4 damage (0/24) — The arrow finds the gap',
+    })
+  })
+
+  it('clamps above maxHp instead of trusting a stale enemyHp', async () => {
+    const tools = createFakeTools({
+      get: campaignGet({
+        enemyName: 'Runebound Sentinel',
+        enemyHp: 30,
+        enemyMaxHp: 24,
+      }),
+    })
+
+    const result = await applyGmMutation(
+      context(tools, { mutation: { kind: 'enemy_damage', amount: 1 } }),
+    )
+
+    if (!result.success) throw new Error(`expected success, got ${result.code}`)
+    expect(result.data).toMatchObject({
+      kind: 'enemy_damage',
+      enemy: { before: 30, after: 24, maxHp: 24, applied: 6 },
+    })
+    expect(tools.update).toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, { enemyHp: 24 })
+  })
+
+  it('refuses when the scene has no enemy', async () => {
+    const tools = createFakeTools({
+      get: campaignGet({ enemyName: '', enemyHp: 0, enemyMaxHp: 0 }),
+    })
+
+    const result = await applyGmMutation(
+      context(tools, { mutation: { kind: 'enemy_damage', amount: 6 } }),
+    )
+
+    if (result.success) throw new Error('expected enemy_not_found, got success')
+    expect(result.code).toBe('enemy_not_found')
+    expect(tools.update).not.toHaveBeenCalled()
+    expect(tools.create).not.toHaveBeenCalled()
+  })
+
+  it('rejects an amount outside 1..50 before reading the campaign', async () => {
+    const tools = createFakeTools({ get: campaignGet() })
+
+    const result = await applyGmMutation(
+      context(tools, { mutation: { kind: 'enemy_damage', amount: 0 } }),
+    )
+
+    if (result.success) throw new Error('expected invalid_params, got success')
+    expect(result.code).toBe('invalid_params')
+    expect(tools.get).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * "Start New Campaign" is a new game at the same table (ADR 0025, 0026): the
+ * scene, every pack and the roll log return to the start; characters keep their
+ * identity and regain full HP. One `gm_event` row is written last, so a reset
+ * cannot delete its own evidence.
+ */
+describe('startCampaign', () => {
+  /** Two characters at one table: a wounded Vanguard and a downed Marksman. */
+  const ROSTER = {
+    records: [
+      {
+        recordId: 'char-ash',
+        data: {
+          userId: 'user-alice',
+          campaignId: DEFAULT_CAMPAIGN_ID,
+          name: 'Ash',
+          archetype: 'Vanguard',
+          hp: 3,
+          maxHp: 24,
+        },
+      },
+      {
+        recordId: 'char-borin',
+        data: {
+          userId: 'user-bob',
+          campaignId: DEFAULT_CAMPAIGN_ID,
+          name: 'Borin',
+          archetype: 'Marksman',
+          hp: 0,
+          maxHp: 19,
+        },
+      },
+    ],
+    count: 2,
+  }
+
+  it('refuses a caller with no character and deletes nothing', async () => {
+    const tools = createFakeTools()
+
+    const result = await startCampaign(context(tools))
+
+    if (result.success) throw new Error('expected not_at_table, got success')
+    expect(result.code).toBe('not_at_table')
+    // Nothing is drained, written or healed for someone who is not at the table.
+    expect(tools.deleteWhere).not.toHaveBeenCalled()
+    expect(tools.create).not.toHaveBeenCalled()
+    expect(tools.update).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the membership read fails', async () => {
+    const tools = createFakeTools({ query: failed('do_unavailable', 'record room unavailable') })
+
+    const result = await startCampaign(context(tools))
+
+    expect(result).toEqual({
+      success: false,
+      code: 'write_failed',
+      error: 'record room unavailable',
+      details: { stage: 'membership', applied: [] },
+    })
+    expect(tools.deleteWhere).not.toHaveBeenCalled()
+  })
+
+  it('clears packs and the log, heals, re-kits and writes its marker last', async () => {
+    const tools = createFakeTools({ query: ok(ROSTER) })
+    tools.deleteWhere.mockImplementation(async (collection: string) =>
+      ok({ deleted: collection === 'inventory' ? 2 : 5 }),
+    )
+
+    const result = await startCampaign(context(tools))
+
+    expect(result).toEqual({
+      success: true,
+      data: {
+        sceneIndex: 0,
+        progress: 'Act I · Scene 1 of 5',
+        clearedRolls: 5,
+        clearedItems: 2,
+        healedCharacters: 2,
+        grantedItems: 4,
+        itemsMissing: [],
+        logged: true,
+      },
+    })
+
+    // Both collections are drained before anything is written (ADR 0026).
+    expect(tools.deleteWhere).toHaveBeenNthCalledWith(
+      1,
+      'inventory',
+      { campaignId: DEFAULT_CAMPAIGN_ID },
+      100,
+    )
+    expect(tools.deleteWhere).toHaveBeenNthCalledWith(
+      2,
+      'roll-logs',
+      { campaignId: DEFAULT_CAMPAIGN_ID },
+      100,
+    )
+
+    // The scene is scene 0 of the arc, under the campaign's existing title.
+    expect(tools.create.mock.calls[0]).toEqual([
+      'campaigns',
+      { title: DEFAULT_CAMPAIGN_SEED.title, ...sceneColumns(0) },
+      DEFAULT_CAMPAIGN_ID,
+    ])
+
+    // HP comes from each row's own maxHp, never from the caller.
+    expect(tools.update).toHaveBeenNthCalledWith(1, 'characters', 'char-ash', { hp: 24 })
+    expect(tools.update).toHaveBeenNthCalledWith(2, 'characters', 'char-borin', { hp: 19 })
+
+    // Starter kits are the Forge rows, owned by each character's owner.
+    const itemWrites = tools.create.mock.calls.filter((call) => call[0] === 'inventory')
+    expect(itemWrites).toHaveLength(4)
+    expect(itemWrites[0][1]).toMatchObject({
+      userId: 'user-alice',
+      characterId: 'char-ash',
+      campaignId: DEFAULT_CAMPAIGN_ID,
+      itemName: ARCHETYPE_PRESETS.Vanguard.starterItems[0].itemName,
+      quantity: 1,
+    })
+    expect(itemWrites[2][1]).toMatchObject({
+      userId: 'user-bob',
+      characterId: 'char-borin',
+      itemName: ARCHETYPE_PRESETS.Marksman.starterItems[0].itemName,
+    })
+
+    // Exactly one marker row, and it is the last write of the reset.
+    const logWrites = tools.create.mock.calls.filter((call) => call[0] === 'roll-logs')
+    expect(logWrites).toHaveLength(1)
+    expect(logWrites[0][1]).toEqual({
+      campaignId: DEFAULT_CAMPAIGN_ID,
+      characterName: 'Game Master',
+      entryType: 'gm_event',
+      outcome: 'info',
+      summary: 'A new game begins — Act I, Scene 1',
+    })
+    expect(tools.create.mock.calls.at(-1)?.[0]).toBe('roll-logs')
+    const lastDrain = Math.max(...tools.deleteWhere.mock.invocationCallOrder)
+    const markerOrder = tools.create.mock.invocationCallOrder.at(-1) ?? 0
+    expect(lastDrain).toBeLessThan(markerOrder)
+  })
+
+  it('keeps the existing campaign title on the reset row', async () => {
+    const tools = createFakeTools({
+      query: ok({
+        records: [
+          { recordId: DEFAULT_CAMPAIGN_ID, data: { title: 'The Table of Ash' } },
+          ...ROSTER.records,
+        ],
+        count: 3,
+      }),
+    })
+
+    await startCampaign(context(tools))
+
+    expect(tools.create.mock.calls[0][1]).toMatchObject({ title: 'The Table of Ash' })
+  })
+
+  it('stops at a failed drain and reports the stages that landed', async () => {
+    const tools = createFakeTools({
+      query: ok(ROSTER),
+      deleteWhere: failed('write_refused', 'delete refused'),
+    })
+
+    const result = await startCampaign(context(tools))
+
+    expect(result).toEqual({
+      success: false,
+      code: 'write_failed',
+      error: 'delete refused',
+      details: { stage: 'inventory', applied: [] },
+    })
+    expect(tools.create).not.toHaveBeenCalled()
+    expect(tools.update).not.toHaveBeenCalled()
+  })
+
+  it('names characters it could not kit instead of inventing a preset', async () => {
+    const tools = createFakeTools({
+      query: ok({
+        records: [
+          {
+            recordId: 'char-odd',
+            data: {
+              userId: 'user-alice',
+              campaignId: DEFAULT_CAMPAIGN_ID,
+              name: 'Ash',
+              archetype: 'Bard',
+              hp: 3,
+              maxHp: 24,
+            },
+          },
+        ],
+        count: 1,
+      }),
+    })
+
+    const result = await startCampaign(context(tools))
+
+    if (!result.success) throw new Error(`expected success, got ${result.code}`)
+    expect(result.data.grantedItems).toBe(0)
+    expect(result.data.healedCharacters).toBe(1)
+    expect(result.data.itemsMissing).toEqual(['Ash: unknown archetype "Bard"'])
+    // The reset still ends with its marker: the table is at Act I either way.
+    expect(tools.create.mock.calls.at(-1)?.[0]).toBe('roll-logs')
   })
 })

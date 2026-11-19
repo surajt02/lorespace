@@ -8,24 +8,33 @@
  * (`P5.9`). Billing is the app owner's (ADR 0004) and everything the model can
  * write leaves a feed row (ADR 0009, `P5.10`).
  *
+ * The GM also opens the story (`P5.17`): `openBeatId` is the page's "a new game
+ * just started" signal, and it queues one opening turn built from the engine's
+ * act/scene label (ADR 0023). Three moments of GM initiative and no more — a
+ * click that starts the game, a scene advance, and a resolved roll — each
+ * attributable to a record, never to a clock.
+ *
  * Signed out it is the preview it has always been: the `PREVIEW_GM_MESSAGES`
  * list in the same frame, the same disabled input that says what it is, no
  * socket and no network — a live-looking box that swallows keystrokes reads as a
  * broken feature.
  *
- * Layout note: `ChatPanel` owns its composer, and the only additive hook it
- * takes is `queuedPrompt` / `onDraftChange` — there is no slot between the
- * message list and the input. The chip bar therefore sits directly under the
- * composer, inside the same pinned footer region, rather than forking the panel.
+ * Layout note: `ChatPanel` owns its composer. The hooks it takes are additive —
+ * `queuedPrompt` / `onDraftChange` for the automatic turn and typing presence,
+ * plus `emptyState`, `placeholder` and `roleLabels` for the console's voice and
+ * its pixel register — and there is still no slot between the message list and
+ * the input. The chip bar therefore sits directly under the composer, inside the
+ * same pinned footer region, rather than forking the panel.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { RecordData } from 'deepspace'
+import { listDeepSpaceAgentModels, type RecordData } from 'deepspace'
 import { Send } from 'lucide-react'
-import { ChatPanel } from '@/components/ChatPanel'
+import { ChatPanel, type ModelOption } from '@/components/ChatPanel'
 import { Badge } from '@/components/ui'
 import {
   GM_CHIPS,
+  buildOpeningPrompt,
   buildQuickPrompt,
   buildRollPrompt,
   unresolvedRolls,
@@ -41,6 +50,38 @@ export interface GmMessage {
   text: string
 }
 
+/**
+ * The console's default model (`P5.13`): the cheapest one the free plan
+ * actually answers. `claude-opus-5-5` leads the SDK catalog and returns 402
+ * Payment Required, so a first turn on a fresh console failed until the player
+ * opened the picker.
+ */
+const CONSOLE_DEFAULT_MODEL_ID = 'claude-haiku-5-5'
+
+/**
+ * The SDK catalog with the default moved to the front — a reorder, not an
+ * allowlist: the `ai-chat` feature warns against a second allowlist, and every
+ * model must stay selectable. Built exactly as `ChatPanel`'s `DEFAULT_MODELS`
+ * is (id, label, provider label), so the picker's grouping is unchanged and
+ * only the order differs. `/assistant` keeps the catalog order of its own.
+ */
+const CONSOLE_MODELS: ModelOption[] = reorderDefault(
+  listDeepSpaceAgentModels('application').map((model) => ({
+    id: model.id,
+    label: model.label,
+    provider: model.providerLabel,
+  })),
+  CONSOLE_DEFAULT_MODEL_ID,
+)
+
+function reorderDefault(models: ModelOption[], defaultId: string): ModelOption[] {
+  const index = models.findIndex((model) => model.id === defaultId)
+  if (index <= 0) return models
+  const [pinned] = models.splice(index, 1)
+  models.unshift(pinned)
+  return models
+}
+
 export interface GmConsolePanelProps {
   /** Signed in, the panel is live; signed out it is the fixture list. */
   signedIn: boolean
@@ -52,11 +93,19 @@ export interface GmConsolePanelProps {
   rolls: RecordData<RollLogRow>[]
   /** The signed-out script. */
   preview: GmMessage[]
+  /**
+   * "A new game just started" (ADR 0023): a non-null value that changes queues
+   * one opening turn. The page mints it on a successful reset, so the narration
+   * is a consequence of the click and never of a mount or a timer.
+   */
+  openBeatId?: string | null
+  /** The engine's act/scene label (`progressLabel`), used by the opening turn. */
+  progress?: string
+  /** The campaign's current enemy, so the `attack` chip can name it (ADR 0024). */
+  enemyName?: string
   /** The composer went between empty and non-empty (typing presence). */
   onDraftChange?: (hasText: boolean) => void
 }
-
-const CHIP_LABELS = GM_CHIPS.map((chip) => chip.label)
 
 export function GmConsolePanel({
   signedIn,
@@ -64,6 +113,9 @@ export function GmConsolePanel({
   character,
   rolls,
   preview,
+  openBeatId = null,
+  progress,
+  enemyName,
   onDraftChange,
 }: GmConsolePanelProps) {
   // One queued prompt at a time: a chip, or the automatic roll turn. `ChatPanel`
@@ -75,6 +127,10 @@ export function GmConsolePanel({
   // (ADR 0021) — and a burst of rolls collapses to one turn.
   const announced = useRef<Set<string>>(new Set())
   const baselined = useRef(false)
+  // The opening beat already queued. The id is the guard, the same shape as the
+  // roll turn: a re-render with the same `openBeatId`, or a `progress` change
+  // arriving with it, never re-sends the opening narration.
+  const openedBeat = useRef<string | null>(null)
 
   useEffect(() => {
     if (!signedIn) return
@@ -102,16 +158,34 @@ export function GmConsolePanel({
     return (mine ?? rollsOnly[0])?.data ?? null
   }, [rolls, character])
 
+  // "Start campaign" opens the story (ADR 0023, `P5.17`). Queued once per id;
+  // the progress label is read at send time so the opening names the scene the
+  // row says the table is in.
+  useEffect(() => {
+    if (!signedIn) return
+    if (!openBeatId) return
+    if (openedBeat.current === openBeatId) return
+    openedBeat.current = openBeatId
+    setQueuedPrompt({
+      id: `opening-${openBeatId}`,
+      content: buildOpeningPrompt(progress ?? ''),
+    })
+  }, [openBeatId, progress, signedIn])
+
   function sendChip(kind: GmChipKind) {
     seq.current += 1
     setQueuedPrompt({
       id: `chip-${kind}-${String(seq.current)}`,
-      content: buildQuickPrompt(kind, { characterName: character?.name ?? null, latestRoll }),
+      content: buildQuickPrompt(kind, {
+        characterName: character?.name ?? null,
+        latestRoll,
+        enemyName,
+      }),
     })
   }
 
   const header = (
-    <header className="flex shrink-0 items-center justify-between border-b border-border px-3 py-2">
+    <header className="flex shrink-0 items-center justify-between border-b border-border px-3 py-1.5">
       <h2 className="font-pixel text-[10px] uppercase text-muted-foreground">Game Master</h2>
       <Badge variant="outline" className="font-pixel text-[10px] uppercase">
         MODEL
@@ -144,7 +218,7 @@ export function GmConsolePanel({
               )}
             >
               <span className="mb-0.5 block font-pixel text-[10px] uppercase text-muted-foreground">
-                {message.role === 'gm' ? 'Game Master' : 'Player'}
+                {message.role === 'gm' ? 'Game Master' : 'You'}
               </span>
               {message.text}
             </li>
@@ -193,13 +267,16 @@ export function GmConsolePanel({
             userId={userId ?? ''}
             compact
             className="h-full"
-            emptyStatePrompts={CHIP_LABELS}
+            models={CONSOLE_MODELS}
+            emptyState={<GmEmptyState />}
+            placeholder="Speak to the Game Master"
+            roleLabels={{ user: 'You', assistant: 'Game Master' }}
             queuedPrompt={queuedPrompt}
             onDraftChange={onDraftChange}
           />
         </div>
 
-        <div className="flex shrink-0 flex-wrap gap-1.5 border-t border-border px-3 py-2">
+        <div className="flex shrink-0 flex-wrap gap-1 border-t border-border px-3 py-1.5">
           {GM_CHIPS.map((chip) => (
             <button
               key={chip.kind}
@@ -208,7 +285,7 @@ export function GmConsolePanel({
               onClick={() => {
                 sendChip(chip.kind)
               }}
-              className="border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+              className="border border-border bg-background px-2 py-1 font-pixel text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
             >
               {chip.label}
             </button>
@@ -216,5 +293,22 @@ export function GmConsolePanel({
         </div>
       </div>
     </section>
+  )
+}
+
+/**
+ * The console's empty state (`P5.7`): the table's voice, not a product's. No
+ * prompt buttons — the chip row directly below the composer is the only
+ * affordance, and printing the same four prompts twice reads as a bug.
+ */
+function GmEmptyState() {
+  return (
+    <div className="flex h-full flex-col justify-center gap-2 px-1 py-4">
+      <p className="font-pixel text-[10px] uppercase text-muted-foreground">The table is quiet</p>
+      <p className="max-w-[26rem] text-[13px] leading-relaxed text-muted-foreground">
+        Ask a question, declare an action, or make a check. The GM reads the table
+        before it answers.
+      </p>
+    </div>
   )
 }
