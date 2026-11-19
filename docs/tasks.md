@@ -69,27 +69,30 @@ document; this file stays the cross-phase index of what is done.
 
 ## Current state
 
-As of 2026-11-18 (after phase 2): the LoreSpace table is visible — themed
-landing page and a populated three-column workspace shell — and a signed-in
-visitor now gets a real campaign row. Everything else in the shell is fixture
-data until Phases 3-4.
+As of 2026-11-18 (after phase 3): a signed-in player gets a real campaign row,
+forges an adventurer from four presets, and owns a live sheet and pack that
+write HP and inventory through confirmed record mutations. The roster, feed and
+GM console are still fixtures (Phases 4-5).
 
 | Thing | State |
 | --- | --- |
 | Theme | `obsidian` — 21 tokens, `--radius: 0`, amber `#d97706`, Silkscreen labels; no indigo anywhere |
 | `src/pages/index.tsx` | Split-hero landing, Design Direction block, inline-SVG d20, CTA `Enter the table` |
-| `src/pages/(app)/home.tsx` | 3-column shell; campaign banner reads the live row (seed skeleton + failure notice), rest fixture-backed |
+| `src/pages/(app)/home.tsx` | 3-column shell; campaign banner, sheet and pack read live rows (seed skeleton + read-failure notices); roster/feed/GM fixture-backed |
 | `src/schemas.ts` | `users` + `settings` + `campaigns` + `characters` + `inventory` + `roll-logs` (six, `lintSchema`/`lintSchemas` clean) |
 | `src/actions/index.ts` | `ensureDefaultCampaign` + `applyGmMutation`; both reachable over `POST /api/actions/:name` (bearer) |
 | `src/lib/campaign-seed.ts` | `DEFAULT_CAMPAIGN_SEED` — the seed row and `PREVIEW_CAMPAIGN.data` are the same object |
+| `src/lib/d20.ts` | `getModifier`, `formatModifier`, `calculateArmorClass`, `classifyRoll`, `ARCHETYPE_PRESETS` (4), `ARCHETYPE_ORDER`, `ABILITY_SCORES`; zero imports, no randomness |
+| `src/components/CharacterSheetPanel.tsx` | Live `characters` record → Forge (name + 4 presets), 6 stat cards (display-only), AC, segmented HP, HP controls via `putConfirmed` |
+| `src/components/InventoryPanel.tsx` | Live `inventory` rows → Use (consumables, spends a charge) / Discard (`ConfirmModal`), no add/edit |
 | `src/ai/tools.ts` | Built-in record tools only, generic prompt |
 | `ai-chat` feature | **Not installed** — no `ChatPanel`, no `/api/ai/chat` |
 | `src/constants.ts` | `DEFAULT_CAMPAIGN_ID`, `DEFAULT_CAMPAIGN_PRESENCE_SCOPE` added by 2a |
-| Tests | `smoke` 6/6 + `api` 2/2 + `collab` 3/3; 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 4 files / 32 tests |
+| Tests | `smoke` 6/6 + `api` 2/2 + `collab` 3/3; 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 5 files / 52 tests |
 | Git | scaffold + phases 0-2 committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
-| Deploy | **never deployed**; source unclaimed — the first deploy latches GitHub (`surajt02/lorespace`) permanently |
+| Deploy | **never deployed** until `P3.8`; source unclaimed — the first deploy latches GitHub (`surajt02/lorespace`) permanently |
 | Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)); `/home` renders the live campaign row or `src/lib/preview-data.ts` |
-| Write policy | the **only** write in the app is `campaigns/default-campaign` from the signed-in `/home` seed; `applyGmMutation` writes HP/loot/scene but has no caller until `P5.3` |
+| Write policy | signed-in browsers write `characters` (own row: Forge + `hp`) and `inventory` (create/update/delete) through awaited `*Confirmed` mutations; `/home` seeds `campaigns/default-campaign`; `applyGmMutation` still has no caller until `P5.3`. HP is client-authored by design (rolls stay server-side, ADR 0005) |
 | README | front door with local run, verification, real screenshots; live URL pending `P6.7` |
 
 ## Architecture map
@@ -125,8 +128,8 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 | 2a | Data model prelude: 4 schemas + registration + default campaign | — | **done 2026-11-18** — 6 registered, lint clean, 17 unit tests |
 | 1 | Pixel theme, landing page, 3-column workspace shell | 10 | **done 2026-11-18** — obsidian 21 tokens + chrome utilities, split-hero landing, 3-col shell signed in/out |
 | 2 | `ensureDefaultCampaign`, `applyGmMutation` | 4 | **done 2026-11-18** — seed action + GM write path, 32 unit tests, seeded once in a live browser run |
-| 3 | d20 math, character sheet, inventory (read + use) | 7 | todo — day 2 |
-| 4 | Presence roster, server-computed roll, roll banner | 5 | todo — day 3 morning |
+| 3 | d20 math, character sheet, inventory (read + use) | 7 | **done 2026-11-18** — d20 + 20 tests, live sheet/Forge/HP, Use/Discard; deploy #1 pending |
+| 4 | Presence roster, server-computed roll, roll banner | 5 | next — day 3 morning |
 | 5 | AI GM: install ai-chat, GM tools, owner billing, console | 6 | todo — days 3-4 |
 | 6 | Gates, unit + smoke + one sync spec, deploy, README | 7 | todo — day 4 |
 | | **Planned total** | **39** | of ~40 available (30 planned + day-4 contingency) |
@@ -416,7 +419,7 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 
 ## Phase 3 — Character sheet, d20 math, inventory
 
-- [ ] `P3.1` `src/lib/d20.ts` — `getModifier`, `formatModifier`,
+- [x] `P3.1` `src/lib/d20.ts` — `getModifier`, `formatModifier`,
       `calculateArmorClass`, `ARCHETYPE_PRESETS` (Vanguard/Shadowblade/
       Arcanist/Cleric), plus the roll classifier. Pure: no React, no DOM, no
       `Math.random` inside the classifier — worker code imports this module
@@ -433,14 +436,33 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       ADR 0010, ADR 0011), so do not invent an attack procedure here. A flat
       `bonus = 2` default is *not* the contract; the archetype supplies the
       number.
-- [ ] `P3.2` Unit tests for `src/lib/d20.ts` (Vitest node env; boundary cases
+      — 2026-11-18 phase 3: exports `getModifier`, `formatModifier`,
+      `calculateArmorClass`, `classifyRoll(rawRoll, total, targetDc)`,
+      `ARCHETYPE_PRESETS`, `ARCHETYPE_ORDER`, `ABILITY_SCORES` + types.
+      Zero imports, no randomness (grep gate). `classifyRoll` pins nat 20/nat 1
+      as overrides of the total and returns the exact `roll-logs.outcome`
+      select values, so `P4.4` writes them directly.
+- [x] `P3.2` Unit tests for `src/lib/d20.ts` (Vitest node env; boundary cases
       at 1/10/11/20, AC clamping). Pin the AC contract too: every
       `ARCHETYPE_PRESETS` entry has an `armorBonus`, and the two fixture
       builds compute `16` (Vanguard, DEX 12) and `14` (Shadowblade, DEX 17).
-- [ ] `P3.3` `src/components/CharacterSheetPanel.tsx` — `useQuery('characters',
+      — 2026-11-18 phase 3: 20 tests in `src/lib/__tests__/d20.test.ts`
+      (suite 5 files / 52 tests). **Deviation:** "AC clamping" is a no-clamp
+      pin — `calculateArmorClass(1, 0) === 5`; the formula floors the DEX
+      modifier but does not clamp the result (a 5e-shaped score of 9 is `-1`,
+      not `0`). Also deep-equals every Vanguard/Shadowblade score, maxHp and AC
+      against `PREVIEW_CHARACTERS`, and the Vanguard starter pair against the
+      fixture items, so a preset edit cannot split the two tables.
+- [x] `P3.3` `src/components/CharacterSheetPanel.tsx` — `useQuery('characters',
       { where: { campaignId } })`, match `record.data.userId === userId`,
       `animate-pulse` skeleton while `status === 'loading'`.
-- [ ] `P3.4` **Forge adventurer**: one-click preset from `ARCHETYPE_PRESETS`
+      — 2026-11-18 phase 3: **deviation — the query lives in `/home`,** which
+      resolves `characters` (and `inventory`) once and hands the record to both
+      panels. The `where` clause, the `userId` match and the skeleton are as
+      written; the join sits with the other reads so the sheet and the pack
+      cannot disagree about which character is yours. Panel props are now
+      `{campaignId, mode, status, character, items}` with records, not data.
+- [x] `P3.4` **Forge adventurer**: one-click preset from `ARCHETYPE_PRESETS`
       plus a name field, `createConfirmed` + seed 2 starter inventory items,
       toast on success. Write `ac` from
       `calculateArmorClass(preset.dex, preset.armorBonus)` — the column is
@@ -448,17 +470,49 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       later because DEX does not change after Forge. **No creation modal, no
       stat allocation** — cut by
       [ADR 0008](./adr/0008-playable-interview-build.md).
-- [ ] `P3.5` 6 attribute cards (`font-mono tabular-nums`), click → skill check;
+      — 2026-11-18 phase 3: name `Input` + four preset buttons (AC/HP hint +
+      blurb) in the existing empty state; `createConfirmed` writes all 13
+      columns with `ac = calculateArmorClass(preset.scores.dex,
+      preset.armorBonus)` and `hp = maxHp`, then two `inventory`
+      `createConfirmed` rows. **Deviation:** no transaction exists, so a failed
+      item write is named in an `error` toast ("Ash exists, but X did not
+      save") — the character row still lands. Buttons gate on
+      `characters.ready && inventory.ready && userId != null`.
+- [x] `P3.5` 6 attribute cards (`font-mono tabular-nums`), click → skill check;
       HP bar (no `Progress` primitive — compose div + `bg-success|warning|
       destructive` + inline width) and −5/−1/+1/+5/Short Rest, clamped
       `0..maxHp` via `putConfirmed`.
-- [ ] `P3.6` `src/components/InventoryPanel.tsx` — list items, **Use/Discard
+      — 2026-11-18 phase 3: cards and HP controls shipped; `-5/-1/+1/+5/Short
+      Rest` write clamped `hp` via `putConfirmed`. **Deviations:** (1) the
+      **click → skill check half moved to `P4.8`** — the browser may not roll
+      (ADR 0005) and `rollSkillCheck` is `P4.4`, so the cards render
+      display-only with no pointer affordance; (2) numerals use
+      `pixel-numeral` (Silkscreen, `tabular-nums`) rather than `font-mono`,
+      because ADR 0013 gives every numeral in the shell the pixel register.
+- [x] `P3.6` `src/components/InventoryPanel.tsx` — list items, **Use/Discard
       only** (no add/edit form, cut by ADR 0008); discard via `ConfirmModal`
       naming the item.
-- [ ] `P3.7` Empty states via local `EmptyState`, icons from `lucide-react`.
+      — 2026-11-18 phase 3: live reads, `Use` on consumables (`quantity - 1`,
+      removes the last one) and `Discard` behind a `ConfirmModal` naming the
+      item; one write at a time, per-row `loading`, awaited
+      `putConfirmed`/`removeConfirmed` + toasts. **Deviation:** "Use" spends a
+      charge and does nothing else — ADR 0010 has no item effects, so no
+      healing was invented. No add/edit form (ADR 0008).
+- [x] `P3.7` Empty states via local `EmptyState`, icons from `lucide-react`.
+      — 2026-11-18 phase 3: Forge replaces the sheet's EmptyState when signed in
+      with no row; "Nothing carried" stays for an empty pack; skeletons
+      (`character-sheet-skeleton`, `inventory-skeleton`) and read-failure
+      notices (`sheet-read-error`, `inventory-read-error`) cover loading/error.
+      No fixture is rendered on the live branch.
 - [ ] `P3.8` **Deploy #1** at the end of day 2: latches GitHub as the app source
       and proves the pages serve. Verify `/` and `/home` on the live URL before
       moving on — the deploy is both host and artifact.
+- [x] `P3.9` Read failures on `characters`/`inventory` render a visible notice
+      (skeleton while loading, never a silent fallback to `PREVIEW_*` while
+      signed in). Extends `P3.3`/`P3.6`, matching `P2.5`'s seed-failure rule.
+      — 2026-11-18 phase 3: `sheet-read-error` / `inventory-read-error`. A
+      `characters` read error also puts the pack in its read-error state, because
+      the pack cannot be filtered to a character that was not resolved.
 
 ## Phase 4 — Party presence, dice engine
 
@@ -495,6 +549,16 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       browsers, one roll, banner and feed land in both without a reload. This is
       the milestone that decides whether the interview rests on the architecture
       or on the AI; do not slip it into day 4 without saying so.
+- [ ] `P4.8` Attribute-card click → `rollSkillCheck` and a toast with the
+      authoritative result (no banner yet; `P4.4` owns the action). Added in
+      phase 3: the click half of `P3.5` cannot be honest before the server action
+      exists ([ADR 0005](./adr/0005-dice-roll-authority.md)), so phase 3 ships the
+      cards display-only.
+- [ ] `P4.9` Signed-out preview follows ADR 0014's live-row rule once the roster
+      is live: with character rows present, `/home` signed out shows the first
+      live character and its items instead of `PREVIEW_CHARACTERS[0]`. Deferred
+      from phase 3 because the roster is still a fixture, so a live sheet beside
+      a fixture roster would be incoherent; `P4.3` makes the roster real.
 
 ## Phase 5 — AI Game Master
 

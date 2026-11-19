@@ -9,20 +9,24 @@
  * column scrolls its own content. Below `lg` the columns stack in reading order
  * (party → feed → sheet) and the page scrolls normally.
  *
- * Everything below the campaign row is fixture data this phase (ADR 0014): the
- * panels take rows as props, so Phase 3 and 4 swap `PREVIEW_*` for live queries
- * without touching their markup.
+ * Signed in, the sheet and the pack are live: `/home` reads `characters` and
+ * `inventory` for this campaign and hands each panel the viewer's rows, so the
+ * writes those panels make come back over the room subscription. Signed out,
+ * every panel falls back to the deterministic `PREVIEW_*` table (ADR 0014).
+ * The roster and the action feed stay fixtures until `P4.3`, the GM console
+ * until `P5`.
  *
- * The one write from this page is the seed (ADR 0007, `P2.5`): signed in on an
- * empty `campaigns` collection, `/home` POSTs `/api/actions/ensureDefaultCampaign`
- * once per mount, renders a skeleton until it resolves, and shows a notice if it
- * fails — never a silent fixture fallback. No record write, no mutation hook:
- * the seeded row reaches the UI over the room subscription.
+ * The one write this page makes itself is the seed (ADR 0007, `P2.5`): signed in
+ * on an empty `campaigns` collection, `/home` POSTs
+ * `/api/actions/ensureDefaultCampaign` once per mount, renders a skeleton until
+ * it resolves, and shows a notice if it fails — never a silent fixture fallback.
+ * No record write, no mutation hook here: the seeded row reaches the UI over the
+ * room subscription.
  */
 
 import { useEffect, useRef, useState } from 'react'
 import { useAuth, useQuery } from 'deepspace'
-import { CharacterSheetPanel } from '@/components/CharacterSheetPanel'
+import { CharacterSheetPanel, type QueryStatus, type SheetMode } from '@/components/CharacterSheetPanel'
 import { GmConsolePanel } from '@/components/GmConsolePanel'
 import { InventoryPanel } from '@/components/InventoryPanel'
 import { ActionFeed } from '@/components/vtt/ActionFeed'
@@ -39,6 +43,8 @@ import {
   PREVIEW_GM_MESSAGES,
   PREVIEW_INVENTORY,
   PREVIEW_ROLLS,
+  type CharacterRow,
+  type InventoryRow,
 } from '@/lib/preview-data'
 
 /**
@@ -58,6 +64,15 @@ interface SeedResult {
 export default function HomePage() {
   const { isSignedIn, userId } = useAuth()
   const { records, status } = useQuery<CampaignRow>('campaigns')
+  // Both are campaign-scoped reads; the viewer's own rows are picked out below.
+  const { records: characterRecords, status: charactersStatus } = useQuery<CharacterRow>(
+    'characters',
+    { where: { campaignId: DEFAULT_CAMPAIGN_ID } },
+  )
+  const { records: inventoryRecords, status: inventoryStatus } = useQuery<InventoryRow>(
+    'inventory',
+    { where: { campaignId: DEFAULT_CAMPAIGN_ID } },
+  )
   const { error: toastError } = useToast()
 
   const [seedState, setSeedState] = useState<SeedState>('idle')
@@ -128,16 +143,33 @@ export default function HomePage() {
     online: true,
   }))
 
-  // Signed out you are watching Kaelen's table; signed in your sheet is the row
-  // bound to your user id. P3.3 — no row yet means no character, so the sheet
-  // shows its empty state until Forge (`P3.4`) exists.
-  const characterRecord = isSignedIn
-    ? (PREVIEW_CHARACTERS.find((record) => record.data.userId === userId) ?? null)
+  // Signed in, your sheet is the row bound to your user id — no row yet means no
+  // character, so the panel renders the Forge. Signed out you are watching
+  // Kaelen's table, and both lists come from the fixture.
+  const myCharacter = isSignedIn
+    ? (characterRecords.find((record) => record.data.userId === userId) ?? null)
     : (PREVIEW_CHARACTERS[0] ?? null)
 
-  const inventory = PREVIEW_INVENTORY.filter(
-    (record) => record.data.characterId === characterRecord?.recordId,
-  ).map((record) => record.data)
+  // `inventory.characterId` holds a character record id, so the pack is the rows
+  // pointing at the character resolved above — the same rows the sheet counts.
+  const myItems = isSignedIn
+    ? inventoryRecords.filter((record) => record.data.characterId === myCharacter?.recordId)
+    : PREVIEW_INVENTORY.filter(
+        (record) => record.data.characterId === (PREVIEW_CHARACTERS[0]?.recordId ?? ''),
+      )
+
+  const sheetMode: SheetMode = isSignedIn ? 'live' : 'preview'
+  // The pack waits on both reads: it cannot filter by a character it has not
+  // resolved, so a loading character read leaves it loading too, and a failed
+  // one leaves it in the same read-error state instead of claiming "nothing
+  // carried".
+  const inventoryPanelStatus: QueryStatus = !isSignedIn
+    ? 'ready'
+    : charactersStatus === 'loading' || inventoryStatus === 'loading'
+      ? 'loading'
+      : charactersStatus === 'error'
+        ? 'error'
+        : inventoryStatus
 
   return (
     <div
@@ -182,8 +214,14 @@ export default function HomePage() {
             </section>
 
             <aside className="flex min-h-0 flex-col gap-3 bg-shell-panel lg:overflow-y-auto">
-              <CharacterSheetPanel character={characterRecord?.data ?? null} inventory={inventory} />
-              <InventoryPanel items={inventory} />
+              <CharacterSheetPanel
+                campaignId={DEFAULT_CAMPAIGN_ID}
+                mode={sheetMode}
+                status={isSignedIn ? charactersStatus : 'ready'}
+                character={myCharacter}
+                items={myItems}
+              />
+              <InventoryPanel mode={sheetMode} status={inventoryPanelStatus} items={myItems} />
             </aside>
           </div>
         </>
