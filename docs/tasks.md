@@ -535,6 +535,10 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       `rel_01M7RVAWPYQY5WJ12QQZ8V4AKA`, clean tree. Live: `/`, `/home`,
       `/settings` serve; signed out `/settings` gates instead of erroring; zero
       console errors.
+      **Redeployed for `P3.17`**: release `rel_01M7RWGCYG4VH0ZP30RRB8CSHV`
+      (first attempt failed with `deploy_request_failed: fetch failed`, retried
+      clean). Live `/home`: preview table intact, **zero** `hp-controls` and
+      zero HP buttons, HP text still renders, zero console errors.
 - [x] `P3.9` Read failures on `characters`/`inventory` render a visible notice
       (skeleton while loading, never a silent fallback to `PREVIEW_*` while
       signed in). Extends `P3.3`/`P3.6`, matching `P2.5`'s seed-failure rule.

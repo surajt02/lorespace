@@ -585,6 +585,9 @@ HP — recorded in "not real yet", not hidden behind a control.
   new copy, no write controls signed out, zero console errors.
 - Redeployed again for deletion: release `rel_01M7RVAWPYQY5WJ12QQZ8V4AKA`.
   Live check: `/`, `/home`, `/settings` serve; signed-out `/settings` gates.
+- Redeployed for the HP-path removal: release `rel_01M7RWGCYG4VH0ZP30RRB8CSHV`
+  (one `fetch failed` retry). Live `/home` has zero HP controls and zero HP
+  buttons; the HP text still renders. The old action route answers 404.
 
 ### Revised feature inventory (sections 1-5)
 
