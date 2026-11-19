@@ -553,6 +553,9 @@ product owner, who changed four decisions. Recorded as
   `inventory.update` (rename a sword into a vial) and `applyGmMutation`'s
   membership authority (any player could set their own HP). Both now have tests
   that fail if the hole reopens.
+- Redeployed: release `rel_01M7RT6QQSW1VKDTTRE3WYQG3E` at
+  <https://lorespace.app.space>. Live check: landing + preview table with the
+  new copy, no write controls signed out, zero console errors.
 
 ### Revised feature inventory (sections 1-5)
 
