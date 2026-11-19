@@ -295,13 +295,18 @@ export default function HomePage() {
               <div
                 className={
                   feedExpanded
-                    ? 'pixel-frame flex min-h-0 flex-col bg-card lg:flex-1 lg:overflow-hidden'
-                    : // Minimised, the feed is its own (compact) height and the GM
-                      // console takes the rest (`P4.19`). No cap and no scroll:
-                      // a capped box that is a few pixels short of its five
-                      // compact rows scrolls by half a row, which reads as a
-                      // broken scrollbar (`P4.20`).
-                      'pixel-frame flex shrink-0 flex-col bg-card'
+                    ? // Content height, capped by the column and shrunk only when
+                      // the rows do not fit, so a short feed has no scrollbar and a
+                      // long one scrolls inside its frame (`P4.21`).
+                      'pixel-frame flex min-h-0 flex-col bg-card lg:max-h-full lg:overflow-y-auto'
+                    : // A fixed window while minimised (`P4.20`): four compact rows
+                      // plus the header, the same height whether the table has one
+                      // roll or four, so the GM console below does not jump as rows
+                      // arrive. Scrolls only if a short viewport cannot give it
+                      // that height. Written as a literal class: Tailwind scans
+                      // source text, so an interpolated class name is never
+                      // generated.
+                      'pixel-frame flex flex-col bg-card lg:h-[21.5rem] lg:max-h-full lg:overflow-y-auto'
                 }
               >
                 <ActionFeed
@@ -313,13 +318,12 @@ export default function HomePage() {
                   }}
                 />
               </div>
-              <div
-                className={
-                  feedExpanded
-                    ? 'shrink-0'
-                    : 'flex min-h-0 flex-col lg:flex-1 lg:overflow-hidden'
-                }
-              >
+              {/* Fills whatever the feed leaves, and gives a few pixels back
+                  before the feed is forced to scroll: `flex-1` grows into empty
+                  space, and `min-h-48` (header + input + a scrollable message
+                  list) is the floor, so the expanded feed only scrolls when the
+                  rows genuinely cannot share the column (`P4.19`, `P4.21`). */}
+              <div className="flex min-h-0 flex-col lg:min-h-48 lg:flex-1 lg:overflow-hidden">
                 <GmConsolePanel messages={PREVIEW_GM_MESSAGES} />
               </div>
             </section>

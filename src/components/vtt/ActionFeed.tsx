@@ -49,7 +49,7 @@ const ENTRY_LABELS: Record<string, string> = {
  * half-row scrollbar this fixes. One constant to raise if the GM can give up the
  * room.
  */
-const RECENT_COUNT = 3
+const RECENT_COUNT = 4
 
 export function ActionFeed({
   entries,
@@ -71,18 +71,15 @@ export function ActionFeed({
   return (
     <section
       data-testid="action-feed"
-      // Expanded, the panel is a fixed window and the list scrolls inside it.
-      // Minimised it is content-height (compact rows) so the GM console behind it
-      // gets the rest, and there is nothing to scroll — a five-row box only a few
-      // pixels short of its content scrolls by half a row, which reads as a
-      // broken scrollbar (`P4.20`).
-      className={
-        expanded
-          ? 'flex h-full min-h-0 flex-col gap-2 overflow-hidden'
-          : 'flex flex-col gap-2'
-      }
+      // Content height in both states; `/home` owns the window (fixed while
+      // minimised, capped by the column while expanded) and scrolls the panel, not
+      // this list. That is what keeps a short feed from drawing a scrollbar and a
+      // long one from scrolling without one (`P4.20`, `P4.21`).
+      className="flex flex-col gap-2"
     >
-      <header className="flex shrink-0 items-center justify-between gap-2 px-3 pt-3">
+      {/* Sticky because the panel scrolls as a whole when the rows do not fit:
+          the count and the All/Recent toggle must stay reachable. */}
+      <header className="sticky top-0 z-10 flex items-center justify-between gap-2 bg-card px-3 pt-3 pb-1">
         <h2 className="font-pixel text-[10px] uppercase text-muted-foreground">Table feed</h2>
         <div className="flex items-center gap-2">
           {status === 'ready' && (
@@ -112,14 +109,7 @@ export function ActionFeed({
       {status === 'error' && <FeedReadError />}
       {status === 'ready' && entries.length === 0 && <FeedEmpty />}
       {status === 'ready' && entries.length > 0 && (
-        <ol
-          data-testid="feed-list"
-          className={
-            expanded
-              ? 'flex min-h-0 flex-col overflow-y-auto pb-2 lg:flex-1'
-              : 'flex flex-col pb-2'
-          }
-        >
+        <ol data-testid="feed-list" className="flex flex-col pb-2">
           {visible.map((entry, index) => {
             const row = entry.data
             const isRoll = row.entryType === 'roll'
