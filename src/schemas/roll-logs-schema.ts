@@ -30,7 +30,16 @@ export const rollLogsSchema: CollectionSchema = {
     { name: 'campaignId', storage: 'text', interpretation: 'plain', required: true },
     { name: 'characterName', storage: 'text', interpretation: 'plain', required: true },
     { name: 'entryType', storage: 'text', interpretation: { kind: 'select', options: ['roll', 'action', 'gm_event', 'combat'] }, required: true },
-    { name: 'statName', storage: 'text', interpretation: 'plain', default: '' },
+    // A select, not free text (`P4.15`): `rollSkillCheck` writes the lower-case
+    // ability key and the GM will read this column, so the six options are the
+    // contract. `default: ''` stays the "no stat" sentinel a GM/combat row
+    // carries — select options are UI metadata, not a write-time constraint.
+    {
+      name: 'statName',
+      storage: 'text',
+      interpretation: { kind: 'select', options: ['str', 'dex', 'con', 'int', 'wis', 'cha'] },
+      default: '',
+    },
     { name: 'rawRoll', storage: 'number', interpretation: 'plain', default: 0 },
     { name: 'modifier', storage: 'number', interpretation: 'plain', default: 0 },
     { name: 'total', storage: 'number', interpretation: 'plain', default: 0 },

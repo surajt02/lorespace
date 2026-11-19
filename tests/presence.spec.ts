@@ -32,9 +32,9 @@ test.skip(
     '--password-stdin`, or fetch existing pool accounts with `npx deepspace test accounts recover --all`.',
 )
 
-/** `d20(14) +2 = 16 vs DC 13` — the roll line, as both the banner and a feed
- *  row spell it (`RollBanner`, `ActionFeed`). */
-const ROLL_LINE = /d20\(\d+\) [+-]?\d+ = \d+ vs DC \d+/
+/** `d20(14) + 3 = 17 vs DC 12` — the roll line, as both the banner and a feed
+ *  row spell it (`RollBanner`, `ActionFeed`, both via `formatModifierSpaced`). */
+const ROLL_LINE = /d20\(\d+\) [+-] ?\d+ = \d+ vs DC \d+/
 
 /** Collapse the JSX whitespace around the banner's interpolations so two
  *  windows' strings can be compared (and regexed) as one line. */
@@ -239,4 +239,47 @@ test('the campaign presence scope refuses an anonymous socket', async ({ page, r
   expect(forged.status()).toBe(401)
   const forgedPreview = await request.get('/ws/presence/campaign%3Apreview?token=not-a-jwt')
   expect(forgedPreview.status()).toBe(401)
+})
+
+test('the roll banner reaches a signed-out window', async ({ users, browser }) => {
+  // The reader's complaint that made this test: a signed-out incognito window
+  // saw the feed update but never the banner. Presence stays membership-gated
+  // (ADR 0006) and no socket is opened here; the banner is the `roll-logs` row
+  // itself, which `viewer` may read (ADR 0014, ADR 0021).
+  const [a] = await users(1)
+  await a.page.goto('/home')
+  await expect(a.page.getByTestId('workspace-shell')).toBeVisible({ timeout: 20_000 })
+  await ensureCharacter(a.page, 'Kaelen', 'vanguard')
+
+  const anonymous = await browser.newContext()
+  const watcher = await anonymous.newPage()
+  const errors = captureConsoleErrors(watcher)
+
+  try {
+    await watcher.goto('/home')
+    await expect(watcher.getByTestId('preview-table')).toBeVisible({ timeout: 20_000 })
+    // Wait for the live read to be ready *before* rolling: the first ready
+    // snapshot is the baseline, and a row that arrives in it is history.
+    await expect(watcher.getByTestId('signed-out-banner')).toBeVisible({ timeout: 20_000 })
+    await expect(
+      watcher.getByTestId('feed-list').or(watcher.getByTestId('feed-empty')),
+    ).toBeVisible({ timeout: 20_000 })
+
+    await a.page.getByTestId('stat-card-dex').click()
+
+    const forRoller = await bannerText(a.page)
+    expect(forRoller).toMatch(ROLL_LINE)
+    const forWatcher = await bannerText(watcher)
+    expect(forWatcher).toBe(forRoller)
+
+    // The same row is in the signed-out feed, and no presence socket was opened
+    // on this branch: the banner came from the record room alone.
+    await expect(watcher.getByTestId('feed-entry').first()).toContainText(
+      ROLL_LINE.exec(forWatcher)?.[0] ?? '',
+      { timeout: 15_000 },
+    )
+    expect(errors).toEqual([])
+  } finally {
+    await anonymous.close()
+  }
 })

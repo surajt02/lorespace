@@ -49,7 +49,11 @@ export interface InventoryRow {
   quantity: number
 }
 
-/** `roll-logs` — 12 columns. `rolledAt` is a datetime (epoch ms). */
+/**
+ * `roll-logs` — 12 columns. `rolledAt` is a datetime (epoch ms); `statName` is
+ * the lower-case ability key the select declares, so the fixture and a live row
+ * are the same shape and the UI upper-cases both for display.
+ */
 export interface RollLogRow {
   userId: string
   campaignId: string
@@ -183,7 +187,7 @@ export const PREVIEW_ROLLS: RecordData<RollLogRow>[] = [
       campaignId: DEFAULT_CAMPAIGN_ID,
       characterName: 'Kaelen',
       entryType: 'roll',
-      statName: 'STR',
+      statName: 'str',
       rawRoll: 14,
       modifier: 3,
       total: 17,
@@ -203,7 +207,7 @@ export const PREVIEW_ROLLS: RecordData<RollLogRow>[] = [
       campaignId: DEFAULT_CAMPAIGN_ID,
       characterName: 'Vesper',
       entryType: 'roll',
-      statName: 'DEX',
+      statName: 'dex',
       rawRoll: 1,
       modifier: 3,
       total: 4,

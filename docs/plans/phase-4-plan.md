@@ -500,3 +500,55 @@ banner and feed in both windows) pass by hand and in `tests/presence.spec.ts`.
   (`P4.1`/`P4.2`), and the feed it resolves into is live (`P4.11`). `P5.4` is
   reopened and must land before the tool set is exposed — `records.delete` is
   still in `src/ai/tools.ts`.
+
+## Revision 2026-11-19 (post-close)
+
+Requested after the phase shipped and deployed. This section is additive; it does
+not rewrite the Outcome above, and it supersedes that Outcome where it disagrees.
+
+**What changed, and the ADR it rests on**
+
+- [ADR 0021](../adr/0021-roll-banner-reads-roll-logs.md) — the roll banner reads
+  the `roll-logs` row and presence carries identity only, retiring the ephemeral
+  broadcast of a roll. This supersedes the broadcast clause of ADR 0005 and the
+  `lastRoll` part of `P4.1`'s payload. It also makes `P4.10`'s "peers get it from
+  `freshRolls`" obsolete: `src/lib/party-presence.ts` no longer parses rolls, and
+  `freshRolls`/`parsePresenceState` are gone (`peerCharacterId` remains).
+- `P4.13` banner from the record room (`src/lib/roll-announcements.ts`,
+  `src/components/vtt/RollBannerLayer.tsx`).
+- `P4.14` feed shows five rows with an expand toggle, scrolls in its own frame,
+  and the GM console keeps its height below it.
+- `P4.15` `roll-logs.statName` is a select of the six ability keys.
+- `P4.16` `+ 3` / `- 1` spacing in the banner and the feed (`formatModifierSpaced`),
+  while the sheet keeps `+3`.
+- `P4.17` a signed-out window sees the banner — the reported bug: the feed
+  updated instantly there and the banner never appeared, because presence is
+  membership-gated (ADR 0006). No socket is opened signed out; the public
+  `roll-logs` read announces instead (ADR 0014).
+
+**Superseded in § Contracts above:** the `PartyPresenceBar` props (no `announce`),
+`RollBanner`'s `roll` (an `AnnouncedRoll` from the row, not `PresenceRoll`), the
+presence payload (identity only), and the `CharacterSheetPanel` prop (no
+`onRollResolved`). **Superseded in the Outcome's Worth-your-eyes table:** the
+`statName` free-text row — it is a select now — and the "peer banner numbers are
+claims" row, which ADR 0021 removes as a risk.
+
+**Verification for the revision**
+
+```sh
+npm run validate      # tsc clean + 9 files / 133 tests
+npm run lint          # clean
+npm run build         # prerender still emits /
+npx deepspace test run tests/presence.spec.ts --port 5273   # 3 passed (18.9s),
+                      # incl. "the roll banner reaches a signed-out window"
+```
+
+Measured layout at 1440×900 signed out: feed 5/20 collapsed
+(`scrollHeight 428` / `clientHeight 336`), 20/20 expanded (`1688` / `336`), GM
+console bottom edge at `888` of `900` in both states. At 390×844 the phase-1
+stacking stays: the page scrolls and the GM sits below the feed, which is the
+documented mobile reading order rather than the desktop guarantee.
+
+**Inherited by Phase 5:** the roll→GM auto-resolve (`P5.7`) can hang on the same
+new-`roll-logs`-row signal the banner uses instead of a presence event, and
+`P5.9`'s typing indicator lands on an identity-only presence payload.

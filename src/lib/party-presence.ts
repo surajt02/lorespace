@@ -3,41 +3,22 @@
  * the durable `characters` rows (`P4.1`, `P4.3`, `P4.5`).
  *
  * Presence is the one place a browser sends state about itself, so nothing that
- * arrives over the socket is trusted: `parsePresenceState` validates every field
- * and drops a malformed `lastRoll` rather than letting half a payload render.
- * The payload carries **identity only** (`characterId`, `characterName`,
- * `archetype`, optionally the last roll) — HP always comes from the `characters`
- * query row, which is already live through the record room, so a peer cannot
- * claim a different hit-point total (`P4.5`).
+ * arrives over the socket is trusted: `peerCharacterId` validates the one key
+ * this build reads. The payload carries **identity only** (`characterId`,
+ * `characterName`, `archetype`) — HP always comes from the `characters` query
+ * row, which is already live through the record room, so a peer cannot claim a
+ * different hit-point total (`P4.5`), and a roll never travels this way at all
+ * (the banner reads the `roll-logs` row, ADR 0021).
  *
- * Pure: no React, no DOM, no network, no clock. `freshRolls` takes `mountedAt`
- * from the caller so a roll older than this mount is never announced — a peer
- * joining mid-session does not replay history, and `updateState` merging means
- * `lastRoll` outlives the roll itself.
+ * Pure: no React, no DOM, no network, no clock.
  */
 
 import { isAnonymousUserId, type RecordData } from 'deepspace'
-import type { AbilityScores, RollOutcome } from '@/lib/d20'
+import type { AbilityScores } from '@/lib/d20'
 import type { CharacterRow } from '@/lib/preview-data'
 
 /** The six stat cards, as keys. */
 export type AbilityScoreKey = keyof AbilityScores
-
-/**
- * The roll half of the presence payload: the action's authoritative numbers,
- * plus the id of the `roll-logs` row they were written to and when the client
- * announced them.
- */
-export type PresenceRoll = {
-  rollLogId: string
-  statName: AbilityScoreKey
-  rawRoll: number
-  modifier: number
-  total: number
-  targetDc: number
-  outcome: RollOutcome
-  at: number
-}
 
 /** One row of the roster: a person at the table, joined to their character. */
 export interface PartyMember {
@@ -53,15 +34,6 @@ export interface PartyMember {
 /** What a peer without a resolvable character row renders as. */
 const NO_ADVENTURER = 'No adventurer'
 
-const ABILITY_SCORE_KEYS: readonly AbilityScoreKey[] = ['str', 'dex', 'con', 'int', 'wis', 'cha']
-
-const ROLL_OUTCOMES: readonly RollOutcome[] = [
-  'critical_success',
-  'success',
-  'failure',
-  'critical_failure',
-]
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -70,51 +42,15 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value)
-}
-
-function isAbilityScoreKey(value: unknown): value is AbilityScoreKey {
-  return isNonEmptyString(value) && (ABILITY_SCORE_KEYS as readonly string[]).includes(value)
-}
-
-function isRollOutcome(value: unknown): value is RollOutcome {
-  return isNonEmptyString(value) && (ROLL_OUTCOMES as readonly string[]).includes(value)
-}
-
-/** A whole `lastRoll`, or `null` — never a partially filled one. */
-function parseRoll(value: unknown): PresenceRoll | null {
-  if (!isRecord(value)) return null
-  const { rollLogId, statName, rawRoll, modifier, total, targetDc, outcome, at } = value
-  if (!isNonEmptyString(rollLogId)) return null
-  if (!isAbilityScoreKey(statName)) return null
-  if (!isRollOutcome(outcome)) return null
-  if (
-    !isFiniteNumber(rawRoll) ||
-    !isFiniteNumber(modifier) ||
-    !isFiniteNumber(total) ||
-    !isFiniteNumber(targetDc) ||
-    !isFiniteNumber(at)
-  ) {
-    return null
-  }
-  return { rollLogId, statName, rawRoll, modifier, total, targetDc, outcome, at }
-}
-
 /**
- * The presence payload, guarded. A bad `characterId` does not poison a good
- * `lastRoll` and vice versa: each half is validated on its own, so a peer with a
- * broken roll still shows as a member (and one with no character still counts as
- * present).
+ * The one key this build reads out of a peer's payload: which `characters` row
+ * to render for them. A peer that broadcasts a different shape, an empty id, or
+ * nothing at all is present but has no sheet (`hasCharacter: false`) — never a
+ * partially rendered member.
  */
-export function parsePresenceState(state: Record<string, unknown>): {
-  characterId: string | null
-  lastRoll: PresenceRoll | null
-} {
-  return {
-    characterId: isNonEmptyString(state.characterId) ? state.characterId : null,
-    lastRoll: parseRoll(state.lastRoll),
-  }
+export function peerCharacterId(state: Record<string, unknown>): string | null {
+  if (!isRecord(state)) return null
+  return isNonEmptyString(state.characterId) ? state.characterId : null
 }
 
 /**
@@ -161,7 +97,7 @@ export function buildParty({
     if (listed.has(peer.userId)) continue
     listed.add(peer.userId)
 
-    const { characterId } = parsePresenceState(peer.state)
+    const characterId = peerCharacterId(peer.state)
     const row =
       characterId === null
         ? undefined
@@ -192,37 +128,4 @@ export function buildParty({
   }
 
   return members
-}
-
-/**
- * Rolls worth announcing, newest first.
- *
- * `seen` is the caller's memory across renders and is mutated here: every
- * announced `rollLogId` is added, so a roll flashes once even though the payload
- * keeps carrying it. `mountedAt` is the mount's epoch ms — a `lastRoll` at or
- * before it predates this session and is silently skipped.
- */
-export function freshRolls({
-  peers,
-  mountedAt,
-  seen,
-}: {
-  peers: { userId: string; state: Record<string, unknown> }[]
-  mountedAt: number
-  seen: Set<string>
-}): { userId: string; roll: PresenceRoll }[] {
-  const fresh: { userId: string; roll: PresenceRoll }[] = []
-
-  for (const peer of peers) {
-    if (isAnonymousUserId(peer.userId)) continue
-    const { lastRoll } = parsePresenceState(peer.state)
-    if (!lastRoll) continue
-    if (lastRoll.at <= mountedAt) continue
-    if (seen.has(lastRoll.rollLogId)) continue
-
-    seen.add(lastRoll.rollLogId)
-    fresh.push({ userId: peer.userId, roll: lastRoll })
-  }
-
-  return fresh.sort((a, b) => b.roll.at - a.roll.at)
 }

@@ -1,6 +1,7 @@
 # 0005 — Dice rolls are computed server-side
 
-- **Status:** Accepted
+- **Status:** Accepted — the roll computation stands; its *broadcast* clause is
+  superseded by [0021](./0021-roll-banner-reads-roll-logs.md)
 - **Date:** 2026-11-18
 - **Area:** game integrity
 - **Constraints:** `P3.1`, `P4.4`, `P4.6`, `P5.5`

@@ -123,6 +123,18 @@ describe('data-model contracts later phases depend on', () => {
     })
   })
 
+  it('declares the six ability keys as the statName select (P4.15)', () => {
+    const statName = schemaNamed('roll-logs').columns.find((column) => column.name === 'statName')
+
+    // The action writes the lower-case key and the GM will read this column; a
+    // free-text field would let a roll log claim a stat the rules do not have.
+    expect(statName?.interpretation).toEqual({
+      kind: 'select',
+      options: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
+    })
+    expect(statName?.default).toBe('')
+  })
+
   it('stamps rolledAt from summary and defines no createdAt column', () => {
     const rollLogs = schemaNamed('roll-logs')
     const rolledAt = rollLogs.columns.find((column) => column.name === 'rolledAt')

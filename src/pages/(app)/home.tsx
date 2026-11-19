@@ -33,19 +33,15 @@
  * room subscription.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAuth, useQuery } from 'deepspace'
-import {
-  CharacterSheetPanel,
-  type QueryStatus,
-  type ResolvedRoll,
-  type SheetMode,
-} from '@/components/CharacterSheetPanel'
+import { CharacterSheetPanel, type QueryStatus, type SheetMode } from '@/components/CharacterSheetPanel'
 import { GmConsolePanel } from '@/components/GmConsolePanel'
 import { InventoryPanel } from '@/components/InventoryPanel'
 import { ActionFeed } from '@/components/vtt/ActionFeed'
-import { PartyPresenceBar, type Announcement } from '@/components/PartyPresenceBar'
+import { PartyPresenceBar } from '@/components/PartyPresenceBar'
 import { PartyRoster, type RosterMember } from '@/components/vtt/PartyRoster'
+import { RollBannerLayer } from '@/components/vtt/RollBannerLayer'
 import { SceneBanner } from '@/components/vtt/SceneBanner'
 import { SignInBanner } from '@/components/vtt/SignInBanner'
 import { useToast } from '@/components/ui'
@@ -105,19 +101,6 @@ export default function HomePage() {
   // let a failure re-fire on the next render.
   const seedFired = useRef(false)
 
-  // The last roll this window resolved (`P4.8` → `P4.10`). The sheet hands up
-  // the action's own payload, so the banner and the toast cannot disagree.
-  const [lastRoll, setLastRoll] = useState<{
-    roll: ResolvedRoll
-    statName: AbilityScoreKey
-  } | null>(null)
-
-  // One value for presence, memoised: a fresh object on every render would make
-  // the bar's broadcast effect think a new roll had landed.
-  const announce = useMemo<Announcement | null>(
-    () => (lastRoll ? { ...lastRoll.roll, statName: lastRoll.statName } : null),
-    [lastRoll],
-  )
 
   const liveCampaign =
     records.find((record) => record.recordId === DEFAULT_CAMPAIGN_ID)?.data ?? null
@@ -248,6 +231,12 @@ export default function HomePage() {
         <WorkspaceSkeleton />
       ) : (
         <>
+          {/* The banner reads the `roll-logs` rows, never a presence payload
+              (ADR 0021), and it is rendered on both branches: a signed-out
+              window reads the same public rows (ADR 0014), so the demo table
+              announces to every open tab without joining the campaign room. */}
+          <RollBannerLayer entries={rollRecords} status={rollStatus} />
+
           <div className="shrink-0">
             <SceneBanner campaign={campaign} />
           </div>
@@ -277,7 +266,6 @@ export default function HomePage() {
                     characters={characterRecords}
                     myCharacter={myCharacter}
                     userId={userId ?? ''}
-                    announce={announce}
                   />
                 ) : (
                   <PartyRoster members={previewRoster} />
@@ -285,11 +273,16 @@ export default function HomePage() {
               </div>
             </aside>
 
-            <section className="flex min-h-0 flex-col gap-3 bg-shell-panel lg:overflow-y-auto">
-              <div className="pixel-frame bg-card">
+            {/* The feed scrolls inside its own frame (`P4.14`); the GM console
+                keeps its height below it, so a long table never pushes the GM
+                off screen. */}
+            <section className="flex min-h-0 flex-col gap-3 bg-shell-panel lg:overflow-hidden">
+              <div className="pixel-frame flex min-h-0 flex-col bg-card lg:flex-1 lg:overflow-hidden">
                 <ActionFeed entries={feedEntries} status={feedStatus} />
               </div>
-              <GmConsolePanel messages={PREVIEW_GM_MESSAGES} />
+              <div className="shrink-0">
+                <GmConsolePanel messages={PREVIEW_GM_MESSAGES} />
+              </div>
             </section>
 
             <aside className="flex min-h-0 flex-col gap-3 bg-shell-panel lg:overflow-y-auto">
@@ -298,9 +291,6 @@ export default function HomePage() {
                 status={isSignedIn ? charactersStatus : 'ready'}
                 character={myCharacter}
                 items={myItems}
-                onRollResolved={(roll, statName) => {
-                  setLastRoll({ roll, statName })
-                }}
               />
               <InventoryPanel mode={sheetMode} status={inventoryPanelStatus} items={myItems} />
             </aside>

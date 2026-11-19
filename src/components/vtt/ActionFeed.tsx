@@ -9,10 +9,12 @@
  * so this component never sorts.
  */
 
+import { useState } from 'react'
 import { Dices } from 'lucide-react'
 import type { RecordData } from 'deepspace'
-import { Badge, EmptyState, type BadgeProps } from '@/components/ui'
+import { Badge, Button, EmptyState, type BadgeProps } from '@/components/ui'
 import type { QueryStatus } from '@/components/CharacterSheetPanel'
+import { formatModifierSpaced } from '@/lib/d20'
 import type { RollLogRow } from '@/lib/preview-data'
 
 const OUTCOME_VARIANTS: Record<string, BadgeProps['variant']> = {
@@ -37,9 +39,9 @@ const ENTRY_LABELS: Record<string, string> = {
   combat: 'Combat',
 }
 
-function signed(value: number): string {
-  return value >= 0 ? `+${value}` : String(value)
-}
+/** Rows shown before the expand toggle. Explicitly a display cap, not a read
+ *  cap: the query already limits to 20, so "show all" means all of those. */
+const RECENT_COUNT = 5
 
 export function ActionFeed({
   entries,
@@ -48,21 +50,55 @@ export function ActionFeed({
   entries: RecordData<RollLogRow>[]
   status: QueryStatus
 }) {
+  // Minimised by default so the feed cannot push the GM console off screen. The
+  // list scrolls in both states — the panel is bounded by the column, not by the
+  // row count (`P4.14`).
+  const [expanded, setExpanded] = useState(false)
+  const collapsible = entries.length > RECENT_COUNT
+  const visible = collapsible && !expanded ? entries.slice(0, RECENT_COUNT) : entries
+
   return (
-    <section data-testid="action-feed" className="flex flex-col gap-2">
-      <header className="flex items-center justify-between px-3 pt-3">
+    <section
+      data-testid="action-feed"
+      className="flex min-h-0 flex-col gap-2 lg:h-full lg:overflow-hidden"
+    >
+      <header className="flex shrink-0 items-center justify-between gap-2 px-3 pt-3">
         <h2 className="font-pixel text-[10px] uppercase text-muted-foreground">Table feed</h2>
-        {status === 'ready' && (
-          <span className="pixel-numeral text-[10px] text-muted-foreground">{entries.length}</span>
-        )}
+        <div className="flex items-center gap-2">
+          {status === 'ready' && (
+            <span
+              data-testid="feed-count"
+              className="pixel-numeral text-[10px] text-muted-foreground"
+            >
+              {visible.length}/{entries.length}
+            </span>
+          )}
+          {status === 'ready' && collapsible && (
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="feed-expand"
+              aria-expanded={expanded}
+              className="h-6 px-2 font-pixel text-[10px] uppercase"
+              onClick={() => {
+                setExpanded((open) => !open)
+              }}
+            >
+              {expanded ? 'Recent' : `All ${String(entries.length)}`}
+            </Button>
+          )}
+        </div>
       </header>
 
       {status === 'loading' && <FeedSkeleton />}
       {status === 'error' && <FeedReadError />}
       {status === 'ready' && entries.length === 0 && <FeedEmpty />}
       {status === 'ready' && entries.length > 0 && (
-        <ol className="flex flex-col">
-          {entries.map((entry, index) => {
+        <ol
+          data-testid="feed-list"
+          className="flex min-h-0 flex-col overflow-y-auto pb-2 lg:flex-1"
+        >
+          {visible.map((entry, index) => {
             const row = entry.data
             const isRoll = row.entryType === 'roll'
             return (
@@ -96,7 +132,8 @@ export function ActionFeed({
 
                 {isRoll && (
                   <p className="pixel-numeral mt-1 text-sm text-foreground">
-                    d20({row.rawRoll}) {signed(row.modifier)} = {row.total} vs DC {row.targetDc}
+                    d20({row.rawRoll}) {formatModifierSpaced(row.modifier)} = {row.total} vs DC{' '}
+                    {row.targetDc}
                   </p>
                 )}
 

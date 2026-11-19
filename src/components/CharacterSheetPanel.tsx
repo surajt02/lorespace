@@ -33,6 +33,7 @@ import {
   ARCHETYPE_PRESETS,
   calculateArmorClass,
   formatModifier,
+  formatModifierSpaced,
   getModifier,
   type ArchetypeName,
   type RollOutcome,
@@ -96,15 +97,11 @@ export function CharacterSheetPanel({
   status,
   character,
   items,
-  onRollResolved,
 }: {
   mode: SheetMode
   status: QueryStatus
   character: RecordData<CharacterRow> | null
   items: RecordData<InventoryRow>[]
-  /** Called with the server's result after a successful roll, so `/home` can
-   *  hand the same payload to the presence banner. */
-  onRollResolved?: (roll: ResolvedRoll, statName: AbilityScoreKey) => void
 }) {
   // Hooks run in every branch, so they live above the dispatch. `preview` simply
   // never renders the surfaces that use them. No mutation hook: this panel reads
@@ -174,11 +171,12 @@ export function CharacterSheetPanel({
       })
       const label =
         ABILITY_SCORES.find((score) => score.key === statName)?.label ?? statName.toUpperCase()
+      // The toast is immediate feedback; the banner comes from the `roll-logs`
+      // row itself (`RollBannerLayer`), so this panel passes nothing up.
       success(
         `${label} check`,
-        `d20(${roll.rawRoll}) ${formatModifier(roll.modifier)} = ${roll.total} vs DC ${roll.targetDc} — ${OUTCOME_LABELS[roll.outcome]}`,
+        `d20(${roll.rawRoll}) ${formatModifierSpaced(roll.modifier)} = ${roll.total} vs DC ${roll.targetDc} — ${OUTCOME_LABELS[roll.outcome]}`,
       )
-      onRollResolved?.(roll, statName)
     } catch (cause) {
       error('Roll failed', failureMessage(cause))
     } finally {

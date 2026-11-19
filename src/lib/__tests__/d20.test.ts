@@ -7,6 +7,7 @@ import {
   calculateArmorClass,
   classifyRoll,
   formatModifier,
+  formatModifierSpaced,
   getModifier,
   type AbilityScores,
   type ArchetypeName,
@@ -266,5 +267,22 @@ describe('ARCHETYPE_ORDER', () => {
 
     expect([...ARCHETYPE_ORDER].sort()).toEqual(presetNames.sort())
     expect(new Set(ARCHETYPE_ORDER).size).toBe(ARCHETYPE_ORDER.length)
+  })
+})
+
+describe('formatModifierSpaced', () => {
+  // The banner and the feed read the modifier as a sentence; the sheet keeps the
+  // tight form. Both are the same number, and the space is the only difference.
+  it('puts a space after the sign', () => {
+    expect(formatModifierSpaced(0)).toBe('+ 0')
+    expect(formatModifierSpaced(3)).toBe('+ 3')
+    expect(formatModifierSpaced(-1)).toBe('- 1')
+    expect(formatModifierSpaced(-5)).toBe('- 5')
+  })
+
+  it('agrees with formatModifier once the space is removed', () => {
+    for (const value of [-5, -1, 0, 2, 7]) {
+      expect(formatModifierSpaced(value).replace(' ', '')).toBe(formatModifier(value))
+    }
   })
 })

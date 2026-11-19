@@ -75,6 +75,18 @@ export function formatModifier(modifier: number): string {
   return modifier >= 0 ? `+${modifier}` : `${modifier}`
 }
 
+/**
+ * The same number with air around the sign: `0` → `'+ 0'`, `-1` → `'- 1'`.
+ *
+ * Used where the roll line is read as a sentence rather than scanned as a
+ * column — the roll banner and the feed entry — while the sheet's stat cards
+ * keep the tight `formatModifier` so six of them still fit three to a row.
+ * One line of arithmetic, two registers.
+ */
+export function formatModifierSpaced(modifier: number): string {
+  return modifier >= 0 ? `+ ${modifier}` : `- ${Math.abs(modifier)}`
+}
+
 /** Unarmored base 10 plus the DEX modifier plus the preset's armor bonus. */
 export function calculateArmorClass(dexScore: number, armorBonus: number): number {
   return 10 + getModifier(dexScore) + armorBonus

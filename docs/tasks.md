@@ -80,7 +80,7 @@ is the only remaining fixture (Phase 5).
 | Theme | `obsidian` — 21 tokens, `--radius: 0`, amber `#d97706`, Silkscreen labels; no indigo anywhere |
 | `src/pages/index.tsx` | Split-hero landing, Design Direction block, inline-SVG d20 (`D20Mark`, shared with the roll banner), CTA `Enter the table` |
 | `src/pages/(app)/home.tsx` | 3-column shell; campaign banner, sheet, pack, **roster** and **feed** read live rows (seed skeleton + read-failure notices); GM console is the last fixture. Signed out, one `previewFromLiveRows` flag keeps sheet/pack/roster/feed on the same source |
-| Presence | `src/components/PartyPresenceBar.tsx` — one `usePresenceRoom(DEFAULT_CAMPAIGN_PRESENCE_SCOPE)` socket, broadcasts identity + `lastRoll`, roster join in `src/lib/party-presence.ts` |
+| Presence | `src/components/PartyPresenceBar.tsx` — one `usePresenceRoom(DEFAULT_CAMPAIGN_PRESENCE_SCOPE)` socket, broadcasts identity only (`characterId`, `characterName`, `archetype`), roster join in `src/lib/party-presence.ts` |
 | `src/server/realtime-routes.ts` | `/ws/presence/:scopeId` is **gated** (401 anonymous/bad token, 503 unverifiable, 403 non-member) with `campaign:preview` the one anonymous scope; hand-written instead of `wsRoute(extraIdentity)` |
 | `src/pages/(app)/(protected)/settings.tsx` | Account card + a **Characters** card: the caller's character with `Delete <name>` → confirm → `deleteCharacter` (items first); `/home` then shows Forge |
 | `src/schemas.ts` | `users` + `settings` + `campaigns` + `characters` + `inventory` + `roll-logs` (six, `lintSchema`/`lintSchemas` clean) |
@@ -89,12 +89,12 @@ is the only remaining fixture (Phase 5).
 | `src/lib/d20.ts` | `getModifier`, `formatModifier`, `calculateArmorClass`, `classifyRoll`, `ARCHETYPE_PRESETS`, `ARCHETYPE_ORDER`, `ABILITY_SCORES`, `CONSUMABLE_EFFECTS`; zero imports, no randomness. Entropy lives in `src/lib/rng.ts` (rejection-sampled d20 from bytes) |
 | `src/components/CharacterSheetPanel.tsx` | Live `characters` record → Forge (`forgeCharacter`), 6 stat cards that **roll** (click → `rollSkillCheck` → toast + banner), AC, segmented HP bar (read-only — no HP controls, ADR 0020); preview cards stay inert |
 | `src/components/InventoryPanel.tsx` | Live `inventory` rows → Use (`useItem` action, heals) / Discard (owner-scoped `removeConfirmed` behind `ConfirmModal`), no add/edit |
-| `src/components/vtt/ActionFeed.tsx` | Live `roll-logs` rows, newest 20, `feed-entry` per row, skeleton/read-error/empty states |
-| `src/components/vtt/RollBanner.tsx` | One fixed strip, d20 sprite, `d20(n) ±m = t vs DC n`, outcome badge, 6 s auto-dismiss; identical for roller (action result) and peers (presence) |
+| `src/components/vtt/ActionFeed.tsx` | Live `roll-logs` rows, newest 20 read / 5 shown with an expand toggle, scrolls inside its frame so the GM console stays on screen; skeleton/read-error/empty states |
+| `src/components/vtt/RollBanner.tsx` | One fixed strip, d20 sprite, `d20(n) ± m = t vs DC n`, outcome badge, 6 s auto-dismiss; fed by `RollBannerLayer` from the newest `roll-logs` row, so signed-in and signed-out windows see the same roll (ADR 0021) |
 | `src/ai/tools.ts` | Built-in record tools only, generic prompt — `records.delete` still listed, so `P5.4` is **reopened** |
 | `ai-chat` feature | **Not installed** — no `ChatPanel`, no `/api/ai/chat` |
 | `src/constants.ts` | `DEFAULT_CAMPAIGN_ID`, `DEFAULT_CAMPAIGN_PRESENCE_SCOPE` (2a), `PREVIEW_PRESENCE_SCOPE` (4) |
-| Tests | `smoke` 6/6 + `api` 2/2 + `presence` 2/2 + `collab` 3/3 (collab's loading-state test races when four spec files run in parallel — `P6.2`); 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 8 files / 134 tests |
+| Tests | `smoke` 6/6 + `api` 2/2 + `presence` 3/3 + `collab` 3/3 (collab's loading-state test races when four spec files run in parallel — `P6.2`); 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 9 files / 133 tests |
 | Git | scaffold + phases 0-4 committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
 | Deploy | live at <https://lorespace.app.space>; **GitHub source claimed permanently** by `P3.8` — deploys ship the checkout, no commit lineage |
 | Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)); `/home` renders live rows when they exist and `src/lib/preview-data.ts` when the table is empty |
@@ -724,6 +724,51 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       needs member write access. Added in phase 4.
 
       — 2026-11-19 phase 4: `roll-logs` member writes off (`create/update/delete: false`); `'*'`/`viewer`/`admin` unchanged. Pinned in `src/schemas/__tests__/schemas.test.ts`. The action credential skips per-record RBAC, so nothing needed member write access — a member-authored row could not be evidence (ADR 0005).
+- [x] `P4.13` The roll banner reads the `roll-logs` row, not the presence payload,
+      and presence carries identity only ([ADR 0021](./adr/0021-roll-banner-reads-roll-logs.md)).
+      `src/lib/roll-announcements.ts` (`toAnnouncedRoll`, `unseenRolls`) +
+      `src/components/vtt/RollBannerLayer.tsx` announce each new row once, newest
+      first, filtering `entryType: 'roll'`; the first `ready` snapshot is the
+      baseline, so no clock is compared and history is never replayed. `lastRoll`
+      is gone from `PartyPresenceBar`'s `updateState` payload and
+      `freshRolls`/`parsePresenceState` are gone from `src/lib/party-presence.ts`
+      (now `peerCharacterId`). The sheet's toast is the roller's instant feedback.
+      — 2026-11-19 phase 4 revision: 9 unit tests for the mapper + 12 for the
+      roster join; the two-window spec still asserts both windows' banner text is
+      equal, which now proves row → both windows rather than payload → peer.
+- [x] `P4.14` The Table feed shows the five most recent rows with an expand
+      toggle, scrolls inside its own frame in both states, and never pushes the
+      GM console off screen. `RECENT_COUNT = 5`; `feed-expand` (`aria-expanded`,
+      `All N` / `Recent`), `feed-count` (`shown/total`), `feed-list` is the scroll
+      container; the center column is `lg:overflow-hidden` with the feed
+      `lg:flex-1` and the GM `shrink-0`.
+      — 2026-11-19 phase 4 revision: measured at 1440×900 signed out — 5/20
+      collapsed with `scrollHeight 428 / clientHeight 336`, 20/20 expanded with
+      `1688/336`, GM console bottom at 888 in both states. Mobile (390×844) keeps
+      the phase-1 stacking and page scroll: the GM is below the feed by design,
+      not clipped.
+- [x] `P4.15` `roll-logs.statName` is a select of the six ability keys, not free
+      text; fixtures normalised to the same lower-case keys and the UI
+      upper-cases for display. Pinned in `src/schemas/__tests__/schemas.test.ts`.
+      — 2026-11-19 phase 4 revision: `default: ''` stays the "no stat" sentinel a
+      GM/combat row carries (select options are metadata, not a write-time
+      constraint — checked against `coerceValue`/`rowToData` in 0.44.2). This
+      closes the plan's § Worth-your-eyes item on the column.
+- [x] `P4.16` The roll line reads `+ 3` / `- 1` in the banner **and** the feed,
+      while the sheet's stat cards keep the tight `+3`:
+      `formatModifierSpaced` next to `formatModifier` in `src/lib/d20.ts`.
+      — 2026-11-19 phase 4 revision: 2 unit tests, including "agrees with
+      `formatModifier` once the space is removed", so the two registers cannot
+      drift in value.
+- [x] `P4.17` A signed-out window sees the roll banner. No presence socket is
+      opened there (ADR 0006 unchanged); the banner comes from the public
+      `roll-logs` read (ADR 0014, [0021](./adr/0021-roll-banner-reads-roll-logs.md)).
+      — 2026-11-19 phase 4 revision: `tests/presence.spec.ts` › "the roll banner
+      reaches a signed-out window" loads an anonymous context, waits for its feed
+      to be ready (baseline), rolls from a signed-in window and asserts the
+      signed-out banner text equals the roller's — 3/3 spec tests green. This was
+      the reported bug: the feed updated, the banner did not.
+
 ## Phase 5 — AI Game Master
 
 - [ ] `P5.1` Install the chat surface ([ADR 0004](./adr/0004-ai-chat-and-owner-billing.md)):

@@ -3,11 +3,10 @@
  *
  * Presentational and self-dismissing: it renders whatever `roll` it is given and
  * holds no state of its own beyond the timer, because the numbers must be the
- * action's numbers and nothing here may recompute them (ADR 0005). The roller
- * gets it from the action result in `CharacterSheetPanel`, peers from the
- * presence payload through `freshRolls` — both paths hand this component the
- * same six fields, so the toast, the banner and the `roll-logs` row cannot
- * disagree.
+ * action's numbers and nothing here may recompute them (ADR 0005). The one
+ * source is a `roll-logs` row (`RollBannerLayer`), so the banner, the feed row
+ * and the durable record are the same three numbers — never a peer's claim
+ * (ADR 0021).
  *
  * The timer keys off `rollLogId`, not the object or the mount: a new roll
  * restarts the six seconds, and the same roll arriving again never keeps a stale
@@ -19,19 +18,8 @@ import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import { Badge, Button, type BadgeProps } from '@/components/ui'
 import { D20Mark } from '@/components/vtt/D20Mark'
-import { formatModifier, type RollOutcome } from '@/lib/d20'
-
-/** One roll as it is announced: the action's payload plus who rolled it. */
-export interface AnnouncedRoll {
-  characterName: string
-  statName: string
-  rawRoll: number
-  modifier: number
-  total: number
-  targetDc: number
-  outcome: RollOutcome
-  rollLogId: string
-}
+import { formatModifierSpaced, type RollOutcome } from '@/lib/d20'
+import type { AnnouncedRoll } from '@/lib/roll-announcements'
 
 const OUTCOME_VARIANTS: Record<RollOutcome, BadgeProps['variant']> = {
   critical_success: 'success',
@@ -88,16 +76,16 @@ export function RollBanner({
 
       <div className="min-w-0 flex-1">
         <p className="pixel-numeral text-sm leading-snug text-foreground">
-          {roll.characterName} rolled {roll.statName.toUpperCase()}: d20({roll.rawRoll}){' '}
-          {formatModifier(roll.modifier)} = {roll.total} vs DC {roll.targetDc}
+          {roll.characterName} rolled {roll.statName.toUpperCase() || 'CHECK'}: d20({roll.rawRoll}){' '}
+          {formatModifierSpaced(roll.modifier)} = {roll.total} vs DC {roll.targetDc}
         </p>
         <Badge
           data-testid="roll-banner-outcome"
-          variant={OUTCOME_VARIANTS[roll.outcome]}
+          variant={OUTCOME_VARIANTS[roll.outcome as RollOutcome] ?? 'secondary'}
           size="sm"
           className="pixel-numeral mt-1 uppercase tracking-wider"
         >
-          {OUTCOME_LABELS[roll.outcome]}
+          {OUTCOME_LABELS[roll.outcome as RollOutcome] ?? roll.outcome}
         </Badge>
       </div>
 
