@@ -27,16 +27,16 @@ visitors keep the deterministic preview table.
 
 ## Definition of done
 
-- [ ] `npm run validate` and `npm run lint` pass
-- [ ] `npm run test:unit` includes `src/lib/__tests__/d20.test.ts`; AC 16/14 and
+- [x] `npm run validate` and `npm run lint` pass
+- [x] `npm run test:unit` includes `src/lib/__tests__/d20.test.ts`; AC 16/14 and
       modifier boundaries (1/10/11/20) pinned
-- [ ] `grep -rn "Math.random\|window\.\|document\." src/lib/d20.ts` finds nothing
-- [ ] `grep -rn "PREVIEW_INVENTORY\|PREVIEW_CHARACTERS" 'src/pages/(app)/home.tsx'`
+- [x] `grep -rn "Math.random\|window\.\|document\." src/lib/d20.ts` finds nothing
+- [x] `grep -rn "PREVIEW_INVENTORY\|PREVIEW_CHARACTERS" 'src/pages/(app)/home.tsx'`
       shows character/inventory fixtures only on the `preview` branch (roster
       stays fixture until `P4.3`)
-- [ ] Forge, HP adjust, Use and Discard each perform a write visible in a second
+- [x] Forge, HP adjust, Use and Discard each perform a write visible in a second
       browser window without reload
-- [ ] Live URL: `/` and `/home` serve after `P3.8`
+- [x] Live URL: `/` and `/home` serve after `P3.8`
 
 ## Scope
 
@@ -377,4 +377,109 @@ All settled inside this session; none escalated.
 
 ## Outcome
 
-Filled in at the end of the phase.
+- **Shipped:** `src/lib/d20.ts` (rules, four presets, classifier, zero imports);
+  20 unit tests; a live `characters` read with skeleton and read-error states;
+  Forge (name + preset → one character row + two starter items); six stat cards
+  (display-only), AC and a segmented HP bar with `-5/-1/+1/+5/Short Rest`
+  confirmed writes; a live pack with Use and Discard; the deterministic
+  signed-out preview kept intact; deploy #1 live at
+  <https://lorespace.app.space> with GitHub source latched.
+- **Slipped:** the click half of `P3.5` → `P4.8` (ADR 0005 forbids a
+  browser-computed roll and `rollSkillCheck` is `P4.4`). ADR 0014's live-row
+  rule for the signed-out preview → `P4.9` (the roster is still a fixture until
+  `P4.3`).
+- **Deviations:**
+  - **`P3.3` query placement:** the `characters`/`inventory` queries live in
+    `/home`, which resolves the viewer's record and passes records down; the
+    panels stay prop-driven. One join, so the sheet and the pack cannot disagree
+    about which character is yours.
+  - **`P3.5` numerals:** `pixel-numeral` (Silkscreen, `tabular-nums`) instead of
+    `font-mono`, per ADR 0013 ("Silkscreen for … all numerals").
+  - **`P3.2` "AC clamping":** pinned as *no clamp* — `calculateArmorClass(1, 0)
+    === 5`; the DEX modifier floors, the result does not.
+  - **`P3.4` no transaction:** character first, then items; a failed item write
+    is reported by name in the toast, and the character row stays.
+  - **`P3.6` Use:** spends one charge, no healing or item effect (ADR 0010).
+  - **Added tasks:** `P3.9` (read-failure notices, done), `P4.8` (stat-card
+    click), `P4.9` (signed-out preview follows live rows), all in
+    [`../tasks.md`](../tasks.md).
+  - **No new ADR.** Every deviation is a consequence of ADR 0005, 0010, 0013 or
+    0014, or a sequencing choice inside the task text.
+- **Inherited by the next phase:**
+  - `src/lib/d20.ts` is the only rules module: `classifyRoll(rawRoll, total,
+    targetDc)` returns the exact `roll-logs.outcome` select values; presets are
+    data, `ABILITY_SCORES` is the card order. `P4.4` imports it in the worker.
+  - `/home` already runs campaign-scoped `characters`/`inventory` queries and
+    resolves `myCharacter`; `P4.3` joins presence peers to the same records.
+  - Panel contracts: `CharacterSheetPanel({campaignId, mode, status, character,
+    items})` and `InventoryPanel({mode, status, items})` take `RecordData` rows,
+    not `.data`, so writes have `recordId`s. `P4.8` adds the card click inside
+    the sheet; it must not move the read.
+  - A signed-in player owns at most one character per campaign
+    (`uniqueOn ['userId','campaignId']`); Forge disappears once the row lands.
+  - Writes are awaited `*Confirmed` mutations with toasts; `ready` gates every
+    control. `inventory.characterId` holds a character **recordId**.
+  - The live URL exists and deploys ship the GitHub source tree with no commit
+    lineage; commit before every deploy.
+
+### 1. Shipped, by feature
+
+| Feature | State | Files | Evidence |
+| --- | --- | --- | --- |
+| d20 rules (`getModifier`, `formatModifier`, `calculateArmorClass`, `classifyRoll`) | unit test | `src/lib/d20.ts`, `src/lib/__tests__/d20.test.ts` | `npm run test:unit` → 5 files / 52 tests; modifiers 1/10/11/20, AC 16/14, nat 20/1 override |
+| Four Forge presets + `ABILITY_SCORES` (per-archetype armor bonus, HP, kit, blurbs) | read (Forge + sheet), unit test | `src/lib/d20.ts` | "seeds the Vanguard starter pair that the fixture shows"; "matches every fixture score, AC and HP" |
+| Forge adventurer (name + preset → `characters` row + two `inventory` rows) | write | `src/components/CharacterSheetPanel.tsx` | throwaway signed-in spec: Arcanist "Ash" forged, sheet `18/18`, Forge gone, reload persists |
+| Live sheet read (`characters` where `campaignId`, viewer match, skeleton, read-error notice) | read | `src/pages/(app)/home.tsx`, `src/components/CharacterSheetPanel.tsx` | spec reload shows the record; signed-out preview unchanged; no `PREVIEW_*` on the live branch |
+| HP controls (`-5/-1/+1/+5/Short Rest`, clamped `0..maxHp`) | write | `src/components/CharacterSheetPanel.tsx` | spec: `-1` → `17/18` in window A and window B without reload |
+| Live pack read (rows by `characterId`, skeleton, read-error notice) | read | `src/components/InventoryPanel.tsx`, `src/pages/(app)/home.tsx` | spec: forged Arcanist shows `Cinder Focus` + `Sunfire Vial x2` |
+| Use (consumables only: `quantity - 1`, last one removed) | write | `src/components/InventoryPanel.tsx` | spec: `x2 → x1` in both windows, second Use removes the row |
+| Discard (`ConfirmModal` naming the item → remove) | write | `src/components/InventoryPanel.tsx` | spec: dialog names "Cinder Focus", row gone after confirm |
+| Signed-out preview table (Kaelen, AC 16, 3 items, no write controls) | read (fixture) | `src/pages/(app)/home.tsx` | throwaway spec + live URL check: `preview-table`, no Forge/HP/Use/Discard |
+| Deploy #1 (`https://lorespace.app.space`) | route | — | both pages 200; Chromium load: landing + preview table, zero console errors |
+
+### 2. Not real yet
+
+| What you see | Actually | Becomes real in |
+| --- | --- | --- |
+| Party roster (Kaelen, Vesper) with green online dots | `PREVIEW_CHARACTERS` in `src/lib/preview-data.ts`; `online: true` hardcoded in `src/pages/(app)/home.tsx` | Phase 4 — presence peers (`P4.1`/`P4.3`) |
+| Action feed with roll rows | `PREVIEW_ROLLS` in `src/lib/preview-data.ts` | Phase 4 — `rollSkillCheck` + `roll-logs` (`P4.4`) |
+| GM console transcript and its input | `PREVIEW_GM_MESSAGES`; no `ai-chat` feature, no `/api/ai/chat` | Phase 5 — `ai-chat` install + GM tools |
+| Six stat cards | display-only; no click handler (`CharacterSheetPanel.tsx:283-296`) | Phase 4 — `rollSkillCheck` + `P4.8` |
+| Signed-out sheet and pack (Kaelen, 3 items) | `PREVIEW_CHARACTERS[0]` / `PREVIEW_INVENTORY`, shown even when live rows exist | Phase 4 — `P4.9` (ADR 0014's live-row rule) |
+| Armor Class | stored at Forge from the preset, display-only; nothing attacks it | Not in this build — ADR 0010/0011 (accepted) |
+
+### 3. Persistence check
+
+Yes — two collections, both from the browser: `characters` (Forge creates the
+owner's row; HP controls `putConfirmed` `hp`) and `inventory` (Forge creates two
+starter rows; Use updates `quantity` or removes; Discard removes). All through
+awaited `createConfirmed`/`putConfirmed`/`removeConfirmed` with toasts. The
+`campaigns/default-campaign` seed remains the only server-action write.
+
+### 4. Pending, by phase
+
+- Phase 4 → roster, feed and roll banner become presence + server-computed
+  `roll-logs`; the stat-card click lands (`P4.8`); the signed-out preview follows
+  live rows (`P4.9`).
+- Phase 5 → the GM console becomes a real streamed agent and the caller that
+  makes `applyGmMutation` live.
+- Phase 6 → gates, the rewritten `collab` spec, final deploy and the README's
+  live URL.
+
+### 5. Worth your eyes
+
+| Tier | Item | Why a human | What to check | Files |
+| --- | --- | --- | --- | --- |
+| blocks | HP is client-authored by the character's owner (`putConfirmed(recordId, { hp })`), unlike a roll | permission boundary the demo will show; expensive to reverse once the GM narrates around it | Confirm "players may set their own HP; only rolls are server-computed (ADR 0005)" is the story | `src/components/CharacterSheetPanel.tsx:150-172` |
+| blocks | `inventory` has no `userId`, so any signed-in member can delete any item through the room API; the UI filters to the viewer's pack, the schema does not | accepted risk now that the GM will grant loot | Confirm ADR 0014's accepted asymmetry still holds for player Use/Discard | `src/schemas/inventory-schema.ts:25-30`, `src/components/InventoryPanel.tsx:44-90` |
+| blocks | Forge is one `characters` write plus two `inventory` writes, no transaction | data shape under failure; a half-forged character is playable | Confirm a named item-failure toast is preferable to a server action with rollback | `src/components/CharacterSheetPanel.tsx:96-140` |
+| blocks | AC is frozen at Forge (`characters.ac`) and never recomputed; the presets' DEX cannot change | schema/derived-value choice, expensive to reverse | Confirm `armorBonus` 5/4/2/1 and stored AC are the contract, not live derivation | `src/lib/d20.ts:87-175`, `src/schemas/characters-schema.ts:23` |
+| blocks | The four preset stat arrays, HP values, kit and blurbs are authored here, not in an ADR | product content — the only character content in the demo | Read `ARCHETYPE_PRESETS` once and confirm the four archetypes feel right at the table | `src/lib/d20.ts:87-175` |
+| taste | Stat numerals use `pixel-numeral` (Silkscreen) rather than `font-mono` | visual register | Skim the six cards next to AC/HP | `src/components/CharacterSheetPanel.tsx:283-296` |
+| taste | "Use" spends a charge and does nothing else | copy/mechanics expectation | Confirm "Used Sunfire Vial — 1 left" reads as intended | `src/components/InventoryPanel.tsx:44-58` |
+| taste | Forge copy ("One character per player at this table…") | copy | One glance | `src/components/CharacterSheetPanel.tsx:388-405` |
+
+- **Next:** `/phase 4` — **ready**. `P4.4` has the server-safe classifier it
+  needs, `P4.3` can join the existing `characters` query, and `P4.8`/`P4.9`
+  record the two things phase 3 deferred. No phase became blocked as a side
+  effect of this one; phase 4 still owns its own deploy (#2).

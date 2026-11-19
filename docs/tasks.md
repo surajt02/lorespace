@@ -89,8 +89,8 @@ GM console are still fixtures (Phases 4-5).
 | `ai-chat` feature | **Not installed** — no `ChatPanel`, no `/api/ai/chat` |
 | `src/constants.ts` | `DEFAULT_CAMPAIGN_ID`, `DEFAULT_CAMPAIGN_PRESENCE_SCOPE` added by 2a |
 | Tests | `smoke` 6/6 + `api` 2/2 + `collab` 3/3; 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 5 files / 52 tests |
-| Git | scaffold + phases 0-2 committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
-| Deploy | **never deployed** until `P3.8`; source unclaimed — the first deploy latches GitHub (`surajt02/lorespace`) permanently |
+| Git | scaffold + phases 0-3 committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
+| Deploy | live at <https://lorespace.app.space> (release `rel_01M7RNC780XXGENCASX5XPH9AQ`); **GitHub source claimed permanently** by `P3.8` — deploys ship the checkout, no commit lineage |
 | Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)); `/home` renders the live campaign row or `src/lib/preview-data.ts` |
 | Write policy | signed-in browsers write `characters` (own row: Forge + `hp`) and `inventory` (create/update/delete) through awaited `*Confirmed` mutations; `/home` seeds `campaigns/default-campaign`; `applyGmMutation` still has no caller until `P5.3`. HP is client-authored by design (rolls stay server-side, ADR 0005) |
 | README | front door with local run, verification, real screenshots; live URL pending `P6.7` |
@@ -128,7 +128,7 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 | 2a | Data model prelude: 4 schemas + registration + default campaign | — | **done 2026-11-18** — 6 registered, lint clean, 17 unit tests |
 | 1 | Pixel theme, landing page, 3-column workspace shell | 10 | **done 2026-11-18** — obsidian 21 tokens + chrome utilities, split-hero landing, 3-col shell signed in/out |
 | 2 | `ensureDefaultCampaign`, `applyGmMutation` | 4 | **done 2026-11-18** — seed action + GM write path, 32 unit tests, seeded once in a live browser run |
-| 3 | d20 math, character sheet, inventory (read + use) | 7 | **done 2026-11-18** — d20 + 20 tests, live sheet/Forge/HP, Use/Discard; deploy #1 pending |
+| 3 | d20 math, character sheet, inventory (read + use) | 7 | **done 2026-11-18** — d20 + 20 tests, live sheet/Forge/HP, Use/Discard, deploy #1 live |
 | 4 | Presence roster, server-computed roll, roll banner | 5 | next — day 3 morning |
 | 5 | AI GM: install ai-chat, GM tools, owner billing, console | 6 | todo — days 3-4 |
 | 6 | Gates, unit + smoke + one sync spec, deploy, README | 7 | todo — day 4 |
@@ -504,9 +504,15 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       (`character-sheet-skeleton`, `inventory-skeleton`) and read-failure
       notices (`sheet-read-error`, `inventory-read-error`) cover loading/error.
       No fixture is rendered on the live branch.
-- [ ] `P3.8` **Deploy #1** at the end of day 2: latches GitHub as the app source
+- [x] `P3.8` **Deploy #1** at the end of day 2: latches GitHub as the app source
       and proves the pages serve. Verify `/` and `/home` on the live URL before
       moving on — the deploy is both host and artifact.
+      — 2026-11-18 phase 3: live at <https://lorespace.app.space>, release
+      `rel_01M7RNC780XXGENCASX5XPH9AQ`, **GitHub source claimed permanently**
+      (`surajt02/lorespace`, inferred from `origin`; DeepSpace source verbs now
+      refuse). Shipped the clean tree of commit `6c7b293`; GitHub-source releases
+      record no commit lineage. `/` and `/home` return 200 and render in
+      Chromium (landing + preview table, zero console errors).
 - [x] `P3.9` Read failures on `characters`/`inventory` render a visible notice
       (skeleton while loading, never a silent fallback to `PREVIEW_*` while
       signed in). Extends `P3.3`/`P3.6`, matching `P2.5`'s seed-failure rule.
