@@ -553,9 +553,19 @@ product owner, who changed four decisions. Recorded as
   would need an active-character marker, a picker, and presence/GM rules for
   `P4.1`/`P4.3` — not a demo beat.
 
+**No player HP path (same session, product review)**
+
+The five-step `adjustCharacterHp` action is gone, not hidden: the controls, the
+testid, the handler and its tests were removed (ADR 0020), and the old route now
+answers 404. HP changes only through `applyGmMutation` `character_hp` (owner
+credential, ADR 0017) and `useItem` (bounded, spends a charge, ADR 0016). The
+action surface is pinned to five by a test. Consequence: until `P5.3`, nothing
+can lower HP, so the bar is static after Forge and `Use` always refuses at full
+HP — recorded in "not real yet", not hidden behind a control.
+
 **Revised verification**
 
-- `npm run validate` → 5 files / 97 tests; `npm run lint` clean;
+- `npm run validate` → 5 files / 89 tests; `npm run lint` clean;
   `npx tsc --noEmit` clean.
 - Throwaway signed-in specs (deleted before commit), four runs: Forge, `-5` HP,
   Use (heal + clamp), full-HP refusal, Discard and reload all passed, and the
@@ -563,6 +573,9 @@ product owner, who changed four decisions. Recorded as
   `"useItem"`, `"deleteCharacter"` — the page makes no record writes.
 - Delete proof: settings `Delete "Wren"` → `characters-empty` → `/home` Forge →
   forge again → delete again, with the kit not resurrected.
+- No-HP-path proof: no `hp-controls` or HP buttons in the sheet, the removed
+  route answers 404 `Action not found`, and Use at full HP is refused with the
+  charge kept.
 - Independent review found and closed two holes in the same session: member
   `inventory.update` (rename a sword into a vial) and `applyGmMutation`'s
   membership authority (any player could set their own HP). Both now have tests

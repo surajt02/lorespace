@@ -81,19 +81,19 @@ GM console are still fixtures (Phases 4-5).
 | `src/pages/(app)/home.tsx` | 3-column shell; campaign banner, sheet and pack read live rows (seed skeleton + read-failure notices); roster/feed/GM fixture-backed |
 | `src/pages/(app)/(protected)/settings.tsx` | Account card + a **Characters** card: the caller's character with `Delete <name>` → confirm → `deleteCharacter` (items first); `/home` then shows Forge |
 | `src/schemas.ts` | `users` + `settings` + `campaigns` + `characters` + `inventory` (7 cols, `userId` owner) + `roll-logs` (six, `lintSchema`/`lintSchemas` clean) |
-| `src/actions/index.ts` | Six actions: `ensureDefaultCampaign`, `applyGmMutation`, `forgeCharacter`, `adjustCharacterHp`, `useItem`, `deleteCharacter`; all over `POST /api/actions/:name` (bearer) |
+| `src/actions/index.ts` | Five actions: `ensureDefaultCampaign`, `applyGmMutation`, `forgeCharacter`, `useItem`, `deleteCharacter`; all over `POST /api/actions/:name` (bearer). No player HP action (ADR 0020) |
 | `src/lib/campaign-seed.ts` | `DEFAULT_CAMPAIGN_SEED` — the seed row and `PREVIEW_CAMPAIGN.data` are the same object |
 | `src/lib/d20.ts` | `getModifier`, `formatModifier`, `calculateArmorClass`, `classifyRoll`, `ARCHETYPE_PRESETS` (Vanguard/Shadowblade/Arcanist/Marksman), `ARCHETYPE_ORDER`, `ABILITY_SCORES`, `CONSUMABLE_EFFECTS`; zero imports, no randomness |
-| `src/components/CharacterSheetPanel.tsx` | Live `characters` record → Forge (`forgeCharacter` action), 6 stat cards (display-only), AC, segmented HP, HP steps via `adjustCharacterHp` |
+| `src/components/CharacterSheetPanel.tsx` | Live `characters` record → Forge (`forgeCharacter` action), 6 stat cards (display-only), AC, segmented HP bar (read-only — no HP controls, ADR 0020) |
 | `src/components/InventoryPanel.tsx` | Live `inventory` rows → Use (`useItem` action, heals) / Discard (owner-scoped `removeConfirmed` behind `ConfirmModal`), no add/edit |
 | `src/ai/tools.ts` | Built-in record tools only, generic prompt |
 | `ai-chat` feature | **Not installed** — no `ChatPanel`, no `/api/ai/chat` |
 | `src/constants.ts` | `DEFAULT_CAMPAIGN_ID`, `DEFAULT_CAMPAIGN_PRESENCE_SCOPE` added by 2a |
-| Tests | `smoke` 6/6 + `api` 2/2 + `collab` 3/3; 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 5 files / 97 tests |
+| Tests | `smoke` 6/6 + `api` 2/2 + `collab` 3/3; 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 5 files / 89 tests |
 | Git | scaffold + phases 0-3 committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
 | Deploy | live at <https://lorespace.app.space> (release `rel_01M7RNC780XXGENCASX5XPH9AQ`); **GitHub source claimed permanently** by `P3.8` — deploys ship the checkout, no commit lineage |
 | Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)); `/home` renders the live campaign row or `src/lib/preview-data.ts` |
-| Write policy | members **cannot write `characters` or `inventory`** directly: Forge/HP/Use are server actions (ADR 0015), Discard is an owner-scoped delete, and `applyGmMutation` (no caller until `P5.3`) is the GM path. `/home` still seeds `campaigns/default-campaign` |
+| Write policy | members **cannot write `characters` or `inventory`** directly: Forge/Use/delete are server actions (ADR 0015/0020), Discard is an owner-scoped delete, and `applyGmMutation` (owner credential, no caller until `P5.3`) is the only HP writer. `/home` seeds `campaigns/default-campaign` |
 | README | front door with local run, verification, real screenshots; live URL pending `P6.7` |
 
 ## Architecture map
@@ -129,7 +129,7 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 | 2a | Data model prelude: 4 schemas + registration + default campaign | — | **done 2026-11-18** — 6 registered, lint clean, 17 unit tests |
 | 1 | Pixel theme, landing page, 3-column workspace shell | 10 | **done 2026-11-18** — obsidian 21 tokens + chrome utilities, split-hero landing, 3-col shell signed in/out |
 | 2 | `ensureDefaultCampaign`, `applyGmMutation` | 4 | **done 2026-11-18** — seed action + GM write path, 32 unit tests, seeded once in a live browser run |
-| 3 | d20 math, character sheet, inventory (read + use) | 7 | **done 2026-11-18** — d20 + 25 tests, server-authored Forge/HP/Use, owner-scoped Discard, Marksman, deploy #1 live |
+| 3 | d20 math, character sheet, inventory (read + use) | 7 | **done 2026-11-18** — d20, server-authored Forge/Use/delete, no player HP path, owner-scoped inventory, Marksman; live |
 | 4 | Presence roster, server-computed roll, roll banner | 5 | next — day 3 morning |
 | 5 | AI GM: install ai-chat, GM tools, owner billing, console | 6 | todo — days 3-4 |
 | 6 | Gates, unit + smoke + one sync spec, deploy, README | 7 | todo — day 4 |
@@ -554,7 +554,8 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       `characters` member create/update/delete are all `false`, pinned by
       `schemas.test.ts`. **Review follow-up:** `applyGmMutation` is now
       owner-credential-only (`not_gm`), so a player cannot set HP around the
-      five steps (ADR 0017).
+      five steps (ADR 0017). **Superseded by `P3.17`/ADR 0020:** the five-step
+      action is deleted; players have no HP path at all.
 - [x] `P3.11` **Server-side Forge**: `forgeCharacter({name, archetype})` writes
       `userId`, `hp = maxHp`, `ac` from the preset and the two starter items,
       refuses a second character, reports `itemsMissing` (no transactions).
@@ -611,6 +612,18 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       `ConfirmModal` naming the character, success/refusal toasts. Testids
       `delete-character`, `characters-empty`, `characters-loading`,
       `characters-read-error`; the Forge is not duplicated.
+
+- [x] `P3.17` **No player HP path**: remove the sheet's
+      `-5/-1/+1/+5/Short Rest` controls **and** the `adjustCharacterHp` action
+      (not just the UI); HP changes only via `applyGmMutation` (owner
+      credential) and `useItem`. Pin the five-action surface in a test
+      ([ADR 0020](./adr/0020-no-player-hp-path.md)).
+      — 2026-11-18 phase 3 revision: controls, testid, handler, params schema and
+      9 tests removed; `action surface` test now pins exactly
+      `ensureDefaultCampaign, applyGmMutation, forgeCharacter, useItem,
+      deleteCharacter`. Browser proof: no `hp-controls`, no HP buttons, the old
+      route answers 404 `Action not found`, and Use at full HP is refused by the
+      server with the charge kept.
 
 ## Phase 4 — Party presence, dice engine
 

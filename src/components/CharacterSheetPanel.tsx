@@ -4,20 +4,23 @@
  * The panel is driven by a resolved row, not by a query: `/home` reads
  * `characters` and hands down the signed-in viewer's record, so the sheet never
  * decides whose character it is. `mode` picks the register — `preview` renders
- * the fixture read-only (no Forge, no HP controls), `live` renders what the
- * collection actually holds, including a skeleton and a read-failure notice.
+ * the fixture read-only (no Forge), `live` renders what the collection actually
+ * holds, including a skeleton and a read-failure notice.
  *
- * The browser never writes `characters` (ADR 0015). Both writes here are server
- * actions called with the bearer session: `forgeCharacter` creates the row with
- * a server-computed `ac` and `hp = maxHp`, and `adjustCharacterHp` clamps and
- * writes `hp`. The record it renders still arrives over the room subscription.
+ * The sheet is read-only: the browser never writes `characters` (ADR 0015) and
+ * there is no player HP path at all (ADR 0020). HP moves only through the GM
+ * action (ADR 0017) and bounded consumable use (ADR 0016); a player reads their
+ * `hp` the same way they read their `ac`. The one write here is `forgeCharacter`,
+ * a server action called with the bearer session, which creates the row with a
+ * server-computed `ac` and `hp = maxHp`. The record it renders still arrives
+ * over the room subscription.
  *
  * All rules come from `src/lib/d20.ts`; there is no local modifier arithmetic
  * and stat cards are deliberately not clickable — a browser-computed roll would
  * be the dice authority ADR 0005 rejects, so the click path is `P4.8`.
  */
 
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import type { RecordData } from 'deepspace'
 import { Shield } from 'lucide-react'
 import { Badge, Button, EmptyState, Input, Label, useToast } from '@/components/ui'
@@ -36,16 +39,6 @@ import type { CharacterRow, InventoryRow } from '@/lib/preview-data'
 export type SheetMode = 'preview' | 'live'
 export type QueryStatus = 'loading' | 'ready' | 'error'
 
-/** HP buttons, in render order; `rest` is the whole bar, not a step. */
-const HP_STEPS = [
-  { step: 'minus5', label: '-5' },
-  { step: 'minus1', label: '-1' },
-  { step: 'plus1', label: '+1' },
-  { step: 'plus5', label: '+5' },
-] as const
-
-type HpStep = (typeof HP_STEPS)[number]['step'] | 'rest'
-
 /** `forgeCharacter`'s success data, spelled out locally: importing the action
  *  module for its type would put worker-only modules (zod, `deepspace/worker`)
  *  in this panel's import graph — the same reason `home.tsx` spells out
@@ -57,14 +50,8 @@ interface ForgeResult {
   itemsMissing: string[]
 }
 
-/** `adjustCharacterHp`'s success data: the server's clamped result. */
-interface AdjustHpResult {
-  characterId: string
-  hp: { before: number; after: number; maxHp: number; appliedDelta: number }
-}
-
-/** Display-only: the server clamps the write, so this keeps the bar in range
- *  while a stale row is still on screen. */
+/** Display-only: keeps the bar in range while a stale row is still on screen.
+ *  Nothing here writes `hp` (ADR 0020). */
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
 }
@@ -99,7 +86,6 @@ export function CharacterSheetPanel({
 
   const [name, setName] = useState('')
   const [forging, setForging] = useState<ArchetypeName | null>(null)
-  const [hpPending, setHpPending] = useState<string | null>(null)
 
   const live = mode === 'live'
 
@@ -142,31 +128,6 @@ export function CharacterSheetPanel({
     }
   }
 
-  /**
-   * HP changes are server writes (`adjustCharacterHp`): the click sends one of
-   * the five steps, the server maps it, clamps to `0..maxHp` and reports where
-   * the bar landed. Only the owner's row can move — the action checks ownership
-   * itself, and a client cannot send an arbitrary delta.
-   */
-  async function adjustHp(record: RecordData<CharacterRow>, step: HpStep): Promise<void> {
-    if (hpPending !== null) return
-    setHpPending(step)
-    try {
-      const result = await callAction<AdjustHpResult>('adjustCharacterHp', {
-        characterId: record.recordId,
-        step,
-      })
-      success(
-        'HP updated',
-        `${record.data.name} is at ${result.hp.after}/${result.hp.maxHp}.`,
-      )
-    } catch (cause) {
-      error('HP not updated', failureMessage(cause))
-    } finally {
-      setHpPending(null)
-    }
-  }
-
   if (live && status === 'loading') return <SheetSkeleton />
 
   if (live && status === 'error') return <SheetReadError />
@@ -196,22 +157,7 @@ export function CharacterSheetPanel({
     )
   }
 
-  const controls = live ? (
-    <HpControls
-      // The action needs the bearer session, not the room's write readiness,
-      // so a zero maximum is the only reason to disable the buttons.
-      ready={character.data.maxHp > 0}
-      pending={hpPending}
-      onStep={(step) => {
-        void adjustHp(character, step)
-      }}
-      onRest={() => {
-        void adjustHp(character, 'rest')
-      }}
-    />
-  ) : undefined
-
-  return <SheetBody character={character.data} carried={items.length} controls={controls} />
+  return <SheetBody character={character.data} carried={items.length} />
 }
 
 /**
@@ -273,16 +219,8 @@ function SheetSkeleton() {
   )
 }
 
-/** The sheet itself. Presentational: `preview` and `live` differ only in `controls`. */
-function SheetBody({
-  character,
-  carried,
-  controls,
-}: {
-  character: CharacterRow
-  carried: number
-  controls?: ReactNode
-}) {
+/** The sheet itself. Presentational: `preview` and `live` render the same body. */
+function SheetBody({ character, carried }: { character: CharacterRow; carried: number }) {
   const maxHp = character.maxHp
   const hp = clamp(character.hp, 0, maxHp)
   const ratio = maxHp > 0 ? hp / maxHp : 0
@@ -346,54 +284,7 @@ function SheetBody({
       <p className="mt-3 font-pixel text-[10px] uppercase text-muted-foreground">
         {carried} carried
       </p>
-
-      {controls}
     </section>
-  )
-}
-
-function HpControls({
-  ready,
-  pending,
-  onStep,
-  onRest,
-}: {
-  ready: boolean
-  pending: string | null
-  onStep: (step: HpStep) => void
-  onRest: () => void
-}) {
-  return (
-    <div data-testid="hp-controls" className="mt-3">
-      <div className="pixel-rule mb-2" />
-      <span className="font-pixel text-[10px] uppercase text-muted-foreground">Adjust HP</span>
-      <div className="mt-1 flex flex-wrap gap-1">
-        {HP_STEPS.map((step) => (
-          <Button
-            key={step.step}
-            size="sm"
-            variant="outline"
-            className="pixel-numeral px-2"
-            disabled={!ready || pending !== null}
-            loading={pending === step.step}
-            onClick={() => {
-              onStep(step.step)
-            }}
-          >
-            {step.label}
-          </Button>
-        ))}
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={!ready || pending !== null}
-          loading={pending === 'rest'}
-          onClick={onRest}
-        >
-          Short Rest
-        </Button>
-      </div>
-    </div>
   )
 }
 

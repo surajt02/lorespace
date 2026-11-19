@@ -6,7 +6,7 @@ import { DEFAULT_CAMPAIGN_SEED } from '../../lib/campaign-seed'
 import { ARCHETYPE_PRESETS, CONSUMABLE_EFFECTS, calculateArmorClass } from '../../lib/d20'
 import { PREVIEW_CAMPAIGN } from '../../lib/preview-data'
 import {
-  adjustCharacterHp,
+  actions,
   applyGmMutation,
   deleteCharacter,
   ensureDefaultCampaign,
@@ -153,6 +153,21 @@ function getRouter(routes: { inventory?: ActionResult<unknown>; characters?: Act
     routes[collection as 'inventory' | 'characters'] ??
     failed('not_found', `${collection} not found`)
 }
+
+describe('action surface', () => {
+  // ADR 0020 deleted `adjustCharacterHp`, and the whole point was that hiding the
+  // buttons is not enough: the route itself must be gone. This pins the
+  // registered set so a player-facing HP path cannot quietly grow back.
+  it('registers exactly the five server actions', () => {
+    expect(Object.keys(actions).sort()).toEqual([
+      'applyGmMutation',
+      'deleteCharacter',
+      'ensureDefaultCampaign',
+      'forgeCharacter',
+      'useItem',
+    ])
+  })
+})
 
 describe('ensureDefaultCampaign', () => {
   it('creates the default campaign with the fixture values on an empty collection', async () => {
@@ -664,128 +679,6 @@ describe('forgeCharacter', () => {
       details: { stage: 'membership', applied: [] },
     })
     expect(tools.create).not.toHaveBeenCalled()
-  })
-})
-
-describe('adjustCharacterHp', () => {
-  it('refuses a character the caller does not own and writes nothing', async () => {
-    const tools = createFakeTools({
-      get: characterGet(10, 20, DEFAULT_CAMPAIGN_ID, 'user-bob'),
-    })
-
-    const result = await adjustCharacterHp(
-      context(tools, { characterId: 'char-kaelen', step: 'minus5' }),
-    )
-
-    if (result.success) throw new Error('expected not_owner, got success')
-    expect(result.code).toBe('not_owner')
-    expect(tools.update).not.toHaveBeenCalled()
-  })
-
-  it('clamps at 0 and reports the applied delta', async () => {
-    const tools = createFakeTools({ get: characterGet(3, 24) })
-
-    const result = await adjustCharacterHp(
-      context(tools, { characterId: 'char-kaelen', step: 'minus5' }),
-    )
-
-    expect(result).toEqual({
-      success: true,
-      data: { characterId: 'char-kaelen', hp: { before: 3, after: 0, maxHp: 24, appliedDelta: -3 } },
-    })
-    expect(tools.update).toHaveBeenCalledWith('characters', 'char-kaelen', { hp: 0 })
-  })
-
-  it('clamps at maxHp and writes only hp', async () => {
-    const tools = createFakeTools({ get: characterGet(22, 24) })
-
-    const result = await adjustCharacterHp(
-      context(tools, { characterId: 'char-kaelen', step: 'plus5' }),
-    )
-
-    expect(result).toEqual({
-      success: true,
-      data: { characterId: 'char-kaelen', hp: { before: 22, after: 24, maxHp: 24, appliedDelta: 2 } },
-    })
-    expect(tools.update).toHaveBeenCalledWith('characters', 'char-kaelen', { hp: 24 })
-    expect(Object.keys(tools.update.mock.calls[0][2])).toEqual(['hp'])
-  })
-
-  it('reports character_not_found for a missing row', async () => {
-    const tools = createFakeTools()
-
-    const result = await adjustCharacterHp(context(tools, { characterId: 'char-kaelen', step: 'plus1' }))
-
-    expect(result).toEqual({
-      success: false,
-      code: 'character_not_found',
-      error: 'Character not found',
-    })
-    expect(tools.update).not.toHaveBeenCalled()
-  })
-
-  it('refuses a character in another campaign', async () => {
-    const tools = createFakeTools({ get: characterGet(10, 20, 'other-campaign') })
-
-    const result = await adjustCharacterHp(
-      context(tools, { characterId: 'char-kaelen', step: 'minus5' }),
-    )
-
-    if (result.success) throw new Error('expected character_not_found, got success')
-    expect(result.code).toBe('character_not_found')
-    expect(tools.update).not.toHaveBeenCalled()
-  })
-
-  it('rejects an unknown step before reading anything', async () => {
-    const tools = createFakeTools({ get: characterGet(10, 20) })
-
-    const result = await adjustCharacterHp(
-      context(tools, { characterId: 'char-kaelen', step: 'plus100' }),
-    )
-
-    if (result.success) throw new Error('expected invalid_params, got success')
-    expect(result.code).toBe('invalid_params')
-    expect(tools.get).not.toHaveBeenCalled()
-  })
-
-  it('refuses a raw delta: the client may not name an amount', async () => {
-    const tools = createFakeTools({ get: characterGet(10, 20) })
-
-    const result = await adjustCharacterHp(
-      context(tools, { characterId: 'char-kaelen', delta: 100 }),
-    )
-
-    if (result.success) throw new Error('expected invalid_params, got success')
-    expect(result.code).toBe('invalid_params')
-    expect(tools.get).not.toHaveBeenCalled()
-  })
-
-  it('ignores a smuggled delta when a valid step is present', async () => {
-    // A client cannot hedge: with both keys the step decides, and no raw amount
-    // is ever read, so `delta: 100` does not heal anyone.
-    const tools = createFakeTools({ get: characterGet(10, 20) })
-
-    const result = await adjustCharacterHp(
-      context(tools, { characterId: 'char-kaelen', step: 'minus1', delta: 100 }),
-    )
-
-    if (!result.success) throw new Error(`expected success, got ${result.code}`)
-    expect(result.data.hp).toEqual({ before: 10, after: 9, maxHp: 20, appliedDelta: -1 })
-    expect(tools.update).toHaveBeenCalledWith('characters', 'char-kaelen', { hp: 9 })
-  })
-
-  it('Short Rest fills the bar from whatever HP is left', async () => {
-    const tools = createFakeTools({ get: characterGet(4, 24) })
-
-    const result = await adjustCharacterHp(
-      context(tools, { characterId: 'char-kaelen', step: 'rest' }),
-    )
-
-    expect(result).toEqual({
-      success: true,
-      data: { characterId: 'char-kaelen', hp: { before: 4, after: 24, maxHp: 24, appliedDelta: 20 } },
-    })
-    expect(tools.update).toHaveBeenCalledWith('characters', 'char-kaelen', { hp: 24 })
   })
 })
 

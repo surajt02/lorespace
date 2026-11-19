@@ -13,8 +13,10 @@ import { ARCHETYPE_PRESETS, CONSUMABLE_EFFECTS, calculateArmorClass } from '../l
  *
  * Members cannot write `characters` at all and can only update/delete their own
  * `inventory` rows (ADR 0015): the actions below are the only paths that create
- * characters or items and the only ones that change `hp`. Each one therefore
- * checks `userId` itself before writing.
+ * characters or items. There is no player HP path (ADR 0020) — `hp` moves only
+ * through `applyGmMutation`'s `character_hp` kind (ADR 0017) and `useItem`'s
+ * bounded healing (ADR 0016). Each action therefore checks `userId` itself
+ * before writing.
  *
  * There are no transactions across `tools.*` calls. Each action below writes in
  * a fixed order, stops at the first failure, and reports what already landed
@@ -183,8 +185,8 @@ function writeFailed(stage: string, error: string, applied: string[]) {
  * because `ctx.tools` runs with per-record RBAC **off**: `ctx.userId` must equal
  * `ctx.env.OWNER_USER_ID`. Anything else is `not_gm`, refused before params are
  * parsed and before any read or write — table membership is deliberately *not*
- * enough, because a player owns a character and could otherwise rewrite their
- * own HP around `adjustCharacterHp` (ADR 0015).
+ * enough, because a player owns a character and must not be able to rewrite
+ * their own HP (ADR 0020).
  *
  * The owner acts for the table, so it needs no character row of its own: the only
  * target rule is that the character must be in `DEFAULT_CAMPAIGN_ID`, keeping
@@ -383,76 +385,6 @@ export async function forgeCharacter(
       archetype: parsed.data.archetype,
       itemsMissing,
     },
-  }
-}
-
-/** The five HP steps the sheet offers. The server maps them; no raw delta is accepted. */
-const HP_STEP_DELTAS = {
-  minus5: -5,
-  minus1: -1,
-  plus1: 1,
-  plus5: 5,
-} as const
-
-const HP_STEPS = ['minus5', 'minus1', 'plus1', 'plus5', 'rest'] as const
-
-const adjustCharacterHpParamsSchema = z.object({
-  characterId: z.string().min(1),
-  step: z.enum(HP_STEPS),
-})
-
-export interface AdjustCharacterHpData {
-  characterId: string
-  hp: { before: number; after: number; maxHp: number; appliedDelta: number }
-}
-
-/**
- * Damage and healing for the caller's own character (ADR 0015).
- *
- * The request carries one of the five sheet steps, never a free delta: the
- * server maps `step` to a number (Short Rest fills the bar) and clamps to
- * `0..maxHp`, so a client cannot set an arbitrary HP. Writes `hp` only — never
- * `ac`, `maxHp` or `userId` — and refuses a character the caller does not own
- * before any write.
- */
-export async function adjustCharacterHp(
-  ctx: ActionContext<Env>,
-): Promise<ActionResult<AdjustCharacterHpData>> {
-  const parsed = adjustCharacterHpParamsSchema.safeParse(ctx.params)
-  if (!parsed.success) return invalidParams(parsed.error)
-
-  const { tools, userId } = ctx
-  const { characterId, step } = parsed.data
-  const target = await tools.get<CharacterTarget>('characters', characterId)
-  if (!target.success) {
-    return { success: false, code: 'character_not_found', error: target.error }
-  }
-  const character = target.data.record.data
-  if (character.campaignId !== DEFAULT_CAMPAIGN_ID) {
-    return {
-      success: false,
-      code: 'character_not_found',
-      error: `Character ${JSON.stringify(characterId)} is not in campaign ${JSON.stringify(DEFAULT_CAMPAIGN_ID)}`,
-    }
-  }
-  if (character.userId !== userId) {
-    return {
-      success: false,
-      code: 'not_owner',
-      error: `Character ${JSON.stringify(characterId)} does not belong to the caller`,
-    }
-  }
-
-  const { hp: before, maxHp } = character
-  const delta = step === 'rest' ? maxHp : HP_STEP_DELTAS[step]
-  const after = Math.min(maxHp, Math.max(0, before + delta))
-  const updated = await tools.update('characters', characterId, { hp: after })
-  if (!updated.success) {
-    return writeFailed('character_hp', updated.error, [])
-  }
-  return {
-    success: true,
-    data: { characterId, hp: { before, after, maxHp, appliedDelta: after - before } },
   }
 }
 
@@ -688,7 +620,6 @@ export const actions: Record<string, ActionHandler<Env>> = {
   ensureDefaultCampaign,
   applyGmMutation,
   forgeCharacter,
-  adjustCharacterHp,
   useItem,
   deleteCharacter,
 }

@@ -1,6 +1,6 @@
 # 0015 — Character state is server-authored
 
-- **Status:** Accepted
+- **Status:** Accepted — the player HP steps are superseded by [0020](./0020-no-player-hp-path.md)
 - **Date:** 2026-11-18
 - **Area:** game integrity
 - **Constraints:** `P3.4`, `P3.5`, `P3.6`, `P3.10`-`P3.13`, `P5.3`
@@ -36,12 +36,9 @@ collections become read-only to members:
     then the preset's starter items, each stamped with the owner's `userId`.
     Returns `{ characterId, itemsMissing }` — no transactions, so a failed item
     is reported, not rolled back.
-  - `adjustCharacterHp({ characterId, step })` — `step` is one of the sheet's
-    five buttons (`minus5`, `minus1`, `plus1`, `plus5`, `rest`). The server maps
-    the step to a number (Short Rest fills the bar), so a client cannot name an
-    arbitrary HP or delta. The caller must own the character
-    (`characters.userId === ctx.userId`); clamps `0..maxHp`; writes `hp` only;
-    returns `{ before, after, maxHp, appliedDelta }`.
+  - ~~`adjustCharacterHp({ characterId, step })`~~ — **removed by
+    [0020](./0020-no-player-hp-path.md)**: players have no HP write path, not
+    even the five steps. HP changes only through `applyGmMutation` and `useItem`.
   - `useItem({ itemId })` — the item's character must belong to the caller;
     category must be `consumable`; the heal comes from server-owned data
     (`CONSUMABLE_EFFECTS` in `src/lib/d20.ts`), clamped to `maxHp`; refuses at

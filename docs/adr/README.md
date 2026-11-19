@@ -43,3 +43,4 @@ an accident.
 | [0017](./0017-gm-owner-credential.md) | GM mutations require the app-owner credential | Accepted | security |
 | [0018](./0018-character-deletion.md) | Deleting a character removes its items first, in one owner-only action | Accepted | data integrity |
 | [0019](./0019-one-character-per-player.md) | One character per player; delete-and-reforge is the reset | Accepted | product |
+| [0020](./0020-no-player-hp-path.md) | Players have no HP write path | Accepted | game integrity |
