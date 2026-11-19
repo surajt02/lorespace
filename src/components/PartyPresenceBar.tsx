@@ -5,13 +5,16 @@
  * only: the signed-out table joins no room (ADR 0006). One socket per client, on
  * the campaign's scope.
  *
- * What it broadcasts is identity and nothing else — `characterId`,
- * `characterName`, `archetype`. HP is deliberately absent: `characters` is
- * already live through the record room, so `buildParty` joins each present peer
- * to its query row and the numbers stay server-authored (ADR 0015, `P4.5`).
+ * What it broadcasts is identity plus one boolean — `characterId`,
+ * `characterName`, `archetype`, `isTypingAction` (`P5.9`). HP is deliberately
+ * absent: `characters` is already live through the record room, so `buildParty`
+ * joins each present peer to its query row and the numbers stay server-authored
+ * (ADR 0015, `P4.5`).
  * Rolls are absent too: the banner reads the `roll-logs` row itself
  * (`RollBannerLayer`), so presence never carries a number anyone could forge
- * (ADR 0021).
+ * (ADR 0021). `isTypingAction` is a keystroke flag, not a game claim, and it is
+ * sent in the same payload as the identity keys so a merge can never leave a
+ * stale flag behind without a stale identity.
  *
  * `updateState` merges and is dropped while the socket is still connecting, so
  * the seed effect waits for `connected` and omits the keys it does not own. A
@@ -30,10 +33,13 @@ export function PartyPresenceBar({
   characters,
   myCharacter,
   userId,
+  isTyping = false,
 }: {
   characters: RecordData<CharacterRow>[]
   myCharacter: RecordData<CharacterRow> | null
   userId: string
+  /** The viewer is composing a GM message (`P5.9`). */
+  isTyping?: boolean
 }) {
   const { peers, connected, updateState } = usePresenceRoom(DEFAULT_CAMPAIGN_PRESENCE_SCOPE)
 
@@ -45,8 +51,15 @@ export function PartyPresenceBar({
     // Nothing to announce before the socket is open: `updateState` no-ops while
     // connecting, which would lose the seed for every first mount.
     if (!connected) return
-    updateState({ characterId, characterName, archetype })
-  }, [connected, characterId, characterName, archetype, updateState])
+    // Always the whole payload: `updateState` merges, so sending only the flag
+    // would be fine but sending only the identity would leave the flag stuck.
+    updateState({
+      characterId,
+      characterName,
+      archetype,
+      isTypingAction: isTyping === true,
+    })
+  }, [connected, characterId, characterName, archetype, isTyping, updateState])
 
   const party = useMemo(
     () => buildParty({ peers, characters, myCharacter, myUserId: userId }),
@@ -67,6 +80,7 @@ export function PartyPresenceBar({
         // and the row still renders because presence is not who they are.
         online: member.isSelf || connected,
         isSelf: member.isSelf,
+        isTyping: member.isTyping,
       }))}
     />
   )

@@ -20,7 +20,10 @@ import { charactersSchema } from './schemas/characters-schema'
 import { inventorySchema } from './schemas/inventory-schema'
 import { rollLogsSchema } from './schemas/roll-logs-schema'
 
+import { aiChatSchemas } from './schemas/ai-chat-schema'
+
 export const schemas: CollectionSchema[] = [
+  ...aiChatSchemas,
   usersSchema,
   settingsSchema,
   campaignsSchema,

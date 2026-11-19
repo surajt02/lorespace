@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RecordData } from 'deepspace'
-import { buildParty, peerCharacterId } from '@/lib/party-presence'
+import { buildParty, peerCharacterId, peerIsTyping } from '@/lib/party-presence'
 import { PREVIEW_CHARACTERS, type CharacterRow } from '@/lib/preview-data'
 
 /**
@@ -11,8 +11,9 @@ import { PREVIEW_CHARACTERS, type CharacterRow } from '@/lib/preview-data'
  * matter: a malformed payload is dropped rather than half-rendered, and HP comes
  * from the `characters` row — a peer cannot move their hit points by claiming a
  * different total over the socket. A roll is not part of the payload at all
- * (ADR 0021), so nothing here can be trusted for a number. Values are asserted
- * directly; no snapshots, no jsdom, no socket.
+ * (ADR 0021), so nothing here can be trusted for a number. `isTypingAction`
+ * (`P5.9`) is the one boolean the payload adds, and it is read only as a literal
+ * `true`. Values are asserted directly; no snapshots, no jsdom, no socket.
  */
 
 const [KAELEN, VESPER] = PREVIEW_CHARACTERS as [
@@ -55,6 +56,31 @@ describe('peerCharacterId', () => {
   })
 })
 
+describe('peerIsTyping', () => {
+  it('reads a literal true', () => {
+    expect(peerIsTyping({ isTypingAction: true })).toBe(true)
+    expect(peerIsTyping(state({ isTypingAction: true }))).toBe(true)
+  })
+
+  it('returns false when the flag is false or absent', () => {
+    expect(peerIsTyping({ isTypingAction: false })).toBe(false)
+    expect(peerIsTyping(state())).toBe(false)
+    expect(peerIsTyping({})).toBe(false)
+  })
+
+  it('returns false for a wrong-typed or non-object payload', () => {
+    // Presence is attacker-shaped: only the literal boolean counts, so a claim
+    // like "yes" or 1 cannot leave the marker on.
+    expect(peerIsTyping({ isTypingAction: 'true' })).toBe(false)
+    expect(peerIsTyping({ isTypingAction: 1 })).toBe(false)
+    expect(peerIsTyping({ isTypingAction: null })).toBe(false)
+    expect(peerIsTyping(null)).toBe(false)
+    expect(peerIsTyping(undefined)).toBe(false)
+    expect(peerIsTyping('typing')).toBe(false)
+    expect(peerIsTyping([])).toBe(false)
+  })
+})
+
 describe('buildParty', () => {
   it('puts self first, from the character row', () => {
     const party = buildParty({
@@ -73,6 +99,7 @@ describe('buildParty', () => {
         maxHp: KAELEN.data.maxHp,
         isSelf: true,
         hasCharacter: true,
+        isTyping: false,
       },
     ])
   })
@@ -128,7 +155,27 @@ describe('buildParty', () => {
       maxHp: VESPER.data.maxHp,
       isSelf: false,
       hasCharacter: true,
+      isTyping: false,
     })
+  })
+
+  it('carries a peer typing flag and never marks self', () => {
+    const party = buildParty({
+      peers: [
+        { userId: 'user-vesper', state: state({ isTypingAction: true }) },
+        { userId: 'user-new', state: { isTypingAction: true } },
+      ],
+      characters: PREVIEW_CHARACTERS,
+      myCharacter: KAELEN,
+      myUserId: KAELEN.data.userId,
+    })
+
+    expect(party.map((member) => [member.userId, member.isTyping])).toEqual([
+      [KAELEN.data.userId, false],
+      ['user-vesper', true],
+      // No sheet, but still composing: presence is not gated on a character row.
+      ['user-new', true],
+    ])
   })
 
   it('never takes HP from presence state', () => {
@@ -171,6 +218,7 @@ describe('buildParty', () => {
         maxHp: 0,
         isSelf: false,
         hasCharacter: false,
+        isTyping: false,
       },
       {
         userId: 'user-new',
@@ -180,8 +228,31 @@ describe('buildParty', () => {
         maxHp: 0,
         isSelf: false,
         hasCharacter: false,
+        isTyping: false,
       },
     ])
+  })
+
+  it('still takes no HP or roll from a payload that claims both', () => {
+    // ADR 0021 stands after `P5.9`: the typing flag is the only addition, and a
+    // peer cannot smuggle hit points or dice alongside it.
+    const party = buildParty({
+      peers: [
+        {
+          userId: 'user-vesper',
+          state: state({ isTypingAction: true, hp: 1, maxHp: 1, rawRoll: 20, total: 99 }),
+        },
+      ],
+      characters: PREVIEW_CHARACTERS,
+      myCharacter: null,
+      myUserId: 'user-me',
+    })
+
+    expect(party[0]?.hp).toBe(VESPER.data.hp)
+    expect(party[0]?.maxHp).toBe(VESPER.data.maxHp)
+    expect(party[0]?.isTyping).toBe(true)
+    expect(party[0]).not.toHaveProperty('rawRoll')
+    expect(party[0]).not.toHaveProperty('total')
   })
 
   it('keeps input order and lists each user once', () => {

@@ -21,4 +21,7 @@ export const nav: NavItem[] = [
   // The /api-status debug page still exists — add
   // `{ path: '/api-status', label: 'API Status', devOnly: true }` to surface it.
   // ── Features add nav items below this line ──
+  // `ai-chat` also drops in `pages/(app)/(protected)/assistant.tsx`. It is
+  // deliberately unlinked: chat history UI is cut (ADR 0008, `P5.8`), and the
+  // GM lives in `/home`'s console panel instead.
 ]

@@ -69,7 +69,13 @@ export function registerActionRoutes(app: Hono<AppContext>, resolveAuth: Resolve
   })
 }
 
-function createActionTools(env: Env, userId: string, callerJwt: string): ActionTools {
+/**
+ * The tools an action (or an owner-credentialed AI GM tool) reaches records
+ * with. Exported so `src/ai/tools.ts` can build the owner-scoped context
+ * `applyGmMutation` requires, instead of a second implementation of the same
+ * RBAC-off record path (`P5.3`, ADR 0022).
+ */
+export function createActionTools(env: Env, userId: string, callerJwt: string): ActionTools {
   const stub = env.RECORD_ROOMS.get(env.RECORD_ROOMS.idFromName(`app:${env.DEEPSPACE_APP_ID}`))
 
   // The DO returns ActionResult<unknown>; callers below supply the precise

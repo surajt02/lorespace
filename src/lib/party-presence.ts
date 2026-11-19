@@ -3,12 +3,13 @@
  * the durable `characters` rows (`P4.1`, `P4.3`, `P4.5`).
  *
  * Presence is the one place a browser sends state about itself, so nothing that
- * arrives over the socket is trusted: `peerCharacterId` validates the one key
- * this build reads. The payload carries **identity only** (`characterId`,
- * `characterName`, `archetype`) — HP always comes from the `characters` query
- * row, which is already live through the record room, so a peer cannot claim a
- * different hit-point total (`P4.5`), and a roll never travels this way at all
- * (the banner reads the `roll-logs` row, ADR 0021).
+ * arrives over the socket is trusted: `peerCharacterId` and `peerIsTyping`
+ * validate the keys this build reads. The payload carries **identity plus one
+ * boolean** (`characterId`, `characterName`, `archetype`, `isTypingAction`) — HP
+ * always comes from the `characters` query row, which is already live through
+ * the record room, so a peer cannot claim a different hit-point total (`P4.5`),
+ * and a roll never travels this way at all (the banner reads the `roll-logs` row,
+ * ADR 0021).
  *
  * Pure: no React, no DOM, no network, no clock.
  */
@@ -29,6 +30,8 @@ export interface PartyMember {
   maxHp: number
   isSelf: boolean
   hasCharacter: boolean
+  /** A peer is composing a GM message (`P5.9`). Always `false` for self. */
+  isTyping: boolean
 }
 
 /** What a peer without a resolvable character row renders as. */
@@ -51,6 +54,17 @@ function isNonEmptyString(value: unknown): value is string {
 export function peerCharacterId(state: Record<string, unknown>): string | null {
   if (!isRecord(state)) return null
   return isNonEmptyString(state.characterId) ? state.characterId : null
+}
+
+/**
+ * The second key this build reads: whether a peer is composing a GM message
+ * (`P5.9`). Only a literal `true` counts — a payload that sends `"yes"`, a
+ * number, or nothing is not typing, so a forged or stale value cannot leave the
+ * marker stuck on. It is presence, not a claim about the game: no roll or HP
+ * travels this way (ADR 0021).
+ */
+export function peerIsTyping(state: unknown): boolean {
+  return isRecord(state) && state.isTypingAction === true
 }
 
 /**
@@ -88,6 +102,9 @@ export function buildParty({
       maxHp: myCharacter.data.maxHp,
       isSelf: true,
       hasCharacter: true,
+      // Self never shows a typing marker: it is your own composer, and the
+      // socket excludes self anyway.
+      isTyping: false,
     })
     listed.add(myUserId)
   }
@@ -112,6 +129,7 @@ export function buildParty({
         maxHp: 0,
         isSelf: false,
         hasCharacter: false,
+        isTyping: peerIsTyping(peer.state),
       })
       continue
     }
@@ -124,6 +142,7 @@ export function buildParty({
       maxHp: row.data.maxHp,
       isSelf: false,
       hasCharacter: true,
+      isTyping: peerIsTyping(peer.state),
     })
   }
 

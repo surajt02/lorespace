@@ -11,6 +11,10 @@
  * character row, not from presence, because the SDK's peer list excludes self
  * and is empty on every (re)connect.
  *
+ * `isTyping` is a peer composing a GM message (`P5.9`): a flat pixel micro-label,
+ * never for self — your own composer is the input below the stream. No emoji and
+ * no animation; the table is a terminal, not a messenger.
+ *
  * Deliberately carries **no** nav user-name test id — `smoke.spec.ts` asserts
  * that id is absent while signed out, and party members are not the nav user.
  */
@@ -26,6 +30,8 @@ export interface RosterMember {
   maxHp: number
   online?: boolean
   isSelf?: boolean
+  /** A peer is composing a GM message (`P5.9`). */
+  isTyping?: boolean
 }
 
 function initials(name: string): string {
@@ -82,6 +88,14 @@ export function PartyRoster({ members }: { members: RosterMember[] }) {
                         />
                         <span className="sr-only">{member.online ? 'online' : 'offline'}</span>
                       </>
+                    )}
+                    {member.isTyping === true && member.isSelf !== true && (
+                      <span
+                        data-testid="roster-typing"
+                        className="font-pixel text-[10px] uppercase text-primary"
+                      >
+                        typing
+                      </span>
                     )}
                     {member.isSelf && (
                       <span

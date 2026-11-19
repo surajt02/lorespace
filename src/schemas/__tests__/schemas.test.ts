@@ -28,10 +28,14 @@ describe('registered collection schemas', () => {
   /**
    * Pins registration itself, not just the schemas: a duplicated entry or a
    * messaging drop-in creeping into `schemas` fails here rather than widening
-   * every `records.*` query and AI/MCP tool in Phase 5 by accident (`D2`).
+   * every `records.*` query and AI/MCP tool by accident (`D2`). The two
+   * `ai-chat` collections are here deliberately (`P5.1`) — registering them is
+   * what turns `/api/ai/chat` on.
    */
-  it('registers exactly the six collections, with no messaging drop-ins', () => {
+  it('registers exactly the eight collections, with no messaging drop-ins', () => {
     expect(schemas.map((schema) => schema.name).sort()).toEqual([
+      'ai-chats',
+      'ai-messages',
       'campaigns',
       'characters',
       'inventory',

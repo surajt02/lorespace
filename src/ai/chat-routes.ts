@@ -220,8 +220,10 @@ export function registerAiChatRoutes(
         ? { text: chat.compactedSummary, throughId: chat.compactedThroughId }
         : undefined
 
-    // User-billed: compaction is part of the user's chat experience, not infra.
-    const summarizer = makeDefaultSummarizer(c.env, { authToken: jwt })
+    // Owner-billed (ADR 0004): passing no caller token makes both AI calls fall
+    // back to `env.APP_OWNER_JWT`, so the app pays for every GM turn and a
+    // reviewer needs no platform credits. Caller identity stays enforced here.
+    const summarizer = makeDefaultSummarizer(c.env)
     const { messages: prepared, newSummary } = await prepareMessagesWithCompaction(
       turns,
       DEFAULT_CONTEXT_CONFIG,
@@ -351,7 +353,7 @@ export function registerAiChatRoutes(
     const { result } = streamDeepSpaceAgent(c.env, {
       profile: 'application',
       modelId: usedModelId,
-      authToken: jwt,
+      // No caller token, so the turn is billed to `env.APP_OWNER_JWT` (ADR 0004).
       instructions: systemText,
       messages,
       tools,

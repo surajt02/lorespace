@@ -1,20 +1,46 @@
 /**
- * AI Tool Definitions — converts DeepSpace BUILT_IN_TOOLS to Vercel AI SDK tools.
+ * AI Tool Definitions — the record tools plus the AI Game Master's tools,
+ * exposed to the Vercel AI SDK.
  *
  * The assistant can read AND modify data. Per-collection RBAC at the DO
  * layer is the actual security boundary — the user's role determines what
  * each tool call is allowed to do, regardless of what's in this allowlist.
  * Trim entries below if you want a stricter assistant for your app.
+ *
+ * The four GM tools are different: their writes run as the **app owner**
+ * through `applyGmMutation` (ADR 0017), so they are not bounded by the caller's
+ * RBAC. The gate that keeps that safe is `gmToolAllowedForPath` — writes only
+ * run inside the in-app chat turn, because every tool here is also exposed over
+ * HTTP and MCP (ADR 0022).
  */
 
 import { jsonSchema, tool } from 'ai'
 import type { ToolSet } from 'ai'
 import { z } from 'zod/v4'
 import { BUILT_IN_TOOLS, applyAiToolDefaults } from 'deepspace/worker'
-import type { ToolSchema, CollectionSchema } from 'deepspace/worker'
+import type { AgentToolContext, ToolSchema, CollectionSchema } from 'deepspace/worker'
+import { applyGmMutation } from '../actions/index.js'
+import { DEFAULT_CAMPAIGN_ID } from '../constants.js'
+import {
+  GM_READ_TOOLS,
+  GM_WRITE_TOOLS,
+  gmToolAllowedForPath,
+  gmWriteInputSchemas,
+  toGmMutation,
+} from '../lib/gm-tools.js'
+import type { GmToolName, GmWriteToolName } from '../lib/gm-tools.js'
+import { createActionTools } from '../server/action-routes.js'
+// Type-only — TypeScript strips it at runtime, so this file never imports the
+// worker entry (which imports `buildTools` from here).
+import type { Env } from '../../worker.js'
 
 type ToolExecutor = (toolName: string, params: Record<string, unknown>) => Promise<unknown>
 
+// Deleting a record is deliberately absent from this list (`P5.4`): the GM
+// never needs it, there is no soft delete or transaction to undo it, and every
+// tool in this set is also auto-exposed over MCP. Re-add only as a narrow,
+// confirmed GM tool. Deletes stay reachable through the actions' own wiring
+// (`src/server/action-routes.ts`), never through the AI surface.
 const ALLOWED_TOOL_NAMES = [
   'schema.list',
   'schema.describe',
@@ -22,7 +48,6 @@ const ALLOWED_TOOL_NAMES = [
   'records.get',
   'records.create',
   'records.update',
-  'records.delete',
   'user.current',
 ]
 
@@ -43,6 +68,18 @@ function interpretationLabel(interpretation: Interpretation): string {
   return typeof kind === 'string' ? kind : 'object'
 }
 
+/**
+ * The LoreSpace GM brief (`P5.5`). This is product behaviour rendered to
+ * players, so it lives here beside the tools it names, and each rule is stated
+ * as an instruction the model can follow rather than as background.
+ *
+ * Two decisions it carries:
+ *
+ * - Engine owns outcomes (ADR 0009): the model chooses inputs — a DC, a delta,
+ *   an item, a scene — and code computes every result. So the prompt insists on
+ *   tool first, prose second, and forbids inventing dice or totals.
+ * - Latest message wins (ADR 0012): no turn order, no addressing syntax.
+ */
 export function buildSystemPrompt(appName: string, schemas: CollectionSchema[]): string {
   const schemaSummary = schemas
     .map((s) => {
@@ -54,21 +91,56 @@ export function buildSystemPrompt(appName: string, schemas: CollectionSchema[]):
     .join('\n')
 
   return [
-    `You are the assistant for the "${appName}" app on DeepSpace.`,
-    "You can read and modify the user's data via the available tools. The",
-    "user's own role and permissions still apply at the data layer — your",
-    'tool calls run as the calling user, so you can only do what they could.',
+    `You are the Game Master for ${appName}: one small table of adventurers in a`,
+    'dark-fantasy campaign. You run the world, you call for rolls, and you keep',
+    "the table's recorded state true.",
     '',
-    'Be careful with mutations:',
-    '- Confirm intent before destructive actions (delete, bulk update).',
-    '- Operate only on collections the user explicitly mentioned.',
-    '- After a successful write, briefly confirm what changed.',
-    '- If a write is denied (RBAC), tell the user plainly — do not retry blindly.',
+    'START OF A TURN',
+    '- Call `get_campaign_snapshot` when you need party or scene context: a new',
+    '  beat, a player you have not heard from yet, or any question about HP,',
+    '  inventory or the current threat. It returns the campaign, every',
+    "  character's stats and HP, and the ten newest `roll-logs` entries.",
+    '- Answer the latest human message. There is no turn order and no addressing',
+    '  syntax: no "@GM", no waiting to be asked. Whoever spoke last has the floor,',
+    '  and every player is at the same table.',
     '',
-    'Use tools to look up facts before answering. Do not invent data.',
-    'If data is missing, say so plainly. Keep answers concise.',
+    'TWO-STAGE RESOLUTION',
+    '- When a player declares a risky action and has not rolled yet, set the',
+    '  stakes first: call `update_campaign_scene` with an `activeThreatDc`, then',
+    '  ask for one named ability check — for example "Roll a DEX check against',
+    '  DC 14". One DC, one attribute (str, dex, con, int, wis or cha), no hidden',
+    '  arithmetic.',
+    '- Never fabricate dice, totals, modifiers or outcomes. You do not roll. The',
+    '  app rolls and writes the row; you read it.',
     '',
-    'Available collections:',
+    'RESOLVING A ROLL',
+    '- When a player reports a roll, or the automatic roll message arrives,',
+    "  verify it in the snapshot's `recentRolls` (the `roll-logs` rows) before you",
+    '  narrate. Use the exact numbers that row carries.',
+    '- Then narrate 2-4 short paragraphs and immediately call the write tool that',
+    '  matches what you just said: `modify_character_hp` when HP moves,',
+    '  `grant_character_loot` when something enters a pack, and',
+    '  `update_campaign_scene` when the location, atmosphere, threat or enemy',
+    '  changes.',
+    '- Tool first, prose second. Never state an outcome that has no row or record',
+    '  write behind it: no damage that did not move HP, no item that does not',
+    '  exist, no death, escape or discovery the table cannot see in the feed.',
+    '',
+    'THE RULES AT THIS TABLE',
+    '- Six attributes (str, dex, con, int, wis, cha), armour class and HP.',
+    '  Nothing else — no conditions, initiative or experience points.',
+    '- Items are consumables (they heal when used) or quest items.',
+    '- HP is clamped between 0 and maxHp by the app, not by you: pass a delta and',
+    '  let the action clamp it.',
+    '',
+    'STYLE',
+    '- Write in Markdown. Keep numbers exact and cite the roll you resolved.',
+    '- Address players by character name, never by account.',
+    '- Open with the situation in one line, then the consequence, and end with the',
+    '  next decision the table has to make.',
+    '- Stay tight: 2-4 short paragraphs per beat, never a recap of the session.',
+    '',
+    'Available collections (for `records.*` calls):',
     schemaSummary || '(none)',
   ].join('\n')
 }
@@ -77,7 +149,195 @@ export function buildSystemPrompt(appName: string, schemas: CollectionSchema[]):
 // Tool definitions
 // ============================================================================
 
-export function buildTools(executor: ToolExecutor): ToolSet {
+/** The snapshot's projected columns — never the whole row (30 KB tool cap). */
+const CAMPAIGN_COLUMNS = [
+  'title',
+  'locationName',
+  'atmosphereTag',
+  'sceneSummary',
+  'activeThreatDc',
+  'enemyName',
+  'enemyHp',
+  'enemyMaxHp',
+] as const
+
+const CHARACTER_COLUMNS = [
+  'name',
+  'archetype',
+  'hp',
+  'maxHp',
+  'ac',
+  'str',
+  'dex',
+  'con',
+  'int',
+  'wis',
+  'cha',
+] as const
+
+const ROLL_COLUMNS = [
+  'entryType',
+  'characterName',
+  'statName',
+  'rawRoll',
+  'modifier',
+  'total',
+  'targetDc',
+  'outcome',
+  'summary',
+  'rolledAt',
+] as const
+
+/** The subset of a `records.query` result this file reads. */
+interface QueryPayload {
+  success?: boolean
+  error?: string
+  data?: { records?: unknown }
+}
+
+interface SnapshotRow {
+  recordId: string
+  data: Record<string, unknown>
+}
+
+type QueryOutcome = { ok: true; rows: SnapshotRow[] } | { ok: false; error: string }
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function requestPath(request: Request): string {
+  try {
+    return new URL(request.url).pathname
+  } catch {
+    return ''
+  }
+}
+
+/** Runs one record read as the caller and normalizes the wire payload. */
+async function queryRecords(
+  executor: ToolExecutor,
+  collection: string,
+  options: Record<string, unknown>,
+): Promise<QueryOutcome> {
+  let payload: unknown
+  try {
+    payload = await executor('records.query', { collection, ...options })
+  } catch (error) {
+    return { ok: false, error: errorMessage(error) }
+  }
+  if (typeof payload !== 'object' || payload === null) {
+    return { ok: false, error: `records.query returned no payload for ${collection}` }
+  }
+  const { success, error, data } = payload as QueryPayload
+  if (success === false) {
+    return {
+      ok: false,
+      error: typeof error === 'string' && error !== '' ? error : `records.query failed for ${collection}`,
+    }
+  }
+  if (!Array.isArray(data?.records)) {
+    return { ok: false, error: `records.query returned no records for ${collection}` }
+  }
+  const rows: SnapshotRow[] = []
+  for (const record of data.records) {
+    if (typeof record !== 'object' || record === null) continue
+    const { recordId, data: recordData } = record as { recordId?: unknown; data?: unknown }
+    if (typeof recordId !== 'string') continue
+    rows.push({
+      recordId,
+      data:
+        typeof recordData === 'object' && recordData !== null
+          ? (recordData as Record<string, unknown>)
+          : {},
+    })
+  }
+  return { ok: true, rows }
+}
+
+/** `recordId` plus the named columns only — a projection, not a row copy. */
+function project(row: SnapshotRow, columns: readonly string[]): Record<string, unknown> {
+  const projected: Record<string, unknown> = { recordId: row.recordId }
+  for (const column of columns) {
+    const value = row.data[column]
+    if (value !== undefined) projected[column] = value
+  }
+  return projected
+}
+
+function snapshotFailed(error: string) {
+  return { success: false as const, code: 'snapshot_failed' as const, error }
+}
+
+/** The GM's one read: campaign, party and the ten newest roll rows. */
+async function readCampaignSnapshot(executor: ToolExecutor): Promise<Record<string, unknown>> {
+  const campaign = await queryRecords(executor, 'campaigns', { limit: 1 })
+  if (!campaign.ok) return snapshotFailed(campaign.error)
+
+  const characters = await queryRecords(executor, 'characters', {
+    where: { campaignId: DEFAULT_CAMPAIGN_ID },
+  })
+  if (!characters.ok) return snapshotFailed(characters.error)
+
+  const rolls = await queryRecords(executor, 'roll-logs', {
+    where: { campaignId: DEFAULT_CAMPAIGN_ID },
+    limit: 10,
+  })
+  if (!rolls.ok) return snapshotFailed(rolls.error)
+
+  return {
+    success: true,
+    campaign: campaign.rows[0] ? project(campaign.rows[0], CAMPAIGN_COLUMNS) : null,
+    characters: characters.rows.map((row) => project(row, CHARACTER_COLUMNS)),
+    recentRolls: rolls.rows.map((row) => project(row, ROLL_COLUMNS)),
+  }
+}
+
+/**
+ * Runs one GM write: gate first (ADR 0022), then validate and map the input,
+ * then the one owner-credentialed mutation implementation. Never throws across
+ * the tool boundary — the model gets a refusal object it can narrate around.
+ */
+async function runGmWrite(
+  toolName: GmWriteToolName,
+  input: unknown,
+  context: AgentToolContext<Env>,
+): Promise<unknown> {
+  if (!gmToolAllowedForPath(toolName, requestPath(context.request))) {
+    return { success: false, code: 'gm_tools_chat_only' }
+  }
+
+  const mutation = toGmMutation(toolName, input)
+  if (!mutation) {
+    return { success: false, code: 'invalid_params', error: `Invalid input for ${toolName}` }
+  }
+
+  const { env } = context
+  try {
+    return await applyGmMutation({
+      userId: env.OWNER_USER_ID,
+      params: { mutation },
+      tools: createActionTools(env, env.OWNER_USER_ID, env.APP_OWNER_JWT),
+      env,
+      callerJwt: env.APP_OWNER_JWT,
+    })
+  } catch (error) {
+    return { success: false, code: 'gm_write_failed', error: errorMessage(error) }
+  }
+}
+
+const GM_TOOL_DESCRIPTIONS: Record<GmToolName, string> = {
+  get_campaign_snapshot:
+    "Read the table's current state: the campaign scene, every character's stats and HP, and the ten newest roll-log entries. Read-only, and the only way to verify a reported roll.",
+  modify_character_hp:
+    "Move one character's HP by a delta (negative for damage, positive for healing). The app clamps to 0..maxHp and writes a combat row; use the returned before/after numbers in your narration.",
+  grant_character_loot:
+    "Put one item into a character's pack and record it as a GM event. Items are consumables (healing) or quest items.",
+  update_campaign_scene:
+    'Set the current location, atmosphere, threat DC or enemy for the table. Use it to declare the stakes before asking for a roll, and to record a scene change after one.',
+}
+
+export function buildTools(executor: ToolExecutor, context: AgentToolContext<Env>): ToolSet {
   const tools: ToolSet = {}
 
   for (const def of BUILT_IN_TOOLS) {
@@ -91,6 +351,20 @@ export function buildTools(executor: ToolExecutor): ToolSet {
       // dispatch directly stay unbounded.
       execute: async (params: Record<string, unknown>) =>
         executor(def.name, applyAiToolDefaults(def.name, params)),
+    })
+  }
+
+  tools[GM_READ_TOOLS[0]] = tool({
+    description: GM_TOOL_DESCRIPTIONS.get_campaign_snapshot,
+    inputSchema: z.object({}),
+    execute: async () => readCampaignSnapshot(executor),
+  })
+
+  for (const name of GM_WRITE_TOOLS) {
+    tools[name] = tool({
+      description: GM_TOOL_DESCRIPTIONS[name],
+      inputSchema: gmWriteInputSchemas[name],
+      execute: async (input: unknown) => runGmWrite(name, input, context),
     })
   }
 

@@ -124,7 +124,8 @@ function characterGet(
   return ok({
     record: {
       recordId: 'char-kaelen',
-      data: { userId, campaignId, hp, maxHp },
+      // `name` is what a GM mutation's `roll-logs` row is logged under (P5.10).
+      data: { userId, campaignId, name: 'Kaelen', hp, maxHp },
     },
   })
 }
@@ -304,6 +305,7 @@ describe('applyGmMutation', () => {
         kind: 'character_hp',
         characterId: 'char-kaelen',
         hp: { before: 12, after: 9, maxHp: 20, appliedDelta: -3 },
+        logged: true,
       },
     })
     expect(tools.update).toHaveBeenCalledWith('characters', 'char-kaelen', { hp: 9 })
@@ -325,6 +327,7 @@ describe('applyGmMutation', () => {
         kind: 'character_hp',
         characterId: 'char-kaelen',
         hp: { before: 4, after: 0, maxHp: 20, appliedDelta: -4 },
+        logged: true,
       },
     })
     expect(tools.update).toHaveBeenCalledWith('characters', 'char-kaelen', { hp: 0 })
@@ -349,6 +352,7 @@ describe('applyGmMutation', () => {
         kind: 'character_hp',
         characterId: 'char-kaelen',
         hp: { before: 18, after: 20, maxHp: 20, appliedDelta: 2 },
+        logged: true,
       },
     })
     expect(tools.update).toHaveBeenCalledWith('characters', 'char-kaelen', { hp: 20 })
@@ -410,6 +414,7 @@ describe('applyGmMutation', () => {
         kind: 'grant_loot',
         characterId: 'char-kaelen',
         item: { recordId: 'item-cinder-ward', itemName: 'Cinder Ward', quantity: 1 },
+        logged: true,
       },
     })
   })
@@ -508,7 +513,11 @@ describe('applyGmMutation', () => {
     expect(tools.update.mock.calls[0][2]).not.toHaveProperty('title')
     expect(result).toEqual({
       success: true,
-      data: { kind: 'update_scene', scene: { applied: ['locationName', 'atmosphereTag'] } },
+      data: {
+        kind: 'update_scene',
+        scene: { applied: ['locationName', 'atmosphereTag'] },
+        logged: true,
+      },
     })
   })
 
@@ -565,6 +574,183 @@ describe('applyGmMutation', () => {
     expect(result.code).toBe('invalid_params')
     expect(tools.query).not.toHaveBeenCalled()
     expect(tools.update).not.toHaveBeenCalled()
+  })
+
+  // ── Feed evidence (P5.10, ADR 0009) ─────────────────────────────────────
+  // A GM mutation is not finished until the table can see it: one `roll-logs`
+  // row per successful kind, written after the mutation, with the columns the
+  // feed renders.
+
+  it('logs one combat row with the clamped HP change and the reason', async () => {
+    const tools = createFakeTools({ get: characterGet(18, 24) })
+
+    const result = await applyGmMutation(
+      context(tools, {
+        mutation: {
+          kind: 'character_hp',
+          characterId: 'char-kaelen',
+          delta: -6,
+          reason: '  The blade bites deep  ',
+        },
+      }),
+    )
+
+    expect(tools.create).toHaveBeenCalledWith('roll-logs', {
+      campaignId: DEFAULT_CAMPAIGN_ID,
+      characterName: 'Kaelen',
+      entryType: 'combat',
+      outcome: 'info',
+      // Before → after carries the clamp; the reason is trimmed, not required.
+      summary: 'Kaelen takes 6 damage (18/24 to 12/24) — The blade bites deep',
+    })
+    const log = tools.create.mock.calls.find(([collection]) => collection === 'roll-logs')?.[1]
+    // `userId` is userBound and `rolledAt` is the summary timestampTrigger's:
+    // the action may not claim either.
+    expect(log).not.toHaveProperty('userId')
+    expect(log).not.toHaveProperty('rolledAt')
+    expect(result.success).toBe(true)
+    if (!result.success) throw new Error('expected success')
+    expect(result.data.logged).toBe(true)
+  })
+
+  it('logs one gm_event row when loot is granted', async () => {
+    const tools = createFakeTools({ get: characterGet(12, 20) })
+
+    await applyGmMutation(
+      context(tools, {
+        mutation: {
+          kind: 'grant_loot',
+          characterId: 'char-kaelen',
+          item: { itemName: 'Sunfire Vial', category: 'consumable', quantity: 2 },
+        },
+      }),
+    )
+
+    expect(tools.create).toHaveBeenCalledWith('roll-logs', {
+      campaignId: DEFAULT_CAMPAIGN_ID,
+      characterName: 'Kaelen',
+      entryType: 'gm_event',
+      outcome: 'info',
+      summary: 'Kaelen receives Sunfire Vial x2',
+    })
+  })
+
+  it('logs one gm_event row from the Game Master when the scene shifts', async () => {
+    const tools = createFakeTools()
+
+    const result = await applyGmMutation(
+      context(tools, {
+        mutation: {
+          kind: 'update_scene',
+          scene: { locationName: 'The Sunken Reliquary', atmosphereTag: 'dungeon' },
+        },
+      }),
+    )
+
+    expect(tools.create).toHaveBeenCalledWith('roll-logs', {
+      campaignId: DEFAULT_CAMPAIGN_ID,
+      // The scene has no character of its own, so the GM signs the row.
+      characterName: 'Game Master',
+      entryType: 'gm_event',
+      outcome: 'info',
+      summary: 'The scene shifts to The Sunken Reliquary',
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it('logs the first applied scene column when there is no location', async () => {
+    const tools = createFakeTools()
+
+    await applyGmMutation(
+      context(tools, {
+        mutation: { kind: 'update_scene', scene: { atmosphereTag: 'combat' } },
+      }),
+    )
+
+    expect(tools.create).toHaveBeenCalledWith(
+      'roll-logs',
+      expect.objectContaining({ summary: 'The scene shifts: atmosphereTag is now combat' }),
+    )
+  })
+
+  it('writes no roll-logs row when it refuses a mutation', async () => {
+    // Three refusals, one per gate: identity, a missing target, and a target in
+    // another campaign. None of them mutated anything, so none may leave
+    // evidence that it did.
+    const refusals = [
+      {
+        name: 'not_gm',
+        tools: createFakeTools({ get: characterGet(10, 20) }),
+        userId: 'user-bob',
+        mutation: { kind: 'character_hp', characterId: 'char-kaelen', delta: -3 },
+      },
+      {
+        name: 'character_not_found',
+        tools: createFakeTools(),
+        userId: OWNER_USER_ID,
+        mutation: { kind: 'character_hp', characterId: 'char-missing', delta: -3 },
+      },
+      {
+        name: 'character_not_found (other campaign)',
+        tools: createFakeTools({ get: characterGet(10, 20, 'other-campaign') }),
+        userId: OWNER_USER_ID,
+        mutation: { kind: 'grant_loot', characterId: 'char-kaelen', item: { itemName: 'Cinder Ward' } },
+      },
+    ]
+
+    for (const refusal of refusals) {
+      const result = await applyGmMutation(
+        context(refusal.tools, { mutation: refusal.mutation }, refusal.userId),
+      )
+
+      expect(result.success, refusal.name).toBe(false)
+      expect(refusal.tools.create, refusal.name).not.toHaveBeenCalled()
+    }
+  })
+
+  it('returns the successful mutation with logged: false when the log write fails', async () => {
+    // The mutation landed and cannot be un-done, so the result must not read as
+    // a failure: it reports the write that happened and the evidence that did not.
+    const tools = createFakeTools({ get: characterGet(18, 24) })
+    tools.create.mockResolvedValue(failed('write_refused', 'log write refused'))
+
+    const result = await applyGmMutation(
+      context(tools, {
+        mutation: { kind: 'character_hp', characterId: 'char-kaelen', delta: -6 },
+      }),
+    )
+
+    expect(result).toEqual({
+      success: true,
+      data: {
+        kind: 'character_hp',
+        characterId: 'char-kaelen',
+        hp: { before: 18, after: 12, maxHp: 24, appliedDelta: -6 },
+        logged: false,
+        details: { applied: ['characters:char-kaelen'], logError: 'log write refused' },
+      },
+    })
+    expect(tools.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses a reason longer than 200 characters before writing anything', async () => {
+    const tools = createFakeTools({ get: characterGet(18, 24) })
+
+    const result = await applyGmMutation(
+      context(tools, {
+        mutation: {
+          kind: 'character_hp',
+          characterId: 'char-kaelen',
+          delta: -6,
+          reason: 'x'.repeat(201),
+        },
+      }),
+    )
+
+    if (result.success) throw new Error('expected invalid_params, got success')
+    expect(result.code).toBe('invalid_params')
+    expect(tools.update).not.toHaveBeenCalled()
+    expect(tools.create).not.toHaveBeenCalled()
   })
 })
 

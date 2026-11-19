@@ -69,11 +69,15 @@ document; this file stays the cross-phase index of what is done.
 
 ## Current state
 
-As of 2026-11-19 (after phase 4): a signed-in player forges an adventurer, sees
-who is actually at the table, and rolls a stat check that the **server** resolves
-— the result lands in `roll-logs` first, then as a banner in every open window and
-as the newest row of the live feed. Presence is membership-gated. The GM console
-is the only remaining fixture (Phase 5).
+As of 2026-11-19 (after phase 5): a signed-in player forges an adventurer, sees
+who is actually at the table, rolls a stat check the **server** resolves, and
+takes it to a **streamed AI Game Master** that reads the table through a tool,
+asks for the roll it wants, verifies the `roll-logs` row, and mutates HP, loot or
+the scene through owner-authorized tools that each leave a feed row. A resolved
+roll fires exactly one automatic GM turn. Presence is membership-gated and now
+carries a typing flag. Signed out, the console keeps its preview. Two things are
+open: the console's default model is the one a free plan refuses (`P5.13`), and
+the gates/deploy are Phase 6.
 
 | Thing | State |
 | --- | --- |
@@ -83,7 +87,7 @@ is the only remaining fixture (Phase 5).
 | Presence | `src/components/PartyPresenceBar.tsx` — one `usePresenceRoom(DEFAULT_CAMPAIGN_PRESENCE_SCOPE)` socket, broadcasts identity only (`characterId`, `characterName`, `archetype`), roster join in `src/lib/party-presence.ts` |
 | `src/server/realtime-routes.ts` | `/ws/presence/:scopeId` is **gated** (401 anonymous/bad token, 503 unverifiable, 403 non-member) with `campaign:preview` the one anonymous scope; hand-written instead of `wsRoute(extraIdentity)` |
 | `src/pages/(app)/(protected)/settings.tsx` | Account card + a **Characters** card: the caller's character with `Delete <name>` → confirm → `deleteCharacter` (items first); `/home` then shows Forge |
-| `src/schemas.ts` | `users` + `settings` + `campaigns` + `characters` + `inventory` + `roll-logs` (six, `lintSchema`/`lintSchemas` clean) |
+| `src/schemas.ts` | `users` + `settings` + `campaigns` + `characters` + `inventory` + `roll-logs` + `ai-chats` + `ai-messages` (eight, `lintSchema`/`lintSchemas` clean; the two AI collections are SDK-owned and turn `/api/ai/chat` on) |
 | `src/actions/index.ts` | Six actions: `ensureDefaultCampaign`, `applyGmMutation`, `forgeCharacter`, `useItem`, `deleteCharacter`, **`rollSkillCheck`**; all over `POST /api/actions/:name` (bearer). No player HP action (ADR 0020) |
 | `src/lib/campaign-seed.ts` | `DEFAULT_CAMPAIGN_SEED` — the seed row and `PREVIEW_CAMPAIGN.data` are the same object |
 | `src/lib/d20.ts` | `getModifier`, `formatModifier`, `calculateArmorClass`, `classifyRoll`, `ARCHETYPE_PRESETS`, `ARCHETYPE_ORDER`, `ABILITY_SCORES`, `CONSUMABLE_EFFECTS`; zero imports, no randomness. Entropy lives in `src/lib/rng.ts` (rejection-sampled d20 from bytes) |
@@ -91,10 +95,12 @@ is the only remaining fixture (Phase 5).
 | `src/components/InventoryPanel.tsx` | Live `inventory` rows → Use (`useItem` action, heals) / Discard (owner-scoped `removeConfirmed` behind `ConfirmModal`), no add/edit |
 | `src/components/vtt/ActionFeed.tsx` | Live `roll-logs` rows (every row read), 5 shown with an `All N` toggle, scrolls inside its frame; minimised it shares the column with the GM console, which takes the rest; skeleton/read-error/empty states |
 | `src/components/vtt/RollBanner.tsx` | One fixed strip, d20 sprite, `d20(n) ± m = t vs DC n`, outcome badge, 6 s auto-dismiss; fed by `RollBannerLayer` from the newest `roll-logs` row, so signed-in and signed-out windows see the same roll (ADR 0021) |
-| `src/ai/tools.ts` | Built-in record tools only, generic prompt — `records.delete` still listed, so `P5.4` is **reopened** |
-| `ai-chat` feature | **Not installed** — no `ChatPanel`, no `/api/ai/chat` |
+| `src/ai/tools.ts` | Seven record tools (no `records.delete`) + four GM tools (`get_campaign_snapshot`, `modify_character_hp`, `grant_character_loot`, `update_campaign_scene`) and the GM brief; writes run as the owner through `applyGmMutation` and refuse outside `/api/ai/chat` (ADR 0022) |
+| `ai-chat` feature | Installed: `ChatPanel` (+messages/stream), `ai-chat-schema.ts`, `pages/(app)/(protected)/assistant.tsx` (unlinked, unstyled, `P5.8`); `/api/ai/chat*` registered because `AI_CHATS_SCHEMA` is in `schemas`; billed to `APP_OWNER_JWT` |
+| GM console | `src/components/GmConsolePanel.tsx` — signed in it is `ChatPanel` + four chips + one auto turn per resolved roll; signed out it is `PREVIEW_GM_MESSAGES` in the same frame |
+| GM tools' evidence | `applyGmMutation` writes one `roll-logs` row per mutation (`combat` / `gm_event`), so the feed shows the GM's writes |
 | `src/constants.ts` | `DEFAULT_CAMPAIGN_ID`, `DEFAULT_CAMPAIGN_PRESENCE_SCOPE` (2a), `PREVIEW_PRESENCE_SCOPE` (4) |
-| Tests | `smoke` 6/6 + `api` 2/2 + `presence` 3/3 + `collab` 3/3 (collab's loading-state test races when four spec files run in parallel — `P6.2`); 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 9 files / 133 tests |
+| Tests | `test:unit` = 12 files / 194 tests (adds `src/ai/__tests__/tools.test.ts`, `gm-tools.test.ts`, `gm-prompts.test.ts`); e2e unchanged (`smoke` 6/6, `api` 2/2, `presence` 3/3, `collab` 3/3 — its race is `P6.2`); 2 `lorespace-*@deepspace.test` accounts |
 | Git | scaffold + phases 0-4 committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
 | Deploy | live at <https://lorespace.app.space>; **GitHub source claimed permanently** by `P3.8` — deploys ship the checkout, no commit lineage |
 | Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)); `/home` renders live rows when they exist and `src/lib/preview-data.ts` when the table is empty |
@@ -136,7 +142,7 @@ tests/*.spec.ts               smoke, api, collab (deepspace/testing)
 | 2 | `ensureDefaultCampaign`, `applyGmMutation` | 4 | **done 2026-11-18** — seed action + GM write path, 32 unit tests, seeded once in a live browser run |
 | 3 | d20 math, character sheet, inventory (read + use) | 7 | **done 2026-11-18** — d20, server-authored Forge/Use/delete, no player HP path, owner-scoped inventory, Marksman; live |
 | 4 | Presence roster, server-computed roll, roll banner | 5 | **done 2026-11-19** — gated presence, `rollSkillCheck`, two-window banner + live feed, 134 unit + presence 2/2, deployed |
-| 5 | AI GM: install ai-chat, GM tools, owner billing, console | 6 | todo — days 3-4 |
+| 5 | AI GM: install ai-chat, GM tools, owner billing, console | 6 | **done 2026-11-19** — `ai-chat` live, four GM tools, owner billing, console + chips + auto-resolve, typing presence; live turn + loot write proven; `P5.13` (default model) open, Phase 6 ready |
 | 6 | Gates, unit + smoke + one sync spec, deploy, README | 7 | todo — day 4 |
 | | **Planned total** | **39** | of ~40 available (30 planned + day-4 contingency) |
 
@@ -822,19 +828,19 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 
 ## Phase 5 — AI Game Master
 
-- [ ] `P5.1` Install the chat surface ([ADR 0004](./adr/0004-ai-chat-and-owner-billing.md)):
+- [x] `P5.1` Install the chat surface ([ADR 0004](./adr/0004-ai-chat-and-owner-billing.md)): — done: 6 routes, `inApp` derived, `/assistant` unlinked (`P5.8`), eight registered collections
       `npx deepspace add ai-chat` (adds
       `ChatPanel`, `ChatPanel.messages`, `ChatPanel.stream`, `pages/assistant.tsx`,
       `schemas/ai-chat-schema.ts`, react-markdown + highlight deps). Registering
       `AI_CHATS_SCHEMA` flips `inApp` in `worker.ts:144` and **creates
       `/api/ai/chat` for the first time** — nothing works before this.
-- [ ] `P5.2` `buildTools(executor, context?: AgentToolContext<Env>)` — second
+- [x] `P5.2` `buildTools(executor, context?: AgentToolContext<Env>)` — second — done: second param required in `src/ai/tools.ts:340`; typed `AgentToolContext<Env>`
       param required for env/bindings access; the SDK already passes it.
-- [ ] `P5.3` GM tools: `get_campaign_snapshot` (project only needed columns —
+- [x] `P5.3` GM tools: `get_campaign_snapshot` (project only needed columns — — done: four tools; writes via the owner-scoped `applyGmMutation` context
       30 KB tool-result cap), `modify_character_hp`, `grant_character_loot`,
       `update_campaign_scene`. Remember every tool in the `ToolSet` is
       auto-exposed over `/_deepspace/agent/*` HTTP **and MCP**, not just the panel.
-- [ ] `P5.4` ~~Decide `records.delete`~~ **Resolved: drop it.** Remove
+- [x] `P5.4` ~~Decide `records.delete`~~ **Resolved: drop it.** Remove — done: removed, and `src/ai/__tests__/tools.test.ts` fails on the old list
       `records.delete` from `ALLOWED_TOOL_NAMES` (`src/ai/tools.ts:18-27`): the GM
       never needs it, there is no soft delete or transaction to undo it, and
       every tool in the set is auto-exposed over MCP. Re-add only as a narrow,
@@ -844,31 +850,60 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       `records.delete` and `buildTools` still exposes it. The tick above claimed
       a security-relevant removal that had not shipped; this task is not done
       until the list and its test say so.
-- [ ] `P5.5` GM system prompt: snapshot-first, **two-stage resolution** (set DC
+- [x] `P5.5` GM system prompt: snapshot-first, **two-stage resolution** (set DC — done: GM brief in `buildSystemPrompt`; pinned by prompt tests
       via tool → ask for the roll → never fabricate dice), verify in
       `roll-logs`, narrate 2-4 short paragraphs, then mutate. Enforce the
       split from [ADR 0009](./adr/0009-engine-owns-outcomes.md): tool first, then
       prose; never state an outcome without a `roll-logs` row or a record write.
       Turn policy per [ADR 0012](./adr/0012-gm-turn-policy.md): answer the latest
       human message, no turn order, no addressing syntax.
-- [ ] `P5.6` Owner billing ([ADR 0004](./adr/0004-ai-chat-and-owner-billing.md)) = **delete** `authToken: jwt` from
+- [x] `P5.6` Owner billing ([ADR 0004](./adr/0004-ai-chat-and-owner-billing.md)) = **delete** `authToken: jwt` from — done: no `authToken` in `chat-routes.ts`; live turns billed to the owner
       `makeDefaultSummarizer` and `streamDeepSpaceAgent` in
       `src/ai/chat-routes.ts` so `APP_OWNER_JWT` is used. There is no config flag.
       Locally `dev start` must mint `APP_OWNER_JWT` or the call throws.
-- [ ] `P5.7` `src/components/GmConsolePanel.tsx` embedding `ChatPanel` in the
+- [x] `P5.7` `src/components/GmConsolePanel.tsx` embedding `ChatPanel` in the — done: `ChatPanel` + chips + one auto turn per roll; proven in a temporary Playwright probe
       center column + quick-prompt chips that include character name and latest
       roll. **Auto-resolve** ([ADR 0012](./adr/0012-gm-turn-policy.md)): after a
       resolved roll, synthesise exactly one user message carrying
       `{rawRoll, modifier, total, targetDc, outcome}` so beat 6 flows into beat 7
       without a click; cap at one automatic turn per roll.
-- [ ] `P5.8` `deepspace add ai-chat` also drops in `src/pages/assistant.tsx`.
+- [x] `P5.8` `deepspace add ai-chat` also drops in `src/pages/assistant.tsx`. — done: file installed, nav row removed, page left as shipped
       Leave it unlinked and unstyled — chat history UI is cut (ADR 0008). Do not
       invest in it; do not delete it either (the feature owns that file).
-- [ ] `P5.9` Broadcast presence `isTypingAction` while a GM message is being
+- [x] `P5.9` Broadcast presence `isTypingAction` while a GM message is being — done: `isTypingAction` in the presence payload, roster marker for peers
       composed, and render it on the roster member. Deferred from `P4.1` in
       phase 4: nothing in the app composes an action until the GM prompt exists
       (`P5.7`), so a field that is always `false` would be a fixture in the
       presence payload.
+- [x] `P5.10` GM mutations leave feed evidence: `applyGmMutation` writes one — done: evidence row per mutation; seen live as `GAME MASTER | Ash | Ash receives Sunfire Vial x1`
+      `roll-logs` row after a successful write (`combat` for `character_hp`,
+      `gm_event` for `grant_loot` and `update_scene`), because ADR 0009 admits
+      no outcome the table cannot see and `P5.3`'s tools otherwise change HP
+      with no row anywhere. One implementation, so a future owner-side caller
+      logs too; a failed log write reports `details.logged: false` rather than
+      implying atomicity.
+- [x] `P5.11` GM write tools are confined to the in-app GM chat turn — done: `gmToolAllowedForPath` gate + tests (ADR 0022)
+      ([ADR 0022](./adr/0022-gm-tools-confined-to-chat-turn.md)): every
+      `buildTools` tool is auto-exposed over `/_deepspace/agent/*` HTTP and
+      MCP, so a member could otherwise set their own HP by POSTing
+      `modify_character_hp` — the path ADR 0017 closed. `modify_character_hp`,
+      `grant_character_loot` and `update_campaign_scene` refuse unless the
+      request path is `/api/ai/chat`; `get_campaign_snapshot` stays available
+      everywhere.
+- [x] `P5.12` Unit tests for `src/ai/tools.ts`: the allowlist (no — done: 15 tests in `src/ai/__tests__/tools.test.ts`
+      `records.delete`), the four GM tools' presence and input rejection, the
+      chat-turn gate, the snapshot's column projection and size, and the
+      system prompt's two-stage / tool-first rules. Nothing imports this module
+      today, which is how `P5.4` was ticked twice without shipping.
+
+- [ ] `P5.13` Decide the GM console's default model. `ChatPanel` defaults to
+      the catalog's first entry, `claude-opus-5-5`, which answers **402 Payment
+      Required** on a free-plan credit balance (`npx deepspace app usage`: 500
+      credits, free plan). Haiku 5.5, GPT-6 Luna and GPT-6 Sol all stream. The
+      panel is usable today by picking a model (the choice persists in
+      `localStorage['deepspace-ai-model']`), so this is a default/pin decision,
+      not a broken surface — but the demo's first turn fails until it is made.
+      Evidence: phase 5's temporary probe, four models, one 402.
 
 ## Phase 6 — Gates, tests, deploy
 

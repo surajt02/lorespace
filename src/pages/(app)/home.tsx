@@ -23,7 +23,11 @@
  * one derivation picks the preview character so the sheet, the pack and the
  * roster cannot show two different parties — the anonymous viewer reads the same
  * collections, so an empty one just means nobody has seeded yet. The GM console
- * is the only remaining fixture (`P5`).
+ * is live when signed in (`P5.7`): it embeds the SDK chat panel, sends quick
+ * chips, and fires one automatic turn per resolved `roll-logs` roll. Signed out
+ * it keeps its preview script, and that preview is the last fixture on the
+ * page. The GM composer's emptiness is owned here too (`P5.9`), because the
+ * roster's typing marker is a presence payload read by another window.
  *
  * The one write this page makes itself is the seed (ADR 0007, `P2.5`): signed in
  * on an empty `campaigns` collection, `/home` POSTs
@@ -106,6 +110,9 @@ export default function HomePage() {
   // feed is five rows and the GM console takes the rest of the column; expanded,
   // the feed takes the column and scrolls (`P4.19`).
   const [feedExpanded, setFeedExpanded] = useState(false)
+  // True while the viewer is composing a GM message; `PartyPresenceBar`
+  // broadcasts it as `isTypingAction` for the other windows' rosters (`P5.9`).
+  const [gmComposing, setGmComposing] = useState(false)
   const { error: toastError } = useToast()
 
   const [seedState, setSeedState] = useState<SeedState>('idle')
@@ -279,6 +286,7 @@ export default function HomePage() {
                     characters={characterRecords}
                     myCharacter={myCharacter}
                     userId={userId ?? ''}
+                    isTyping={gmComposing}
                   />
                 ) : (
                   <PartyRoster members={previewRoster} />
@@ -324,7 +332,18 @@ export default function HomePage() {
                   list) is the floor, so the expanded feed only scrolls when the
                   rows genuinely cannot share the column (`P4.19`, `P4.21`). */}
               <div className="flex min-h-0 flex-col lg:min-h-48 lg:flex-1 lg:overflow-hidden">
-                <GmConsolePanel messages={PREVIEW_GM_MESSAGES} />
+                <GmConsolePanel
+                  signedIn={isSignedIn}
+                  userId={userId ?? undefined}
+                  character={
+                    myCharacter
+                      ? { name: myCharacter.data.name, recordId: myCharacter.recordId }
+                      : null
+                  }
+                  rolls={liveRolls}
+                  preview={PREVIEW_GM_MESSAGES}
+                  onDraftChange={setGmComposing}
+                />
               </div>
             </section>
 

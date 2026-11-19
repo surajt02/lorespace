@@ -41,7 +41,7 @@ This folder is the "how", narrowly scoped to one phase. The other documents are:
 | 2 | `phase-2-plan.md` | **done 2026-11-18** — seed + GM mutation actions, `/home` seeding state, 15 action tests |
 | 3 | `phase-3-plan.md` | **done 2026-11-18** — server-authored Forge/HP/Use, owner-scoped inventory, Marksman (ADR 0015/0016), deployed |
 | 4 | `phase-4-plan.md` | **done 2026-11-19** — gated campaign presence, `rollSkillCheck` (server-authored `roll-logs`), roll banner in both windows, live feed; ADR 0005/0006 enforced |
-| 5 | `phase-5-plan.md` | not written — ~6h, days 3-4: AI GM |
+| 5 | `phase-5-plan.md` | **done 2026-11-19** — `ai-chat` installed and owner-billed, four GM tools behind the ADR 0022 chat-turn gate, GM brief, console + chips + one auto turn per roll, typing presence; live turn and loot write proven; `P5.13` (default model) open |
 | 6 | `phase-6-plan.md` | not written — ~7h, day 4: gates, tests, deploy |
 
 Hours are from the 96-hour budget in [`../tasks.md`](../tasks.md) and are

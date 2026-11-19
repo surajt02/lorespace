@@ -30,6 +30,8 @@ interface CharacterTarget {
   [key: string]: unknown
   userId: string
   campaignId: string
+  // The name a GM mutation logs its `roll-logs` row under (`P5.10`).
+  name: string
   hp: number
   maxHp: number
 }
@@ -108,6 +110,10 @@ const gmMutationSchema = z.discriminatedUnion('kind', [
     kind: z.literal('character_hp'),
     characterId: z.string().min(1),
     delta: z.number(),
+    // Optional narration for the `combat` evidence row (`P5.10`): the GM says
+    // why HP moved, and the feed keeps that sentence. Never required, so an
+    // older caller that only sends `delta` still works.
+    reason: z.string().trim().max(200).optional(),
   }),
   z.object({
     kind: z.literal('grant_loot'),
@@ -127,18 +133,34 @@ export interface EnsureDefaultCampaignData {
   created: boolean
 }
 
-export type GmMutationData =
-  | {
-      kind: 'character_hp'
-      characterId: string
-      hp: { before: number; after: number; maxHp: number; appliedDelta: number }
-    }
-  | {
-      kind: 'grant_loot'
-      characterId: string
-      item: { recordId: string; itemName: string; quantity: number }
-    }
-  | { kind: 'update_scene'; scene: { applied: string[] } }
+/**
+ * Whether the mutation left its `roll-logs` evidence row behind (`P5.10`).
+ *
+ * A mutation and its evidence row are two writes with no transaction between
+ * them: when the second fails the first has already happened. So `logged: false`
+ * is reported **on a successful mutation**, with `details.applied` naming the
+ * record that was written and `logError` naming the failed evidence write — never
+ * a failure that would imply the HP/loot/scene change did not land.
+ */
+export interface GmMutationLogReport {
+  logged: boolean
+  details?: { applied: string[]; logError?: string }
+}
+
+export type GmMutationData = GmMutationLogReport &
+  (
+    | {
+        kind: 'character_hp'
+        characterId: string
+        hp: { before: number; after: number; maxHp: number; appliedDelta: number }
+      }
+    | {
+        kind: 'grant_loot'
+        characterId: string
+        item: { recordId: string; itemName: string; quantity: number }
+      }
+    | { kind: 'update_scene'; scene: { applied: string[] } }
+  )
 
 /**
  * Seeds the one shared campaign (ADR 0007).
@@ -202,6 +224,70 @@ function writeFailed(stage: string, error: string, applied: string[]) {
 }
 
 /**
+ * The `combat` summary line for `character_hp` (`P5.10`).
+ *
+ * Reports the **applied** change, not the requested one: a heal at full HP is
+ * "unchanged", because that is what the table saw happen. The before/after pair
+ * carries the clamp, and the reason is the GM's narration when it supplied one.
+ */
+function hpSummary(
+  name: string,
+  change: { before: number; after: number; maxHp: number; applied: number; reason?: string },
+): string {
+  const { before, after, maxHp, applied, reason } = change
+  const state = `(${before}/${maxHp} to ${after}/${maxHp})`
+  const line =
+    applied < 0
+      ? `${name} takes ${-applied} damage ${state}`
+      : applied > 0
+        ? `${name} heals ${applied} ${state}`
+        : `${name} HP unchanged ${state}`
+  return reason === undefined ? line : `${line} — ${reason}`
+}
+
+/**
+ * The `gm_event` summary line for `update_scene` (`P5.10`): where the table
+ * moved to, or — when it only shifted atmosphere/threat — the first column that
+ * changed, so the row is never a bare "scene updated".
+ */
+function sceneSummary(
+  patch: Partial<Record<SceneColumn, string | number>>,
+  applied: SceneColumn[],
+): string {
+  const location = patch.locationName
+  if (typeof location === 'string' && location.trim() !== '') {
+    return `The scene shifts to ${location}`
+  }
+  const column = applied[0]
+  return `The scene shifts: ${column} is now ${String(patch[column])}`
+}
+
+/**
+ * Writes the one `roll-logs` row a GM mutation is evidence of (ADR 0009,
+ * `P5.10`): the mutation already happened by the time this runs, so a failed log
+ * write never turns the result into a failure — it reports `logged: false` with
+ * the write that landed and the log error.
+ *
+ * `campaignId` is required by the schema, `userId` is userBound and `rolledAt` is
+ * the `summary` timestampTrigger's, so the action passes neither: it must not
+ * claim who caused the row or when.
+ */
+async function logGmEvidence(
+  tools: ActionContext<Env>['tools'],
+  row: {
+    campaignId: string
+    characterName: string
+    entryType: 'combat' | 'gm_event'
+    summary: string
+  },
+  applied: string,
+): Promise<GmMutationLogReport> {
+  const created = await tools.create('roll-logs', { ...row, outcome: 'info' })
+  if (created.success) return { logged: true }
+  return { logged: false, details: { applied: [applied], logError: created.error } }
+}
+
+/**
  * The AI GM's privileged write path — HP, loot and scene only (ADR 0008).
  *
  * Authorization is the **app owner credential** (ADR 0017), stated once here
@@ -217,11 +303,12 @@ function writeFailed(stage: string, error: string, applied: string[]) {
  * or `inventory` directly (ADR 0015), so this is the only cross-character write
  * path.
  *
- * Ordered best-effort, not atomic: with no transactions, each kind performs at
- * most one write and stops on failure, returning `details.stage` and
- * `details.applied` (the writes that already landed). Today every kind writes
- * one record, so `applied` is empty on failure; the field is part of the wire
- * shape so a future multi-write mutation does not have to change it.
+ * Ordered best-effort, not atomic: with no transactions, each kind performs one
+ * mutation and, after it succeeds, one `roll-logs` evidence row (`P5.10`,
+ * ADR 0009). A failed mutation returns `details.stage` with `applied` empty
+ * (`applied` is part of the wire shape so a future multi-write mutation does not
+ * have to change it); a failed **evidence** write returns the successful
+ * mutation, because it already happened, with `logged: false`.
  */
 export async function applyGmMutation(
   ctx: ActionContext<Env>,
@@ -249,16 +336,31 @@ export async function applyGmMutation(
       patch[column] = value
       applied.push(column)
     }
-    // Nothing whitelisted arrived (only stripped keys): no empty write.
+    // Nothing whitelisted arrived (only stripped keys): no empty write, and
+    // nothing to log — an evidence row for a no-op would be a false claim.
     if (applied.length === 0) {
-      return { success: true, data: { kind: 'update_scene', scene: { applied } } }
+      return {
+        success: true,
+        data: { kind: 'update_scene', scene: { applied }, logged: false, details: { applied: [] } },
+      }
     }
 
     const updated = await tools.update('campaigns', DEFAULT_CAMPAIGN_ID, patch)
     if (!updated.success) {
       return writeFailed('update_scene', updated.error, [])
     }
-    return { success: true, data: { kind: 'update_scene', scene: { applied } } }
+    // The scene has no character of its own: the row is the GM's own event.
+    const log = await logGmEvidence(
+      tools,
+      {
+        campaignId: DEFAULT_CAMPAIGN_ID,
+        characterName: 'Game Master',
+        entryType: 'gm_event',
+        summary: sceneSummary(patch, applied),
+      },
+      `campaigns:${DEFAULT_CAMPAIGN_ID}`,
+    )
+    return { success: true, data: { kind: 'update_scene', scene: { applied }, ...log } }
   }
 
   // Both remaining kinds target a character. It must be in the one campaign
@@ -276,19 +378,36 @@ export async function applyGmMutation(
   }
 
   if (mutation.kind === 'character_hp') {
-    const { hp: before, maxHp } = target.data.record.data
+    const { hp: before, maxHp, name, campaignId } = target.data.record.data
     const after = Math.min(maxHp, Math.max(0, before + mutation.delta))
     // `characters.userId` is userBound + immutable: never part of an update.
     const updated = await tools.update('characters', mutation.characterId, { hp: after })
     if (!updated.success) {
       return writeFailed('character_hp', updated.error, [])
     }
+    const log = await logGmEvidence(
+      tools,
+      {
+        campaignId,
+        characterName: name,
+        entryType: 'combat',
+        summary: hpSummary(name, {
+          before,
+          after,
+          maxHp,
+          applied: after - before,
+          reason: mutation.reason,
+        }),
+      },
+      `characters:${mutation.characterId}`,
+    )
     return {
       success: true,
       data: {
         kind: 'character_hp',
         characterId: mutation.characterId,
         hp: { before, after, maxHp, appliedDelta: after - before },
+        ...log,
       },
     }
   }
@@ -314,12 +433,25 @@ export async function applyGmMutation(
   if (!created.success) {
     return writeFailed('grant_loot', created.error, [])
   }
+  // The evidence row follows the item, so the feed names the same character
+  // the item went to.
+  const log = await logGmEvidence(
+    tools,
+    {
+      campaignId: DEFAULT_CAMPAIGN_ID,
+      characterName: target.data.record.data.name,
+      entryType: 'gm_event',
+      summary: `${target.data.record.data.name} receives ${item.itemName} x${quantity}`,
+    },
+    `inventory:${created.data.recordId}`,
+  )
   return {
     success: true,
     data: {
       kind: 'grant_loot',
       characterId: mutation.characterId,
       item: { recordId: created.data.recordId, itemName: item.itemName, quantity },
+      ...log,
     },
   }
 }

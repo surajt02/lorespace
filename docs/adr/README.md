@@ -45,3 +45,4 @@ an accident.
 | [0019](./0019-one-character-per-player.md) | One character per player; delete-and-reforge is the reset | Accepted | product |
 | [0020](./0020-no-player-hp-path.md) | Players have no HP write path | Accepted | game integrity |
 | [0021](./0021-roll-banner-reads-roll-logs.md) | The roll banner reads `roll-logs`; presence carries identity only | Accepted | realtime / game integrity |
+| [0022](./0022-gm-tools-confined-to-chat-turn.md) | GM write tools run only inside the in-app GM chat turn | Accepted | security |
