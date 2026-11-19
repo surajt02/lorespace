@@ -587,3 +587,21 @@ new-`roll-logs`-row signal the banner uses instead of a presence event, and
   the list scrolling 3284→404.
 - Mobile is explicitly a later version (user decision, 2026-11-19); the `lg:`
   branch is the only one this revision touches.
+
+### Revision 4 — 2026-11-19 (post-close)
+
+- `P4.20` Minimised is now a **fixed window** (`lg:h-[21.5rem]` = four compact rows
+  plus the header) rather than content height, so the GM console below never jumps
+  as a row arrives; it scrolls only if a short viewport cannot give it that
+  height. `RECENT_COUNT` 3 → 4 (the question was whether four would work: at
+  1440×900 the window is 344px and the GM console keeps 329px; at 760 it keeps
+  189px; no scrollbar either way). The height is a literal class because Tailwind
+  scans source text — the interpolated version generated no CSS and measured 342
+  instead of 344.
+- `P4.21` Expanded sizes to content: no scrollbar while every row fits, and a
+  scrolling frame with a sticky header when they do not. The GM console is
+  `flex-1` with a `min-h-48` floor, so it yields a little before the feed is
+  forced to scroll. Measured with 45 rows at 1440×900/700: feed 481/281 scrolling,
+  GM 192, GM bottom 888/688. With four rows the toggle does not render at all
+  (4 ≤ `RECENT_COUNT`), so "expanded with few rolls" is the same frame as
+  minimised: one window, no scroll.

@@ -800,13 +800,25 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       ended up a few pixels short of its content, so it scrolled by half a row
       and drew a scrollbar in the signed-out window (where the fixture table has
       four rows) and not in the signed-in one.
-      — 2026-11-19 phase 4 revision: `RECENT_COUNT = 3`, compact rows
-      (`py-1`, one-line summary), no percentage cap, no internal scroll. Measured
-      at 1440×900 and 1440×760, signed in and out: feed 264 with
-      `scrollHeight === clientHeight` on both the panel and the list, GM 198-406
-      filling the remainder, GM bottom edge at 888/748 (always on screen);
-      expanded is still 448 with the list scrolling (3284→404). Raising the cap
-      to 5 is one constant and costs ~100px of GM console.
+      — 2026-11-19 phase 4 revision: minimised is now a **fixed window**
+      (`lg:h-[21.5rem]`: four compact rows + header), so the GM console below does
+      not jump as rolls arrive. `RECENT_COUNT = 4`, compact rows (`py-1`, one-line
+      summary), no internal scroll. Measured at 1440×900 and 1440×760, signed in
+      and out: window 344px with `scrollHeight === clientHeight` (no scrollbar),
+      GM 189-329 filling the remainder, GM bottom edge 888/748, last row inside the
+      frame. Live with four fixture rows: 344px, `overflowPx: 0`. The height is a
+      **literal** class — Tailwind scans source text, so an interpolated class is
+      never generated.
+
+- [x] `P4.21` Expanded, the feed is content height rather than a fixed window: it
+      has no scrollbar while the rows fit, and scrolls inside its own frame with a
+      sticky header once they do not. The GM console is `flex-1` with a
+      `min-h-48` floor, so it grows into whatever the feed leaves and gives a few
+      pixels back before the feed is forced to scroll.
+      — 2026-11-19 phase 4 revision: measured at 1440×900 and 1440×700 with 45
+      rows — feed 481/281 with `wrapScroll: true`, GM 192 (the floor), GM bottom
+      888/688. With four rows there is no toggle at all (4 ≤ `RECENT_COUNT`), so
+      the short-feed case is the minimised window itself: one frame, no scroll.
 
 ## Phase 5 — AI Game Master
 
