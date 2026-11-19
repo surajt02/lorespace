@@ -531,6 +531,10 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       `rel_01M7RT6QQSW1VKDTTRE3WYQG3E`, clean tree, same GitHub source. Live
       check again: landing + preview table, new item copy, no write controls
       signed out, zero console errors.
+      **Redeployed again** for `P3.15`/`P3.16`: release
+      `rel_01M7RVAWPYQY5WJ12QQZ8V4AKA`, clean tree. Live: `/`, `/home`,
+      `/settings` serve; signed out `/settings` gates instead of erroring; zero
+      console errors.
 - [x] `P3.9` Read failures on `characters`/`inventory` render a visible notice
       (skeleton while loading, never a silent fallback to `PREVIEW_*` while
       signed in). Extends `P3.3`/`P3.6`, matching `P2.5`'s seed-failure rule.

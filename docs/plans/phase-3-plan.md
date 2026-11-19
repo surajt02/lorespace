@@ -570,6 +570,8 @@ product owner, who changed four decisions. Recorded as
 - Redeployed: release `rel_01M7RT6QQSW1VKDTTRE3WYQG3E` at
   <https://lorespace.app.space>. Live check: landing + preview table with the
   new copy, no write controls signed out, zero console errors.
+- Redeployed again for deletion: release `rel_01M7RVAWPYQY5WJ12QQZ8V4AKA`.
+  Live check: `/`, `/home`, `/settings` serve; signed-out `/settings` gates.
 
 ### Revised feature inventory (sections 1-5)
 
