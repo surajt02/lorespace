@@ -1,7 +1,7 @@
 # Phase 4 — Party presence, server-computed roll, roll banner
 
-- **Status:** Active
-- **Session:** 2026-11-19, single orchestrator + delegated workers
+- **Status:** Done
+- **Session:** 2026-11-19, orchestrator + delegated workers (server, roster, roll path, feed/preview, two-window spec), independent review folded in
 - **Governing tasks:** `P4.*` in [`../tasks.md`](../tasks.md)
 - **ADRs in force:** [0005](../adr/0005-dice-roll-authority.md) (server rolls),
   [0006](../adr/0006-presence-room-authorization.md) (presence is
@@ -374,3 +374,129 @@ Manual, signed in (two browsers) and signed out:
 ## Outcome
 
 Filled in at the end of the phase, never rewritten afterwards.
+
+- **Shipped:** a membership-gated campaign presence room; a presence roster that
+  joins peers to live `characters` rows; `rollSkillCheck` as the only roll
+  authority, writing `roll-logs` before anything is broadcast; a roll banner in
+  every open window; a live action feed; a signed-out table that shows live rows
+  when the table has any. Deployed as release `rel_01M7S0P6KBHTVR1GYPX262YGPM`.
+- **Slipped:** `isTypingAction` → `P5.9` (no producer exists until the GM prompt).
+- **Deviations:** ADR-wise none — ADR 0005, 0006, 0009, 0013, 0014 and 0015 were
+  implemented, not changed. Implementation deviations, all recorded in the task
+  ticks: no `DiceRoller.tsx`; no `campaignId` in the roll request; the presence
+  route is hand-written rather than an `extraIdentity` callback (that hook cannot
+  refuse); `roll-logs` member writes flipped off under `P4.12`; `P5.4` reopened
+  because `src/ai/tools.ts` still lists `records.delete`.
+- **Inherited by the next phase:** `roll-logs` rows are trustworthy evidence
+  (server-authored, member read-only) and carry `rolledAt`; the presence scope,
+  payload shape and one-socket-per-client rule are fixed; `campaign.activeThreatDc`
+  is the only DC; a resolved roll already reaches every window, so `P5.7`'s
+  auto-resolve has a real event to hang on.
+
+### Feature inventory (the close-out's sections 1-5)
+
+**1. Shipped, by feature**
+
+| Feature | State | Files | Evidence |
+| --- | --- | --- | --- |
+| Campaign presence gate — anonymous, bad-token, non-member and unverifiable callers refused before the room; `campaign:preview` exempt | route | `src/server/realtime-routes.ts`, `src/constants.ts` | `tests/presence.spec.ts` › "the campaign presence scope refuses an anonymous socket" (401 anon + 401 bad token on both scopes, `preview` opens); live `curl` on `/ws/presence/campaign%3Adefault-campaign` → 401 |
+| Presence socket and own-state broadcast (`characterId`, `characterName`, `archetype`, `lastRoll`) | action | `src/components/PartyPresenceBar.tsx` | same spec › "one roll lands in both windows without a reload" — two `roster-member` per window with no reload, plus `roster-self` |
+| Party roster join: peers × `characters` rows, self first, anon dropped, HP from the query | read + unit test | `src/lib/party-presence.ts`, `src/components/vtt/PartyRoster.tsx` | `src/lib/__tests__/party-presence.test.ts` (25 tests); spec's two-window roster assertions |
+| Server-computed roll — ownership, campaign guard, DC from `campaigns`, `classifyRoll`, one `roll-logs` row, authoritative payload | action + unit test | `src/actions/index.ts` | `src/actions/__tests__/roll-skill-check.test.ts` (13 tests, incl. `not_owner` writes nothing, DC of 0 refused, crit boundaries); `[action] "rollSkillCheck"` in the e2e server log |
+| Unbiased d20 from raw bytes (rejection sampling, no `Math.random`) | unit test | `src/lib/rng.ts` | `src/lib/__tests__/rng.test.ts` (5 tests: bands, rejection, exhaustion, 0-199 → ten of each face) |
+| Server-authored roll history — `roll-logs` member create/update/delete off | auth + unit test | `src/schemas/roll-logs-schema.ts` | `src/schemas/__tests__/schemas.test.ts` › "makes roll history read-only for members" |
+| Roll banner — d20 sprite, `d20(n) ±m = t vs DC n`, outcome badge, 6s auto-dismiss, identical for roller and peers | e2e | `src/components/vtt/RollBanner.tsx`, `src/components/vtt/D20Mark.tsx` | spec asserts the two windows' banner text is equal and matches `/d20\(\d+\) [+-]?\d+ = \d+ vs DC \d+/` |
+| Stat-card roll — click → `rollSkillCheck` → toast + banner, one roll in flight, inert signed out | action | `src/components/CharacterSheetPanel.tsx` | spec clicks `stat-card-dex` and the roll lands; signed-out probe shows zero `stat-card-*` |
+| Live table feed — newest 20 `roll-logs` rows, skeleton/read-error/empty | read | `src/components/vtt/ActionFeed.tsx`, `src/pages/(app)/home.tsx` | spec: newest `feed-entry` carries the banner's line and survives a reload; signed-out browser probe shows a live `Ash` roll row |
+| Signed-out live-row preview — one flag feeds sheet, pack, roster and feed; no liveness dot | read | `src/pages/(app)/home.tsx` | browser probe on the dev server signed out: sheet `Ash` (live), 3 live roster rows, 0 green dots, live `d20(10) +2 = 12 vs DC 12` row |
+| One hand-authored d20 sprite shared by landing and banner | e2e/render | `src/components/vtt/D20Mark.tsx`, `src/pages/index.tsx` | `npm run build` prerenders `/` with `d20-trace`; live landing renders |
+
+**2. Not real yet**
+
+| What you see | Actually | Becomes real in |
+| --- | --- | --- |
+| GM console stream (3 messages) | `PREVIEW_GM_MESSAGES` in `src/lib/preview-data.ts` | Phase 5 — `GmConsolePanel` + `ChatPanel` |
+| Disabled GM prompt input + send button | native `<input disabled>` with no handler in `src/components/GmConsolePanel.tsx` | Phase 5 — `P5.7` |
+| Roster "typing" affordance | absent from the payload — `isTypingAction` was deliberately not shipped | Phase 5 — `P5.9` |
+| `campaign:preview` presence room | route allows it; nothing joins it and it renders nothing | never — reserved by ADR 0006 for a future live preview |
+| Signed-out table on an empty database | fixture `PREVIEW_CAMPAIGN` / `PREVIEW_CHARACTERS` / `PREVIEW_ROLLS`, with no notice | never — ADR 0014's sample table for demo beat 2; a signed-in viewer never sees it |
+| Feed depth | newest 20 rows only, no pagination or history page | not planned (ADR 0008 cut list) |
+
+**3. Persistence check**
+
+Yes — one collection: every roll writes a `roll-logs` row (12 columns,
+`userId` userBound, `rolledAt` stamped from `summary`) from
+`rollSkillCheck` in the Worker. Roll history has exactly one writer; the browser
+writes nothing.
+
+**4. Pending, by phase**
+
+- **Phase 5** — replaces the GM console fixtures with the streamed AI GM, makes
+  `roll-logs` the thing the GM verifies, adds the roll→GM auto-resolve and stamps
+  `isTypingAction` from the prompt.
+- **Phase 6** — mechanical grep gates, `collab.spec.ts` rewritten (its
+  integration-catalog loading test races when four spec files run in parallel),
+  `/home` smoke assertions, live deploy smoke, README front door, beat rehearsal.
+
+**5. Worth your eyes**
+
+| Tier | Item | Why a human | What to check | Files |
+| --- | --- | --- | --- | --- |
+| blocks | Presence is gated on **app** membership, not per-campaign | A security boundary; there is no `campaign_members` collection, so "member of the campaign" means "member of the app" | Confirm app membership is the intended boundary for this build, or say a per-campaign gate is required | `src/server/realtime-routes.ts:187-191` |
+| blocks | `roll-logs` keeps `admin: create/update/delete: true` and `viewer: read: true` | An accepted risk, not an oversight: an admin (the owner credential) can still write history by hand, and history is world-readable | Confirm both are still acceptable (ADR 0005's "evidence" claim, ADR 0014's public table) | `src/schemas/roll-logs-schema.ts:42-47` |
+| blocks | A peer's banner numbers are **claims**, not verified against `roll-logs` | The roster and banner trust a payload from another browser; only the roller's banner and the feed are authoritative | Confirm the accepted risk is clear enough to demo, or require the banner to fetch the row first | `src/components/PartyPresenceBar.tsx:105-127` |
+| blocks | `roll-logs.statName` is free text, written `dex` by the action and `DEX` by fixtures; `outcome` also carries `'info'` | A column contract the GM (Phase 5) will read; a select would fail the fixture rows, so the mixed casing is load-bearing today | Decide whether `statName` should become a select (and the fixtures rewritten) before Phase 5 reads it | `src/schemas/roll-logs-schema.ts:33-37` |
+| blocks | A brand-new account can get a transient 403 on presence | `resolveAppMembership`'s users row is created by the record-room connect, which races the presence connect; self-heals in ~1s | Watch one fresh signup: is the roster self row up immediately, and does the peer dot appear within a second? | `src/server/realtime-routes.ts:188-190`, `src/components/PartyPresenceBar.tsx` |
+| taste | Banner copy and format: `Kaelen rolled DEX: d20(14) +2 = 16 vs DC 13` + `SUCCESS` badge | Copy and register; the missing space after `+` comes from the shared `formatModifier` | Say if `+2` should read `+ 2` everywhere (one formatter) | `src/components/vtt/RollBanner.tsx:90-99` |
+| taste | Banner is a fixed overlay over the top of the table | It covers the scene banner for six seconds | Watch one roll in a real window; move it if it covers something you need | `src/components/vtt/RollBanner.tsx:78-83` |
+| taste | "No adventurer" row for a present player without a sheet | The alternative was hiding a present person | Say if you would rather show their presence name or hide them | `src/lib/party-presence.ts:44`, `:150-160` |
+| taste | Empty feed copy: "No rolls yet" / "Rolls land here as the party makes them." | Copy | One read | `src/components/vtt/ActionFeed.tsx:148-157` |
+
+**6. Files touched** (`git diff --stat c18800f..HEAD`, phase commits `585c9fa` +
+this one; 23 files, +2740/−171)
+
+`src/server/realtime-routes.ts`, `src/actions/index.ts`,
+`src/actions/__tests__/actions.test.ts`,
+`src/actions/__tests__/roll-skill-check.test.ts`, `src/lib/rng.ts`,
+`src/lib/__tests__/rng.test.ts`, `src/lib/party-presence.ts`,
+`src/lib/__tests__/party-presence.test.ts`, `src/schemas/roll-logs-schema.ts`,
+`src/schemas/__tests__/schemas.test.ts`, `src/constants.ts`,
+`src/components/PartyPresenceBar.tsx`, `src/components/vtt/RollBanner.tsx`,
+`src/components/vtt/D20Mark.tsx`, `src/components/vtt/PartyRoster.tsx`,
+`src/components/vtt/ActionFeed.tsx`, `src/components/CharacterSheetPanel.tsx`,
+`src/pages/(app)/home.tsx`, `src/pages/index.tsx`, `tests/presence.spec.ts`,
+`docs/tasks.md`, `docs/plans/README.md`, `docs/plans/phase-4-plan.md`.
+
+**7. Verification**
+
+```sh
+npm run validate        # tsc --noEmit + vitest: 8 files / 134 tests pass
+npm run lint            # eslint . clean
+npm run test:unit       # 8 files / 134 tests
+npx deepspace test run smoke  --port 5283   # 6 passed
+npx deepspace test run api    --port 5283   # 2 passed
+npx deepspace test run tests/presence.spec.ts --port 5273  # 2 passed (16.1s)
+npx deepspace test run e2e    --port 5273   # 12 passed, 1 failed: the pre-existing
+                                            # collab.spec.ts loading-state race under
+                                            # four parallel specs (P6.2), green alone
+grep -rn "Math.random" src/   # only Toast id generator, main.tsx prose, a test comment
+npx deepspace deploy          # rel_01M7S0P6KBHTVR1GYPX262YGPM, live in 6s
+```
+
+Live and local checks: `/`, `/home`, `/settings` → 200 on
+<https://lorespace.app.space>; live anonymous `GET /ws/presence/campaign%3Adefault-campaign`
+→ 401 and `?token=not-a-jwt` on `campaign:preview` → 401; live browser probe
+(chromium, signed out) refuses the campaign socket, opens the preview socket,
+renders the preview table and zero unexpected console errors; dev-server probe
+signed out shows live `Ash`, three roster rows, no liveness dot, a live roll row
+and zero clickable stat cards.
+
+Demo beats: **beat 4** (character appears in the roster, second window updates
+without a reload) and **beats 5-6's server half** (click DEX → server resolves →
+banner and feed in both windows) pass by hand and in `tests/presence.spec.ts`.
+
+- **Next:** `/phase 5` — **ready**. Nothing in Phase 5 is blocked now: `roll-logs`
+  is trustworthy evidence (`P4.4`), the presence room it can share is up
+  (`P4.1`/`P4.2`), and the feed it resolves into is live (`P4.11`). `P5.4` is
+  reopened and must land before the tool set is exposed — `records.delete` is
+  still in `src/ai/tools.ts`.

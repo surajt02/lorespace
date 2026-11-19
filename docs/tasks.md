@@ -671,10 +671,21 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       peers miss the banner — accepted, and must not trigger a retry (a retry
       would roll twice).
       — 2026-11-19 phase 4: noted in code at both ends: the action's docblock and the broadcast effect in `PartyPresenceBar` say the action is the only roll authority, a dropped `updateState` costs peers the banner and never the roll, and no retry path exists — a retry would roll twice. The roller's own banner is deliberately not gated on the socket, so a dropped broadcast still shows the result locally.
-- [ ] `P4.7` **Deploy #2 + two-window sync proof** (end of day 3): two signed-in
+- [x] `P4.7` **Deploy #2 + two-window sync proof** (end of day 3): two signed-in
       browsers, one roll, banner and feed land in both without a reload. This is
       the milestone that decides whether the interview rests on the architecture
       or on the AI; do not slip it into day 4 without saying so.
+      — 2026-11-19 phase 4: **deploy #2** release `rel_01M7S0P6KBHTVR1GYPX262YGPM`
+      (clean tree of `585c9fa`, GitHub source, no commit lineage). **Two-window
+      sync proof shipped as a test, not a screenshot:**
+      `tests/presence.spec.ts` signs two accounts in, forges if needed, has A click
+      DEX, and asserts the banner appears in both windows with **equal text** (roller
+      from the action result, peer from presence), that the feed's newest row
+      carries the same line, and that the row survives B reloading while the banner
+      does not replay — 2/2 green, 6 consecutive green runs. Live:
+      `/`, `/home`, `/settings` 200; anonymous campaign socket 401 (probed in
+      Chromium against the live URL); `campaign:preview` opens. The live signed-in
+      half needs the owner's account (the test pool is local-only).
 - [x] `P4.8` Attribute-card click → `rollSkillCheck` and a toast with the
       authoritative result (no banner yet; `P4.4` owns the action). Added in
       phase 3: the click half of `P3.5` cannot be honest before the server action
