@@ -598,10 +598,97 @@ export async function useItem(ctx: ActionContext<Env>): Promise<ActionResult<Use
   }
 }
 
+const deleteCharacterParamsSchema = z.object({ characterId: z.string().min(1) })
+
+/** `deleteWhere`'s page size for the inventory drain (SDK default 100, max 500). */
+const INVENTORY_DRAIN_PAGE = 100
+
+/**
+ * Defensive cap on drain pages: 50 pages × 100 rows is far past any pack this
+ * build can produce, but it means a broken `deleted` count cannot spin the
+ * action forever. Hitting it is reported as a failure rather than ignored: the
+ * character is still there, so the caller can retry.
+ */
+const INVENTORY_DRAIN_MAX_PAGES = 50
+
+export interface DeleteCharacterData {
+  characterId: string
+  deletedItems: number
+}
+
+/**
+ * Deletes the caller's own character — the reset path behind "Delete <name>" in
+ * settings (ADR 0018), so a player can re-forge another archetype.
+ *
+ * Owner-only: `characters.userId` must be the caller and the row must be in
+ * `DEFAULT_CAMPAIGN_ID`; both checks run before any write. Items are drained
+ * **first**, paged, so a failure leaves a reachable character with an empty pack
+ * instead of orphan `inventory` rows nothing can see or delete.
+ *
+ * No transactions: an inventory failure returns `write_failed` with stage
+ * `inventory` and the character untouched; a failure removing the row returns
+ * stage `character` with `applied: ['inventory']`, because the kit is already
+ * gone by then.
+ */
+export async function deleteCharacter(
+  ctx: ActionContext<Env>,
+): Promise<ActionResult<DeleteCharacterData>> {
+  const parsed = deleteCharacterParamsSchema.safeParse(ctx.params)
+  if (!parsed.success) return invalidParams(parsed.error)
+
+  const { tools, userId } = ctx
+  const { characterId } = parsed.data
+  const target = await tools.get<CharacterTarget>('characters', characterId)
+  if (!target.success) {
+    return { success: false, code: 'character_not_found', error: target.error }
+  }
+  const character = target.data.record.data
+  if (character.campaignId !== DEFAULT_CAMPAIGN_ID) {
+    return {
+      success: false,
+      code: 'character_not_found',
+      error: `Character ${JSON.stringify(characterId)} is not in campaign ${JSON.stringify(DEFAULT_CAMPAIGN_ID)}`,
+    }
+  }
+  if (character.userId !== userId) {
+    return {
+      success: false,
+      code: 'not_owner',
+      error: `Character ${JSON.stringify(characterId)} does not belong to the caller`,
+    }
+  }
+
+  // Items first: repeat the same bounded page until one comes back short.
+  let deletedItems = 0
+  for (let page = 1; ; page += 1) {
+    if (page > INVENTORY_DRAIN_MAX_PAGES) {
+      return writeFailed(
+        'inventory',
+        `Inventory drain stopped after ${INVENTORY_DRAIN_MAX_PAGES} pages (${deletedItems} rows deleted); ${JSON.stringify(characterId)} was left in place`,
+        [],
+      )
+    }
+    const drained = await tools.deleteWhere(
+      'inventory',
+      { characterId },
+      INVENTORY_DRAIN_PAGE,
+    )
+    if (!drained.success) return writeFailed('inventory', drained.error, [])
+    deletedItems += drained.data.deleted
+    if (drained.data.deleted < INVENTORY_DRAIN_PAGE) break
+  }
+
+  const removed = await tools.remove('characters', characterId)
+  if (!removed.success) return writeFailed('character', removed.error, ['inventory'])
+
+  return { success: true, data: { characterId, deletedItems } }
+}
+
 export const actions: Record<string, ActionHandler<Env>> = {
   ensureDefaultCampaign,
   applyGmMutation,
   forgeCharacter,
   adjustCharacterHp,
   useItem,
+  deleteCharacter,
 }

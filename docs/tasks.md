@@ -79,8 +79,9 @@ GM console are still fixtures (Phases 4-5).
 | Theme | `obsidian` — 21 tokens, `--radius: 0`, amber `#d97706`, Silkscreen labels; no indigo anywhere |
 | `src/pages/index.tsx` | Split-hero landing, Design Direction block, inline-SVG d20, CTA `Enter the table` |
 | `src/pages/(app)/home.tsx` | 3-column shell; campaign banner, sheet and pack read live rows (seed skeleton + read-failure notices); roster/feed/GM fixture-backed |
+| `src/pages/(app)/(protected)/settings.tsx` | Account card + a **Characters** card: the caller's character with `Delete <name>` → confirm → `deleteCharacter` (items first); `/home` then shows Forge |
 | `src/schemas.ts` | `users` + `settings` + `campaigns` + `characters` + `inventory` (7 cols, `userId` owner) + `roll-logs` (six, `lintSchema`/`lintSchemas` clean) |
-| `src/actions/index.ts` | Five actions: `ensureDefaultCampaign`, `applyGmMutation`, `forgeCharacter`, `adjustCharacterHp`, `useItem`; all over `POST /api/actions/:name` (bearer) |
+| `src/actions/index.ts` | Six actions: `ensureDefaultCampaign`, `applyGmMutation`, `forgeCharacter`, `adjustCharacterHp`, `useItem`, `deleteCharacter`; all over `POST /api/actions/:name` (bearer) |
 | `src/lib/campaign-seed.ts` | `DEFAULT_CAMPAIGN_SEED` — the seed row and `PREVIEW_CAMPAIGN.data` are the same object |
 | `src/lib/d20.ts` | `getModifier`, `formatModifier`, `calculateArmorClass`, `classifyRoll`, `ARCHETYPE_PRESETS` (Vanguard/Shadowblade/Arcanist/Marksman), `ARCHETYPE_ORDER`, `ABILITY_SCORES`, `CONSUMABLE_EFFECTS`; zero imports, no randomness |
 | `src/components/CharacterSheetPanel.tsx` | Live `characters` record → Forge (`forgeCharacter` action), 6 stat cards (display-only), AC, segmented HP, HP steps via `adjustCharacterHp` |
@@ -88,7 +89,7 @@ GM console are still fixtures (Phases 4-5).
 | `src/ai/tools.ts` | Built-in record tools only, generic prompt |
 | `ai-chat` feature | **Not installed** — no `ChatPanel`, no `/api/ai/chat` |
 | `src/constants.ts` | `DEFAULT_CAMPAIGN_ID`, `DEFAULT_CAMPAIGN_PRESENCE_SCOPE` added by 2a |
-| Tests | `smoke` 6/6 + `api` 2/2 + `collab` 3/3; 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 5 files / 87 tests |
+| Tests | `smoke` 6/6 + `api` 2/2 + `collab` 3/3; 2 `lorespace-*@deepspace.test` accounts; `test:unit` = 5 files / 97 tests |
 | Git | scaffold + phases 0-3 committed; `src/router.ts`, `modals.tsx` are gitignored (regenerated) |
 | Deploy | live at <https://lorespace.app.space> (release `rel_01M7RNC780XXGENCASX5XPH9AQ`); **GitHub source claimed permanently** by `P3.8` — deploys ship the checkout, no commit lineage |
 | Read policy | `viewer` (anonymous) reads all four domain collections by design ([ADR 0014](./adr/0014-public-read-table.md)); `/home` renders the live campaign row or `src/lib/preview-data.ts` |
@@ -587,6 +588,25 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       armor +2 (AC 15), `Yew Longbow` + `Field Dressing`. Blurbs and item copy
       rewritten to state the mechanic first. Vanguard/Shadowblade fixture drift
       still pinned; Arcanist AC is 14.
+
+- [x] `P3.15` **Delete character**: `deleteCharacter({characterId})` — owner +
+      campaign check, drain `inventory` by paged `deleteWhere`, then remove the
+      character; `write_failed` stages `inventory`/`character` with `applied`
+      ([ADR 0018](./adr/0018-character-deletion.md)). One character per player
+      stays ([ADR 0019](./adr/0019-one-character-per-player.md)).
+      — 2026-11-18 phase 3 revision: items drained 100 per page, then the row;
+      a 50-page cap fails closed rather than removing a half-drained character.
+      Errors `not_owner`, `character_not_found`, `invalid_params`; 8 tests
+      (order, two-page drain, both failure stages). Browser proof: settings
+      delete → `/home` Forge → forge → delete again.
+- [x] `P3.16` **Settings → Characters**: a section headed "Characters" listing
+      the caller's character as `Delete <name>`, `ConfirmModal` naming it, toast,
+      and `/home` falling back to Forge once the row is gone.
+      — 2026-11-18 phase 3 revision: `characters-settings` card on `/settings`
+      (read scoped by campaign + userId, loading/error/empty states), one
+      `ConfirmModal` naming the character, success/refusal toasts. Testids
+      `delete-character`, `characters-empty`, `characters-loading`,
+      `characters-read-error`; the Forge is not duplicated.
 
 ## Phase 4 — Party presence, dice engine
 

@@ -541,14 +541,28 @@ product owner, who changed four decisions. Recorded as
 - Data note: locally, items created before `P3.13` have no `userId` and are
   read-only to members; production had no characters, so nothing to migrate.
 
+**Deletion and the character limit (same session, after the review)**
+
+- `deleteCharacter({characterId})` — owner + campaign check, drains the pack by
+  paged `deleteWhere` **before** removing the row, `write_failed` stages
+  `inventory`/`character` with `applied` (ADR 0018). `/settings` gains a
+  **Characters** card: `Delete <name>` → `ConfirmModal` naming the character →
+  toast; `/home` falls back to Forge. `P3.15`/`P3.16`.
+- **One character per player stays** (ADR 0019): `uniqueOn` and
+  `already_forged` remain; delete-and-reforge is the reset. Multiple characters
+  would need an active-character marker, a picker, and presence/GM rules for
+  `P4.1`/`P4.3` — not a demo beat.
+
 **Revised verification**
 
-- `npm run validate` → 5 files / 89 tests; `npm run lint` clean;
+- `npm run validate` → 5 files / 97 tests; `npm run lint` clean;
   `npx tsc --noEmit` clean.
-- Throwaway signed-in specs (deleted before commit), three runs: Forge, `-5` HP,
+- Throwaway signed-in specs (deleted before commit), four runs: Forge, `-5` HP,
   Use (heal + clamp), full-HP refusal, Discard and reload all passed, and the
   worker log shows `[action] "forgeCharacter"`, `"adjustCharacterHp"`,
-  `"useItem"` — the page makes no record writes.
+  `"useItem"`, `"deleteCharacter"` — the page makes no record writes.
+- Delete proof: settings `Delete "Wren"` → `characters-empty` → `/home` Forge →
+  forge again → delete again, with the kit not resurrected.
 - Independent review found and closed two holes in the same session: member
   `inventory.update` (rename a sword into a vial) and `applyGmMutation`'s
   membership authority (any player could set their own HP). Both now have tests

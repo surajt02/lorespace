@@ -41,3 +41,5 @@ an accident.
 | [0015](./0015-server-authored-character-state.md) | Character state is server-authored | Accepted | game integrity |
 | [0016](./0016-item-uses.md) | Items have explicit uses: consumables heal, quest items are story | Accepted | game mechanics |
 | [0017](./0017-gm-owner-credential.md) | GM mutations require the app-owner credential | Accepted | security |
+| [0018](./0018-character-deletion.md) | Deleting a character removes its items first, in one owner-only action | Accepted | data integrity |
+| [0019](./0019-one-character-per-player.md) | One character per player; delete-and-reforge is the reset | Accepted | product |

@@ -8,6 +8,7 @@ import { PREVIEW_CAMPAIGN } from '../../lib/preview-data'
 import {
   adjustCharacterHp,
   applyGmMutation,
+  deleteCharacter,
   ensureDefaultCampaign,
   forgeCharacter,
   useItem,
@@ -37,6 +38,8 @@ interface FakeToolsOptions {
   get?: ActionResult<unknown> | ((collection: string) => ActionResult<unknown>)
   create?: ActionResult<unknown>
   update?: ActionResult<unknown>
+  remove?: ActionResult<unknown>
+  deleteWhere?: ActionResult<unknown>
 }
 
 /**
@@ -48,8 +51,8 @@ function createFakeTools(options: FakeToolsOptions = {}) {
   return {
     create: vi.fn().mockResolvedValue(options.create ?? ok({ recordId: 'created-record' })),
     update: vi.fn().mockResolvedValue(options.update ?? ok({ recordId: 'updated-record' })),
-    remove: vi.fn().mockResolvedValue(ok({ recordId: 'removed-record' })),
-    deleteWhere: vi.fn().mockResolvedValue(ok({ deleted: 0 })),
+    remove: vi.fn().mockResolvedValue(options.remove ?? ok({ recordId: 'removed-record' })),
+    deleteWhere: vi.fn().mockResolvedValue(options.deleteWhere ?? ok({ deleted: 0 })),
     get: vi.fn().mockImplementation(async (collection: string) => {
       if (typeof options.get === 'function') return options.get(collection)
       return options.get ?? failed('not_found', 'Character not found')
@@ -948,5 +951,145 @@ describe('useItem', () => {
     expect(tools.update).toHaveBeenNthCalledWith(1, 'characters', 'char-kaelen', {
       hp: 10 + effect.heal,
     })
+  })
+})
+
+describe('deleteCharacter', () => {
+  it('refuses a character the caller does not own and writes nothing', async () => {
+    const tools = createFakeTools({
+      get: characterGet(10, 20, DEFAULT_CAMPAIGN_ID, 'user-bob'),
+    })
+
+    const result = await deleteCharacter(context(tools, { characterId: 'char-kaelen' }))
+
+    expect(result).toEqual({
+      success: false,
+      code: 'not_owner',
+      error: 'Character "char-kaelen" does not belong to the caller',
+    })
+    // The whole point: a foreign character costs no inventory and no row.
+    expect(tools.deleteWhere).not.toHaveBeenCalled()
+    expect(tools.remove).not.toHaveBeenCalled()
+  })
+
+  it('reports character_not_found for a missing row', async () => {
+    const tools = createFakeTools()
+
+    const result = await deleteCharacter(context(tools, { characterId: 'char-kaelen' }))
+
+    expect(result).toEqual({
+      success: false,
+      code: 'character_not_found',
+      error: 'Character not found',
+    })
+    expect(tools.deleteWhere).not.toHaveBeenCalled()
+    expect(tools.remove).not.toHaveBeenCalled()
+  })
+
+  it('refuses a character in another campaign', async () => {
+    const tools = createFakeTools({ get: characterGet(10, 20, 'other-campaign') })
+
+    const result = await deleteCharacter(context(tools, { characterId: 'char-kaelen' }))
+
+    if (result.success) throw new Error('expected character_not_found, got success')
+    expect(result.code).toBe('character_not_found')
+    expect(tools.deleteWhere).not.toHaveBeenCalled()
+    expect(tools.remove).not.toHaveBeenCalled()
+  })
+
+  it('rejects invalid params before reading anything', async () => {
+    const tools = createFakeTools({ get: characterGet(10, 20) })
+
+    const result = await deleteCharacter(context(tools, { characterId: '' }))
+
+    if (result.success) throw new Error('expected invalid_params, got success')
+    expect(result.code).toBe('invalid_params')
+    expect(result.issues?.length).toBeGreaterThan(0)
+    expect(tools.get).not.toHaveBeenCalled()
+    expect(tools.deleteWhere).not.toHaveBeenCalled()
+  })
+
+  it('drains every inventory page before removing the character', async () => {
+    const tools = createFakeTools({ get: characterGet(10, 20) })
+    // A full page then a short one: the loop must not stop after one call.
+    let call = 0
+    tools.deleteWhere.mockImplementation(async () => {
+      call += 1
+      return ok({ deleted: call === 1 ? 100 : 3 })
+    })
+
+    const result = await deleteCharacter(context(tools, { characterId: 'char-kaelen' }))
+
+    expect(result).toEqual({
+      success: true,
+      data: { characterId: 'char-kaelen', deletedItems: 103 },
+    })
+    expect(tools.deleteWhere).toHaveBeenCalledTimes(2)
+    expect(tools.deleteWhere).toHaveBeenNthCalledWith(
+      1,
+      'inventory',
+      { characterId: 'char-kaelen' },
+      100,
+    )
+    expect(tools.deleteWhere).toHaveBeenNthCalledWith(
+      2,
+      'inventory',
+      { characterId: 'char-kaelen' },
+      100,
+    )
+    expect(tools.remove).toHaveBeenCalledWith('characters', 'char-kaelen')
+    // Items first, row second (ADR 0018): never an orphaned pack.
+    expect(tools.deleteWhere.mock.invocationCallOrder[0]).toBeLessThan(
+      tools.remove.mock.invocationCallOrder[0],
+    )
+  })
+
+  it('stops after one short page and reports the count', async () => {
+    const tools = createFakeTools({
+      get: characterGet(10, 20),
+      deleteWhere: ok({ deleted: 2 }),
+    })
+
+    const result = await deleteCharacter(context(tools, { characterId: 'char-kaelen' }))
+
+    if (!result.success) throw new Error(`expected success, got ${result.code}`)
+    expect(result.data.deletedItems).toBe(2)
+    expect(tools.deleteWhere).toHaveBeenCalledTimes(1)
+    expect(tools.remove).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports write_failed at inventory and leaves the character in place', async () => {
+    const tools = createFakeTools({
+      get: characterGet(10, 20),
+      deleteWhere: failed('write_refused', 'delete refused'),
+    })
+
+    const result = await deleteCharacter(context(tools, { characterId: 'char-kaelen' }))
+
+    expect(result).toEqual({
+      success: false,
+      code: 'write_failed',
+      error: 'delete refused',
+      details: { stage: 'inventory', applied: [] },
+    })
+    expect(tools.remove).not.toHaveBeenCalled()
+  })
+
+  it('reports the drained inventory as applied when the row removal fails', async () => {
+    const tools = createFakeTools({
+      get: characterGet(10, 20),
+      deleteWhere: ok({ deleted: 2 }),
+      remove: failed('write_refused', 'delete refused'),
+    })
+
+    const result = await deleteCharacter(context(tools, { characterId: 'char-kaelen' }))
+
+    expect(result).toEqual({
+      success: false,
+      code: 'write_failed',
+      error: 'delete refused',
+      details: { stage: 'character', applied: ['inventory'] },
+    })
+    expect(tools.deleteWhere).toHaveBeenCalledTimes(1)
   })
 })
