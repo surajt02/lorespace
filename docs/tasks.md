@@ -1071,7 +1071,13 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       the scene, the party's HP or another character's condition unless this turn
       changed it, which is what bloated the thread. — 2026-11-20 (323 tests; live:
       before any move both windows show it, after one acts only the other does,
-      and the reply carries no reminder text) [ADR 0031 amendment]
+      and the reply carries no reminder text) [ADR 0031 amendment] — **revised
+      2026-11-20**: the line now means "the table is waiting on you". It is read
+      from the thread (`awaitingMyMove`: another character moved after the GM's
+      last turn and you have not), so it clears the instant you send, shows only
+      on the player being waited on, clears once the GM answers, and never appears
+      on a solo table. The previous `actedRound < roundNumber` reading lit it for
+      every rollover, which is why it never went away. (8 unit tests)
 
 - [x] `P5.35` One GM turn per completed round: a real player message is persisted
       and marks them as acted, and the model is called only when the round closes —

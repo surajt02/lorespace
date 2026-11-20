@@ -584,3 +584,11 @@ init).
 - Known: the read-then-write claim race cannot be closed without a compare-and-set
   in the record room; a probe against the live table claimed one historical batch
   of eight already-narrated rolls, so a reset is advised before playing on.
+
+### Revision 13 — 2026-11-20 (the awaiting line means "waiting on you")
+
+- `P5.34` revised: `AWAITING YOUR MOVE…` was derived from `actedRound <
+  roundNumber`, so every rollover re-lit it and it read as permanently on. It now
+  comes from the thread (`awaitingMyMove`): another character moved after the GM's
+  last turn and the viewer has not. It clears when you send, appears only on the
+  player being waited on, clears when the GM answers, and never shows solo.

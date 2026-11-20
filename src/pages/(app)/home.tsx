@@ -64,7 +64,7 @@ import { progressLabel } from '@/lib/campaign-arc'
 import { DEFAULT_CAMPAIGN_SEED, type CampaignRow } from '@/lib/campaign-seed'
 import { dcDisplay, owedElsewhere, pendingOf } from '@/lib/pending-check'
 import { requestsRoll, statNamedInText } from '@/lib/gm-prompts'
-import { awaitsMove } from '@/lib/turn-status'
+import { awaitingMyMove } from '@/lib/turn-status'
 import type { AbilityScoreKey } from '@/lib/party-presence'
 import {
   PREVIEW_CAMPAIGN,
@@ -241,15 +241,13 @@ export default function HomePage() {
     ? owedElsewhere(characterRecords, myCharacter?.recordId ?? '')
     : null
   // Whose move it is (ADR 0031, amended 2026-11-20): the console says it, so the
-  // GM does not have to name the players who owe one. Signed out there is no
-  // player and no sheet, so nothing is ever claimed; `awaitsMove` also refuses a
-  // row that cannot prove it is behind.
-  const awaitingMove =
-    isSignedIn &&
-    awaitsMove({
-      roundNumber: campaign.roundNumber,
-      actedRound: myCharacter?.data.actedRound,
-    })
+  // GM does not have to name the players who owe one. "It is your move" means the
+  // table is blocked on you — someone else has moved since the GM last spoke and
+  // you have not — which is read from the thread (`awaitingMyMove`), so it clears
+  // the moment you send and never shows on a solo table.
+  const awaitingMove = isSignedIn
+    ? awaitingMyMove({ events: gmRecords, myName: myCharacter?.data.name })
+    : false
   // Whether anybody at the table owes a check. The console's corrective beat for
   // a narrated-but-unregistered roll is suppressed while one exists, so it cannot
   // re-arm an ask that is already recorded on some sheet.
