@@ -1024,6 +1024,16 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       the GM re-ask on its next turn. Related, smaller: an offline member's sheet
       and HP in the roster are the last written values, not live state.
 
+- [x] `P5.30` Engine corrections never enter history: the missed-check
+      correction is sent as a **transient** turn (used for that call, not
+      persisted, not replayed), because storing "answer with a tool call and
+      nothing else" in the thread taught the model to stop writing prose and
+      every later turn came back with no assistant row. It also no longer fires
+      for an ask a later roll already answered, and the client keeps the flag off
+      the persisted beat path. — 2026-11-20 revision (live: a turn that returned
+      no text now streams a full reply; the local thread's poisoned row and three
+      orphan turns were removed)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.

@@ -38,6 +38,12 @@ export interface GmTurnRequest {
    * it without a speaker prefix.
    */
   synthetic?: boolean
+  /**
+   * An instruction for this call only (`P5.30`): not persisted, not replayed.
+   * Reserved for the correction sent when the GM narrates a roll it never
+   * registered — storing it would teach the model to stop writing prose.
+   */
+  transient?: boolean
   /** The selected model id (`localStorage['deepspace-ai-model']`). */
   modelId?: string
   /**
@@ -113,6 +119,7 @@ export function useGmStream({ onTurnEnd }: UseGmStreamOptions = {}): GmStream {
           characterName: turn.characterName ?? '',
           ...(turn.characterId ? { characterId: turn.characterId } : {}),
           ...(turn.synthetic ? { synthetic: true } : {}),
+          ...(turn.transient ? { transient: true } : {}),
           ...(turn.modelId ? { modelId: turn.modelId } : {}),
           ...(turn.onlineCharacterNames && turn.onlineCharacterNames.length > 0
             ? { onlineCharacterNames: turn.onlineCharacterNames }

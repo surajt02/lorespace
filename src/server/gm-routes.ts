@@ -161,6 +161,7 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
         characterId?: unknown
         modelId?: unknown
         synthetic?: unknown
+        transient?: unknown
         onlineCharacterNames?: unknown
       }>()
       .catch(
@@ -170,6 +171,7 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
             characterName?: unknown
             modelId?: unknown
             synthetic?: unknown
+            transient?: unknown
             onlineCharacterNames?: unknown
           }),
       )
@@ -191,6 +193,13 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
       : typeof body.characterName === 'string'
         ? body.characterName.trim()
         : ''
+
+    // A *transient* turn is an engine instruction for this call only — the
+    // correction sent when the GM narrated a roll it never registered. It is
+    // never persisted and never replayed: history is what the model learns from,
+    // and a standing "answer with a tool call and nothing else" in the thread
+    // silences every later turn (the failure this flag exists to prevent).
+    const transient = body.transient === true
 
     const selectedModel = resolveDeepSpaceAgentModel(body.modelId, 'application')
     if (!selectedModel) {
@@ -220,17 +229,19 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
     // The user's row lands before the model is called: a turn that reached the
     // GM must be in the thread, and a failed write is refused here rather than
     // spending credits on a story with a hole in it.
-    const userWrite = await ownerTools
-      .create('gm-messages', {
-        campaignId: DEFAULT_CAMPAIGN_ID,
-        role: 'user',
-        characterName,
-        content,
-      })
-      .catch((error: unknown) => {
-        console.error(`[gm-chat] user row write threw: ${loggableError(error)}`)
-        return { success: false as const, error: 'write threw' }
-      })
+    const userWrite = transient
+      ? { success: true as const }
+      : await ownerTools
+          .create('gm-messages', {
+            campaignId: DEFAULT_CAMPAIGN_ID,
+            role: 'user',
+            characterName,
+            content,
+          })
+          .catch((error: unknown) => {
+            console.error(`[gm-chat] user row write threw: ${loggableError(error)}`)
+            return { success: false as const, error: 'write threw' }
+          })
     if (!userWrite.success) {
       console.error(`[gm-chat] user row write failed: ${userWrite.error}`)
       return c.json({ error: 'Could not record the turn' }, 500)
@@ -244,7 +255,10 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
     // character with it so the snapshot is filtered to the real table. The row
     // is stored under the sentinel either way (it is never rendered), but the
     // speaker counts for presence.
-    const presentSpeaker = typeof body.characterName === 'string' ? body.characterName.trim() : ''
+    // A transient turn is the engine speaking, not a player: it never counts as a
+    // speaker at the table.
+    const presentSpeaker =
+      transient || typeof body.characterName !== 'string' ? '' : body.characterName.trim()
     const messages: ModelMessage[] = [
       ...thread.messages,
       { role: 'user', content: modelName ? `${modelName}: ${content}` : content },

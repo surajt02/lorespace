@@ -119,6 +119,8 @@ interface QueuedTurn {
   id: number
   content: string
   synthetic: boolean
+  /** A one-call instruction: never persisted (`P5.30`). */
+  transient?: boolean
 }
 
 /** A rendered turn, live or preview, in one shape so the markup has one branch. */
@@ -258,11 +260,11 @@ export function GmConsolePanel({
     element.scrollTop = element.scrollHeight
   }, [turns.length, streamedText, isLoading])
 
-  const enqueue = (content: string, synthetic = false) => {
+  const enqueue = (content: string, synthetic = false, transient = false) => {
     const trimmed = content.trim()
     if (trimmed === '') return
     seq.current += 1
-    setQueue((pending) => [...pending, { id: seq.current, content: trimmed, synthetic }])
+    setQueue((pending) => [...pending, { id: seq.current, content: trimmed, synthetic, transient }])
   }
 
   // One turn at a time: a chip, an opening beat and a resolved roll can all be
@@ -282,6 +284,7 @@ export function GmConsolePanel({
       characterName,
       ...(next.synthetic || !character?.recordId ? {} : { characterId: character.recordId }),
       synthetic: next.synthetic,
+      ...(next.transient ? { transient: true } : {}),
       modelId,
       onlineCharacterNames,
     })
@@ -321,13 +324,21 @@ export function GmConsolePanel({
     // that ended minutes (or a session) ago.
     const answeredAt = Date.parse(lastAnswer.createdAt ?? '') || 0
     if (answeredAt !== 0 && Date.now() - answeredAt > CHECK_FIX_WINDOW_MS) return
+    // An ask the dice already answered needs no correction: a resolved roll
+    // after that message means the gate was satisfied, not forgotten.
+    const newestRollAt = rolls.reduce(
+      (newest, row) => Math.max(newest, Date.parse(row.createdAt ?? '') || 0),
+      0,
+    )
+    if (newestRollAt > answeredAt) return
     const text = lastAnswer.data.content
     if (!requestsRoll(text)) return
     const stat = statNamedInText(text)
     if (!stat) return
     corrected.current.add(lastAnswer.recordId)
-    enqueue(buildCheckFixPrompt(stat, characterName), true)
-  }, [threadRows, pending, signedIn, isLoading, characterName])
+    // Transient, not a beat: it must never enter history (`P5.30`).
+    enqueue(buildCheckFixPrompt(stat, characterName), false, true)
+  }, [threadRows, pending, signedIn, isLoading, characterName, rolls])
 
   // "Start campaign" opens the story (ADR 0023): queued once per id, sent as an
   // engine beat so the instruction never renders.
