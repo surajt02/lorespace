@@ -1014,6 +1014,16 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       away). The opening beat is also no longer re-sent by a remount: it is
       skipped when an answer written after the click already exists.
 
+- [ ] `P5.29` **Open gap — a check addressed to a player who disconnects.** Only the
+      requested card is rollable (`P5.19`), and the GM now plays with online
+      characters only (`P5.28`), so a pending check whose owner goes offline stalls
+      the table: nobody else may roll it and the GM has no idle turn to re-ask.
+      Observed on the roster/online-table pass, not yet reproduced live. Needs a
+      rules decision before code — (a) auto-clear the pending check when its owner
+      leaves presence, (b) let any online member take the roll over, or (c) have
+      the GM re-ask on its next turn. Related, smaller: an offline member's sheet
+      and HP in the roster are the last written values, not live state.
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.
