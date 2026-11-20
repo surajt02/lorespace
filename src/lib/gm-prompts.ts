@@ -204,3 +204,29 @@ export function buildCheckFixPrompt(stat: AbilityScoreKey, characterName: string
   const who = name === '' ? 'the acting character' : name
   return `You asked ${who} to roll ${stat.toUpperCase()} but their sheet shows no check open, so the table cannot roll and the story has stopped. Call request_check for ${who} with stat ${JSON.stringify(stat)} and the DC you intended. If that check is already owed on their row, it is live — do not re-arm it or change its DC. Do not narrate: do not repeat, continue or re-describe the scene or your previous message. The tool call is the whole reply.`
 }
+
+/**
+ * Did another window already fire this exact roll batch? (`P5.40`)
+ *
+ * The cursor claim is read-then-write, and the record room has no
+ * compare-and-set, so two windows can both read the same fresh rolls and both
+ * stream a turn. This is the cheap second line of defence: the batch prompt is
+ * deterministic, so an identical beat written moments ago means someone else is
+ * already narrating it.
+ */
+export function isDuplicateRollBatch({
+  prompt,
+  previousContent,
+  previousAgeMs,
+  windowMs = 10_000,
+}: {
+  prompt: string
+  previousContent: string | null | undefined
+  previousAgeMs: number | null
+  windowMs?: number
+}): boolean {
+  if (typeof previousContent !== 'string') return false
+  if (previousContent.trim() !== prompt.trim()) return false
+  if (previousAgeMs === null || !Number.isFinite(previousAgeMs)) return false
+  return previousAgeMs >= 0 && previousAgeMs <= windowMs
+}

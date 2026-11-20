@@ -1116,6 +1116,16 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       `claude-haiku-5-5` instead of the catalog's Opus, which 402s on this plan and
       used to burn the batch before failing. — 2026-11-20
 
+- [x] `P5.41` A turn can never be silent: the SDK's `text` is the **last step's**
+      prose, so a turn that narrated and then called a tool arrived with an empty
+      string, and `create('gm-messages', { content: '' })` was rejected ("Required
+      field 'content' is missing") — no assistant row, no reply, no alert. Prose is
+      now recovered from every step's assistant message, an empty `content` is never
+      written, a prose-free turn logs and hands a roll claim back, and the brief
+      requires at least one sentence per turn. A duplicate roll batch (identical
+      beat within 10s) is refused, which is the claim race seen live at 21:51:11.
+      — 2026-11-20 (assistantProse + isDuplicateRollBatch helpers, 341 tests)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.

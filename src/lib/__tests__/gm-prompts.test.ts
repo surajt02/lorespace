@@ -4,6 +4,7 @@ import {
   buildCheckFixPrompt,
   buildOpeningPrompt,
   buildRollBatchPrompt,
+  isDuplicateRollBatch,
   requestsRoll,
   statNamedInText,
   unresolvedRolls,
@@ -218,5 +219,32 @@ describe('a roll the GM narrated without registering', () => {
     expect(prompt).toContain('Ash')
     expect(prompt).toContain('request_check')
     expect(prompt).toContain('wis')
+  })
+})
+
+describe('isDuplicateRollBatch', () => {
+  const prompt = 'One roll resolved since your last turn: 1. Ash — WIS d20(4) = 4.'
+
+  it('refuses an identical batch written moments ago', () => {
+    expect(
+      isDuplicateRollBatch({ prompt, previousContent: prompt, previousAgeMs: 1_200 }),
+    ).toBe(true)
+  })
+
+  it('allows the same text once the window has passed', () => {
+    expect(
+      isDuplicateRollBatch({ prompt, previousContent: prompt, previousAgeMs: 60_000 }),
+    ).toBe(false)
+  })
+
+  it('allows a different batch', () => {
+    expect(
+      isDuplicateRollBatch({ prompt, previousContent: 'something else', previousAgeMs: 500 }),
+    ).toBe(false)
+  })
+
+  it('allows when there is no previous row or no readable age', () => {
+    expect(isDuplicateRollBatch({ prompt, previousContent: null, previousAgeMs: 10 })).toBe(false)
+    expect(isDuplicateRollBatch({ prompt, previousContent: prompt, previousAgeMs: null })).toBe(false)
   })
 })

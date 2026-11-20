@@ -55,7 +55,8 @@ import {
 import type { ActionResult, ActionTools, QueryActionData, VerifyResult } from 'deepspace/worker'
 import { buildSystemPrompt, buildTools } from '../ai/tools.js'
 import { DEFAULT_CAMPAIGN_ID } from '../constants.js'
-import { buildRollBatchPrompt, type RollBatchRow } from '../lib/gm-prompts.js'
+import { assistantProse } from '../lib/assistant-prose.js'
+import { buildRollBatchPrompt, isDuplicateRollBatch, type RollBatchRow } from '../lib/gm-prompts.js'
 import { pendingOf } from '../lib/pending-check.js'
 import { recordRoundTurn, shouldStreamGmTurn } from '../lib/round-pacing.js'
 import { schemas } from '../schemas.js'
@@ -266,6 +267,40 @@ async function claimRollBatch(ownerTools: ActionTools): Promise<RollBatchResult>
     .sort((a, b) => a.at - b.at)
   if (fresh.length === 0) return { kind: 'no_new_rolls' }
 
+  const prompt = buildRollBatchPrompt(fresh.map((entry) => entry.row))
+
+  // Two windows can both read this batch before either claims it (the record
+  // room has no compare-and-set). Refuse to narrate a batch whose identical
+  // prompt is already the newest thread row (`P5.40`).
+  try {
+    const latest = await ownerTools.query('gm-messages', {
+      where: { campaignId: DEFAULT_CAMPAIGN_ID },
+      limit: 5,
+    })
+    if (latest.success) {
+      const newestRow = latest.data.records
+        .map((record) => ({
+          content: typeof record.data?.content === 'string' ? record.data.content : null,
+          at: Date.parse(record.createdAt ?? '') || 0,
+        }))
+        .sort((a, b) => b.at - a.at)[0]
+      if (
+        newestRow &&
+        isDuplicateRollBatch({
+          prompt,
+          previousContent: newestRow.content,
+          previousAgeMs: newestRow.at === 0 ? null : Date.now() - newestRow.at,
+        })
+      ) {
+        console.warn('[gm-chat] roll batch already narrated by another window')
+        return { kind: 'no_new_rolls' }
+      }
+    }
+  } catch (error) {
+    // A failed duplicate check must not block the batch; the cursor still guards.
+    console.error(`[gm-chat] roll batch dedupe check threw: ${loggableError(error)}`)
+  }
+
   const newest = fresh[fresh.length - 1].at
   try {
     const claimed = await ownerTools.update('campaigns', DEFAULT_CAMPAIGN_ID, {
@@ -282,7 +317,7 @@ async function claimRollBatch(ownerTools: ActionTools): Promise<RollBatchResult>
 
   return {
     kind: 'batch',
-    prompt: buildRollBatchPrompt(fresh.map((entry) => entry.row)),
+    prompt,
     // What a failed turn needs to hand the batch back: the cursor it claimed and
     // the one it replaced. A provider error or an empty narration must not spend
     // the dice — the next roll turn retries the same batch.
@@ -548,8 +583,21 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
       responseMessages: ModelMessage[],
     ): Promise<void> => {
       const parts = buildUiParts(responseMessages)
-      if (text.trim() === '' && parts.length === 0) {
+      // `text` is the LAST step's prose; a turn that narrated and then called a
+      // tool can end on an empty step. Recover the turn's prose from every step
+      // (`P5.41`) — and never write an empty `content`, which the record layer
+      // rejects as a missing required field, leaving the player with no reply.
+      const prose = assistantProse(text, responseMessages)
+      if (prose === '' && parts.length === 0) {
         console.warn('[gm-chat] FINISH empty turn, skipping persist')
+        await restoreRollClaim()
+        return
+      }
+      if (prose === '') {
+        // Tool rows without prose: the table saw the dice but the GM said
+        // nothing. Persisting nothing is honest; the claim is handed back so a
+        // retry can still narrate it.
+        console.warn('[gm-chat] FINISH prose-free turn (tool calls only)')
         await restoreRollClaim()
         return
       }
@@ -558,7 +606,7 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
           campaignId: DEFAULT_CAMPAIGN_ID,
           role: 'assistant',
           characterName: 'Game Master',
-          content: text,
+          content: prose,
           ...(parts.length > 0 ? { parts } : {}),
         })
         if (!written.success) {
