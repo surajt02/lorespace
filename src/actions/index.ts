@@ -1116,6 +1116,50 @@ async function clearPartyPendingChecks(
 }
 
 /**
+ * The first **other** sheet at this table that owes a check (`P5.31`, ADR 0030
+ * amendment 2026-11-20).
+ *
+ * Storage is per character; authorisation is not. With no request of their own a
+ * player would otherwise fall through to the scene DC and write a real
+ * `roll-logs` row for a stat the GM asked of someone else — which is exactly what
+ * happened. Reading the party is what closes it: one outstanding check means
+ * nobody but its target may roll, because the GM is waiting on that sheet's die.
+ *
+ * The read is the same campaign-scoped roster query the party-wide clears use. A
+ * failed read is `{ ok: false }` and the caller refuses the roll: an unreadable
+ * party must not authorise anything.
+ */
+async function owedByOtherCharacter(
+  tools: ActionContext<Env>['tools'],
+  characterId: string,
+): Promise<
+  { ok: true; owed: { name: string; check: PendingCheck } | null } | { ok: false; error: string }
+> {
+  let roster: ActionResult<{ records: { recordId: string; data: PendingRow }[] }>
+  try {
+    roster = await tools.query<PendingRow>('characters', {
+      where: { campaignId: DEFAULT_CAMPAIGN_ID },
+      limit: RESET_ROSTER_LIMIT,
+    })
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+  if (!roster.success) return { ok: false, error: roster.error }
+  for (const record of roster.data.records) {
+    // The caller's own row was read above and is the caller's to spend.
+    if (record.recordId === characterId) continue
+    const check = pendingCheckOf(record.data)
+    if (check === null) continue
+    const name =
+      typeof record.data.name === 'string' && record.data.name.trim() !== ''
+        ? record.data.name
+        : 'Another adventurer'
+    return { ok: true, owed: { name, check } }
+  }
+  return { ok: true, owed: null }
+}
+
+/**
  * The only roll authority (ADR 0005, `P4.4`, `P4.6`).
  *
  * The caller sends `{ characterId, statName }` and nothing else — no `rawRoll`,
@@ -1141,9 +1185,11 @@ async function clearPartyPendingChecks(
  * One check is live per sheet (`P5.19`, ADR 0030). When the caller's own
  * character row carries a pending check, the roll must be that stat or it is
  * refused with `roll_not_requested` **before a die is spent**, and its DC is the
- * request's own — per-action, not the scene's. Another character's outstanding
- * check is invisible here and cannot gate the caller. With nothing pending the
- * scene's `activeThreatDc` still governs, so every existing caller is unchanged.
+ * request's own — per-action, not the scene's. When the caller owes nothing but
+ * **another** sheet does, the roll is refused with `check_owed_by_other` for the
+ * same reason: the GM is waiting on that sheet, and a roll here would log a stat
+ * nobody asked for (ADR 0030 amendment 2026-11-20). Nothing owed anywhere keeps
+ * the scene's `activeThreatDc`, so every existing caller is unchanged.
  * The request is spent on success **and** on failure: a failed check has been
  * answered too.
  */
@@ -1197,6 +1243,29 @@ export async function rollSkillCheck(
       success: false,
       code: 'roll_not_requested',
       error: `You are being asked for a ${pending.stat.toUpperCase()} check; ${statName.toUpperCase()} was not requested`,
+    }
+  }
+
+  // Storage is per character; authorisation is not (ADR 0030 amendment
+  // 2026-11-20). A caller who owes nothing may only roll freely while no other
+  // sheet is being asked — otherwise this roll would answer someone else's check
+  // with a stat the GM never requested. Refused before the die and before any
+  // write, and a party that cannot be read fails closed for the same reason.
+  if (!pending) {
+    const other = await owedByOtherCharacter(tools, characterId)
+    if (!other.ok) {
+      return {
+        success: false,
+        code: 'check_owed_by_other',
+        error: "The party's pending checks could not be read; the roll was refused",
+      }
+    }
+    if (other.owed) {
+      return {
+        success: false,
+        code: 'check_owed_by_other',
+        error: `${other.owed.name} is being asked for a ${other.owed.check.stat.toUpperCase()} check; you have not been asked to roll`,
+      }
     }
   }
 

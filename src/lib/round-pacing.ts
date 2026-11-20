@@ -20,6 +20,10 @@
  *    caller alone — single-player, where every turn closes its round.
  * 3. **Bookkeeping never costs a player their message.** Every read and write
  *    here logs and returns; nothing throws across the route.
+ *
+ * The pacing rule itself is `shouldStreamGmTurn`: the GM answers a whole round,
+ * so a real player's message is recorded and only the message that closes the
+ * round calls the model.
  */
 
 import type { ActionTools } from 'deepspace/worker'
@@ -42,7 +46,30 @@ export interface RoundTurn {
 
 export type RoundOutcome =
   | { marked: false; reason: 'not_a_player_turn' | 'no_character' | 'read_failed' | 'write_failed' }
-  | { marked: true; roundNumber: number; nextRound: number }
+  /** `rolledOver` is the route's cue: true means this turn closed the round. */
+  | { marked: true; roundNumber: number; nextRound: number; rolledOver: boolean }
+
+/**
+ * Whether this turn calls the model (ADR 0031, amended 2026-11-20).
+ *
+ * The GM answers **once per completed round**: a real player's message is
+ * persisted and marks them as acted, but the model is only called when the
+ * round closes — so at a two-player table the last message carries both actions
+ * and gets one turn, and an extra message from someone who already acted waits
+ * in the batch.
+ *
+ * An engine beat is not a move: the opening, a resolved roll, the missed-check
+ * correction and a scene advance each get an immediate turn, whether or not a
+ * round is open. This is a pure decision — the route does the I/O.
+ */
+export function shouldStreamGmTurn(input: {
+  synthetic: boolean
+  transient: boolean
+  roundComplete: boolean
+}): boolean {
+  if (input.synthetic || input.transient) return true
+  return input.roundComplete
+}
 
 /** The character columns this module reads, as the record room returns them. */
 interface CharacterRoundData {
@@ -161,7 +188,7 @@ export async function recordRoundTurn(
   const everyoneActed = table.every((row) =>
     row.recordId === caller.recordId ? true : asNumber(row.actedRound, 0) >= roundNumber,
   )
-  if (!everyoneActed) return { marked: true, roundNumber, nextRound: roundNumber }
+  if (!everyoneActed) return { marked: true, roundNumber, nextRound: roundNumber, rolledOver: false }
 
   const nextRound = roundNumber + 1
   try {
@@ -169,11 +196,11 @@ export async function recordRoundTurn(
     if (!advance.success) {
       // The mark stands; the round simply stays open until the next turn.
       console.error(`[round] roundNumber write failed: ${advance.error}`)
-      return { marked: true, roundNumber, nextRound: roundNumber }
+      return { marked: true, roundNumber, nextRound: roundNumber, rolledOver: false }
     }
   } catch (error) {
     console.error(`[round] roundNumber write threw: ${String(error)}`)
-    return { marked: true, roundNumber, nextRound: roundNumber }
+    return { marked: true, roundNumber, nextRound: roundNumber, rolledOver: false }
   }
-  return { marked: true, roundNumber, nextRound }
+  return { marked: true, roundNumber, nextRound, rolledOver: true }
 }

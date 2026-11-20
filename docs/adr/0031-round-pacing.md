@@ -36,11 +36,17 @@ voice, so it cannot live in the prompt alone.
   advances it: no timer, no idle turn, no GM fiat.
 - `get_campaign_snapshot` returns the round and, per character, whether they have
   acted this round and what check they owe ([0030](./0030-per-character-check-gate.md)).
-- The GM **stages**: at the start of a round (the opening beat, a scene advance, or
-  the reply that closes the previous round) it addresses the players who have not
-  acted and asks what they do — naming each of them, not just the last speaker.
-  It resolves each answer as it arrives: consequences per action, never held until
-  the round completes.
+- **The GM answers once per completed round** (amended 2026-11-20 after live
+  play). A player's message is persisted and marks them as acted, but the model is
+  called only when the round is complete — the last player's message is what
+  triggers the turn, and the GM answers every action in the batch together. A
+  second message from someone who already acted joins the batch and waits.
+- **A roll is not a move.** A resolved check and an engine beat (the opening, a
+  scene advance, the missed-check correction) always get an immediate turn; only
+  real player messages are gated on the round.
+- There is no timer: a round closes when every online character has acted. The
+  table assumes everyone is playing, so a silent window holds the story rather
+  than being resolved on someone's behalf.
 - Single-player is unchanged in feel: a round of one is staged once, resolved, then
   staged again on the next turn.
 - **Waiting is a UI indicator, not prose.** Amended 2026-11-20 after live

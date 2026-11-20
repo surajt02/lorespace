@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   dcDisplay,
+  owedElsewhere,
+  owedElsewhereLabel,
   pendingLabel,
   pendingOf,
   statCardState,
+  type OwedElsewhere,
+  type PartyMemberSource,
   type PendingCheck,
 } from '@/lib/pending-check'
 import type { AbilityScoreKey } from '@/lib/party-presence'
@@ -14,8 +18,9 @@ import type { AbilityScoreKey } from '@/lib/party-presence'
  * The server (`rollSkillCheck`) is the authority; these tests pin the client's
  * half — which card highlights, which are inert, and which number the banner
  * shows — so the two halves cannot disagree about one character row. Since ADR
- * 0030 the gate is two columns on the character itself, so every fixture here is
- * a character row and there is no cross-character matching left to test.
+ * 0030 the gate is two columns on the character itself, so the sheet's own ask is
+ * read from its own row; `owedElsewhere` is the one table-wide read, and it only
+ * ever *disables* cards, mirroring the server's `check_owed_by_other` refusal.
  */
 
 const STATS = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const
@@ -134,5 +139,124 @@ describe('a narrated-but-unregistered roll (fallback)', () => {
   it('labels the fallback ask', () => {
     expect(pendingLabel(null, 'wis')).toBe('The GM asked for WIS — roll it')
     expect(pendingLabel(null)).toBe('Waiting on the GM…')
+  })
+})
+
+/**
+ * Another sheet's outstanding check (`P5.31`, ADR 0030 amendment 2026-11-20).
+ *
+ * Storage stayed per character, but authorisation became table-wide: while any
+ * other sheet owes a roll, the server refuses this character's with
+ * `check_owed_by_other`. The sheet has to say the same thing, or a player presses
+ * a card the server will reject.
+ */
+describe('owedElsewhere', () => {
+  const kaelen = (data: Record<string, unknown>, recordId = 'char-kaelen'): PartyMemberSource => ({
+    recordId,
+    data: { name: 'Kaelen', ...data },
+  })
+  const joeblo = (data: Record<string, unknown>, recordId = 'char-joeblo'): PartyMemberSource => ({
+    recordId,
+    data: { name: 'Joeblo', ...data },
+  })
+
+  it('names the other character who owes a check', () => {
+    const party = [
+      kaelen({ pendingStat: '', pendingDc: 0 }),
+      joeblo({ pendingStat: 'wis', pendingDc: 13 }),
+    ]
+
+    expect(owedElsewhere(party, 'char-kaelen')).toEqual({ name: 'Joeblo', stat: 'wis' })
+  })
+
+  it('ignores the viewer’s own row', () => {
+    // Kaelen is asked for DEX, Joeblo for nothing: the sheet must not report
+    // Kaelen's own check as someone else's, or it would disable its own card.
+    const party = [
+      kaelen({ pendingStat: 'dex', pendingDc: 17 }),
+      joeblo({ pendingStat: '', pendingDc: 0 }),
+    ]
+
+    expect(owedElsewhere(party, 'char-kaelen')).toBeNull()
+    // The same party read from Joeblo's window names Kaelen.
+    expect(owedElsewhere(party, 'char-joeblo')).toEqual({ name: 'Kaelen', stat: 'dex' })
+  })
+
+  it('reads nothing owed as null', () => {
+    const party = [
+      kaelen({ pendingStat: '', pendingDc: 0 }),
+      joeblo({ pendingStat: '', pendingDc: 0 }),
+    ]
+
+    expect(owedElsewhere(party, 'char-kaelen')).toBeNull()
+    expect(owedElsewhere([], 'char-kaelen')).toBeNull()
+  })
+
+  it('ignores malformed rows instead of inventing a gate', () => {
+    // Unknown ability, non-positive or non-numeric DC, no data at all: none of
+    // these is a request, so none of them dims the viewer's cards.
+    for (const data of [
+      { pendingStat: 'luck', pendingDc: 14 },
+      { pendingStat: 'wis', pendingDc: 0 },
+      { pendingStat: 'wis', pendingDc: '13' },
+    ]) {
+      expect(owedElsewhere([joeblo(data)], 'char-kaelen')).toBeNull()
+    }
+    expect(owedElsewhere([{ recordId: 'char-joeblo' }], 'char-kaelen')).toBeNull()
+    expect(owedElsewhere([{ recordId: 'char-joeblo', data: null }], 'char-kaelen')).toBeNull()
+  })
+
+  it('falls back to a generic name when the row cannot name its character', () => {
+    // A row without a usable name still owes a roll; the line stays truthful
+    // rather than rendering "undefined must roll WIS".
+    for (const name of [undefined, '', '   ', 7]) {
+      expect(owedElsewhere([{ recordId: 'char-x', data: { name, pendingStat: 'wis', pendingDc: 9 } }], 'char-kaelen')).toEqual(
+        { name: 'Another adventurer', stat: 'wis' },
+      )
+    }
+  })
+})
+
+describe('owedElsewhereLabel', () => {
+  it('reads as a reason the viewer is not rolling', () => {
+    const owed: OwedElsewhere = { name: 'Joeblo', stat: 'wis' }
+    expect(owedElsewhereLabel(owed)).toBe('Joeblo must roll WIS')
+  })
+
+  it('has no line when nobody else owes a check', () => {
+    expect(owedElsewhereLabel(null)).toBe('')
+  })
+})
+
+describe('a card while another sheet owes a check', () => {
+  it('disables the card the fallback would otherwise enable', () => {
+    // The GM's narrated-but-unregistered WIS ask keeps WIS rollable... unless the
+    // table is already waiting on another adventurer, where the server refuses.
+    expect(statCardState({ pending: null, stat: 'wis', fallbackStat: 'wis' })).toBe('rollable')
+    expect(
+      statCardState({
+        pending: null,
+        stat: 'wis',
+        fallbackStat: 'wis',
+        owedElsewhere: { name: 'Joeblo', stat: 'dex' },
+      }),
+    ).toBe('waiting')
+  })
+
+  it('makes every card inert, not just the stat named', () => {
+    const owedElsewhere: OwedElsewhere = { name: 'Joeblo', stat: 'wis' }
+    for (const stat of STATS) {
+      expect(
+        statCardState({ pending: null, stat, fallbackStat: stat, owedElsewhere }),
+      ).toBe('waiting')
+    }
+  })
+
+  it('never overrides the viewer’s own pending check', () => {
+    // Two asks can stand at once (ADR 0030): the sheet that owes still rolls its
+    // own stat, because the server accepts it.
+    const owedElsewhere: OwedElsewhere = { name: 'Joeblo', stat: 'wis' }
+    expect(statCardState({ pending: pending(), stat: 'dex', owedElsewhere })).toBe('rollable')
+    expect(statCardState({ pending: pending(), stat: 'wis', owedElsewhere })).toBe('waiting')
   })
 })

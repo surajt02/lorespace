@@ -1073,6 +1073,21 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       before any move both windows show it, after one acts only the other does,
       and the reply carries no reminder text) [ADR 0031 amendment]
 
+- [x] `P5.35` One GM turn per completed round: a real player message is persisted
+      and marks them as acted, and the model is called only when the round closes —
+      the last player's message triggers a single turn that answers every action in
+      the batch. A second message joins the batch and waits; rolls and engine beats
+      still answer immediately. The held path returns `202 {waiting:true}` and the
+      client treats it as success. — 2026-11-20 (341 tests; live: first move 202
+      with no turn, second 200 with exactly one turn naming both actions)
+- [x] `P5.36` Only the asked player may roll (table-wide authorisation, ADR 0030
+      amendment): when the caller owes nothing but another character owes a check,
+      `rollSkillCheck` refuses with `check_owed_by_other` before the die and before
+      any write (fails closed if the roster cannot be read), and the other player's
+      cards are inert with `<Name> must roll <STAT>`. Two characters may each owe
+      their own check; the composer stays open either way. — 2026-11-20 (15 new
+      tests, 5 server / 10 client)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.

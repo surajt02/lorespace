@@ -38,7 +38,13 @@ import {
   type ArchetypeName,
   type RollOutcome,
 } from '@/lib/d20'
-import { pendingLabel, statCardState, type PendingCheck } from '@/lib/pending-check'
+import {
+  owedElsewhereLabel,
+  pendingLabel,
+  statCardState,
+  type OwedElsewhere,
+  type PendingCheck,
+} from '@/lib/pending-check'
 import type { AbilityScoreKey } from '@/lib/party-presence'
 import type { CharacterRow, InventoryRow } from '@/lib/preview-data'
 import { cn } from '@/lib/utils'
@@ -101,6 +107,7 @@ export function CharacterSheetPanel({
   items,
   pending = null,
   fallbackStat = null,
+  owedElsewhere = null,
 }: {
   mode: SheetMode
   status: QueryStatus
@@ -109,10 +116,18 @@ export function CharacterSheetPanel({
   /**
    * The check this character owes, when one is pending (`P5.19`, ADR 0030). The
    * server refuses any other stat (`roll_not_requested`), so the sheet only makes
-   * the requested card clickable. It is read from the viewer's own row, so
-   * another player's ask never dims these cards.
+   * the requested card clickable. It is read from the viewer's own row: another
+   * player's ask reaches this panel only as `owedElsewhere`, never as this one.
    */
   pending?: PendingCheck | null
+  /**
+   * Another sheet's outstanding check (`P5.31`, ADR 0030 amendment 2026-11-20).
+   * Authorisation is table-wide even though storage is per character: while this
+   * stands the server refuses every roll of the viewer's (`check_owed_by_other`),
+   * so every card is inert and the sheet names who owes what. Your move is still
+   * yours — the composer is not gated by this.
+   */
+  owedElsewhere?: OwedElsewhere | null
   /**
    * The ability the GM named in prose without registering a check. That card
    * stays rollable so a forgotten `request_check` cannot strand the table; it is
@@ -236,6 +251,7 @@ export function CharacterSheetPanel({
       carried={items.length}
       pending={pending}
       fallbackStat={fallbackStat}
+      owedElsewhere={owedElsewhere}
       // Preview mode is read-only: no bearer token, so no roll (ADR 0005).
       onRoll={
         live
@@ -316,6 +332,7 @@ function SheetBody({
   carried,
   pending,
   fallbackStat,
+  owedElsewhere,
   onRoll,
   rollingStat,
 }: {
@@ -323,6 +340,7 @@ function SheetBody({
   carried: number
   pending: PendingCheck | null
   fallbackStat: AbilityScoreKey | null
+  owedElsewhere: OwedElsewhere | null
   onRoll?: (statName: AbilityScoreKey) => void
   rollingStat?: AbilityScoreKey | null
 }) {
@@ -331,10 +349,16 @@ function SheetBody({
   const ratio = maxHp > 0 ? hp / maxHp : 0
 
   // One line about the live check: the viewer's own card reads as an
-  // instruction ("Roll DEX against 14"). This panel only holds the viewer's row,
-  // and that row is the whole gate (ADR 0030), so there is no other sheet to
-  // describe here.
-  const label = pending ? pendingLabel(pending) : pendingLabel(null, fallbackStat)
+  // instruction ("Roll DEX against 14"); another sheet's card reads as a reason
+  // ("Kaelen must roll WIS"), which is the server's `check_owed_by_other`
+  // refusal stated before the click. This panel only holds the viewer's row, so
+  // the two are named from `pending` and `owedElsewhere` (ADR 0030).
+  const label = pending
+    ? pendingLabel(pending)
+    : owedElsewhere
+      ? owedElsewhereLabel(owedElsewhere)
+      : pendingLabel(null, fallbackStat)
+  const hasCheckLine = pending !== null || fallbackStat !== null || owedElsewhere !== null
 
   return (
     <section data-testid="character-sheet" className="pixel-frame bg-card p-3">
@@ -344,7 +368,7 @@ function SheetBody({
           <Badge variant="secondary" className="mt-1 font-pixel text-[10px] uppercase">
             {character.archetype}
           </Badge>
-          {(pending !== null || fallbackStat !== null) && (
+          {hasCheckLine && (
             <p
               data-testid="pending-header"
               className="mt-1 font-pixel text-[10px] uppercase text-primary"
@@ -401,7 +425,7 @@ function SheetBody({
             </>
           )
 
-          const state = statCardState({ pending, stat: key, fallbackStat })
+          const state = statCardState({ pending, stat: key, fallbackStat, owedElsewhere })
           const rollable = state === 'rollable'
 
           if (!onRoll) {
@@ -446,7 +470,7 @@ function SheetBody({
         })}
       </ul>
 
-      {(pending !== null || fallbackStat !== null) && (
+      {hasCheckLine && (
         <p
           data-testid="pending-label"
           className="mt-2 font-pixel text-[10px] uppercase text-primary"

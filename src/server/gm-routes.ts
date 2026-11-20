@@ -28,6 +28,10 @@
  * Streaming, abort handling, persistence-on-end and error mapping mirror
  * `src/ai/chat-routes.ts`; read that file for the reasoning behind the order of
  * operations.
+ *
+ * One answer is not a stream: a real player turn whose round is still open is
+ * recorded and marked, then answered **202** `{ waiting: true, roundNumber }`
+ * with no model call (ADR 0031, amended 2026-11-20).
  */
 
 import type { Hono } from 'hono'
@@ -45,7 +49,7 @@ import {
 import type { ActionResult, ActionTools, QueryActionData, VerifyResult } from 'deepspace/worker'
 import { buildSystemPrompt, buildTools } from '../ai/tools.js'
 import { DEFAULT_CAMPAIGN_ID } from '../constants.js'
-import { recordRoundTurn } from '../lib/round-pacing.js'
+import { recordRoundTurn, shouldStreamGmTurn } from '../lib/round-pacing.js'
 import { schemas } from '../schemas.js'
 import { createActionTools } from './action-routes.js'
 // Type-only — TypeScript strips it at runtime, so this file never imports the
@@ -295,11 +299,30 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
     // correction are the app speaking, not a character acting, so neither
     // marks anything. A bookkeeping failure is logged, never returned: it must
     // not cost a player their message.
-    await recordRoundTurn(ownerTools, {
+    const round = await recordRoundTurn(ownerTools, {
       userId: auth.userId,
       onlineCharacterNames: presentCharacterNames,
       playerTurn: !synthetic && !transient,
     })
+
+    // The GM answers once per completed round (amended 2026-11-20): a player's
+    // message is already recorded and marked, but the model is only called by
+    // the message that closes the round, so a two-player table gets one turn
+    // covering both actions instead of two half-rounds. A bookkeeping failure
+    // (`marked: false`) counts as complete — an unknown round must never hold
+    // the table's story, the same rule as never stranding a roll.
+    const roundComplete = !round.marked || round.rolledOver
+    if (!shouldStreamGmTurn({ synthetic, transient, roundComplete })) {
+      // No model call, no assistant row: the player's row is in the thread and
+      // the subscription has it. The next action in the batch — or the closing
+      // message — reads this row from history when its turn does arrive.
+      // `roundNumber` is the open round this message joined; the `0` fallback is
+      // unreachable (only a marked turn can be held) and keeps the shape fixed.
+      return c.json(
+        { waiting: true, roundNumber: round.marked ? round.roundNumber : 0 },
+        202,
+      )
+    }
     const tools = buildTools(
       createUserToolExecutor(c.env, auth.userId, c.req.raw.signal, {
         room: `app:${c.env.DEEPSPACE_APP_ID}`,

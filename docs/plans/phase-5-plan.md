@@ -544,3 +544,17 @@ init).
 - Open and unchanged: `P5.29` (a check owed by a player who disconnects holds the
   table), an unanswered round never expires, and an offline member's sheet shows
   last-written values.
+
+### Revision 9 — 2026-11-20 (one turn per round, only the asked may roll)
+
+- `P5.35`: the GM answers once per completed round. A player's message persists and
+  marks `actedRound`, but the model is only called when the last online player
+  acts — that message triggers a single turn covering every action in the batch. A
+  second message waits; rolls and engine beats (opening, advance, correction) still
+  answer immediately. The held path is `202 {waiting:true}`; `isLoading` clears and
+  no error is raised.
+- `P5.36`: authorisation is table-wide again while storage stays per character. If
+  the caller owes nothing and another sheet owes a check, `rollSkillCheck` refuses
+  with `check_owed_by_other` before the die (fails closed on a roster read error),
+  and the sheet shows `<Name> must roll <STAT>` with every card inert. Two
+  characters may still be asked at once; the composer always stays open.

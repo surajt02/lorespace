@@ -30,6 +30,12 @@ function failed(code: string, error: string): ActionResult<never> {
 interface FakeToolsOptions {
   get?: (collection: string) => ActionResult<unknown>
   create?: ActionResult<unknown>
+  /**
+   * The roster read the table-wide authorisation makes when the caller owes
+   * nothing. An empty party is the default, so a test that only cares about the
+   * caller's own row does not have to spell it out.
+   */
+  query?: ActionResult<unknown>
 }
 
 /** `tools.get` per collection, because the action reads a character then a campaign. */
@@ -46,7 +52,7 @@ function createFakeTools(options: FakeToolsOptions = {}) {
           ? options.get(collection)
           : failed('not_found', `${collection} not found`),
       ),
-    query: vi.fn(),
+    query: vi.fn().mockResolvedValue(options.query ?? roster([])),
     integration: vi.fn(),
     registerUser: vi.fn(),
   }
@@ -66,32 +72,45 @@ function context(tools: FakeTools, params: Record<string, unknown> = {}) {
   }
 }
 
+/** A `characters` row's data, owned by the caller unless a test says otherwise. */
+function characterData(overrides: Record<string, unknown> = {}) {
+  return {
+    userId: CALLER_ID,
+    campaignId: DEFAULT_CAMPAIGN_ID,
+    name: 'Kaelen',
+    hp: 24,
+    maxHp: 24,
+    str: 16,
+    dex: 12,
+    con: 14,
+    int: 8,
+    wis: 10,
+    cha: 11,
+    ...overrides,
+  }
+}
+
 /** A `characters` row owned by the caller unless a test says otherwise. */
 function characterGet(overrides: Record<string, unknown> = {}) {
-  return ok({
-    record: {
-      recordId: 'char-kaelen',
-      data: {
-        userId: CALLER_ID,
-        campaignId: DEFAULT_CAMPAIGN_ID,
-        name: 'Kaelen',
-        hp: 24,
-        maxHp: 24,
-        str: 16,
-        dex: 12,
-        con: 14,
-        int: 8,
-        wis: 10,
-        cha: 11,
-        ...overrides,
-      },
-    },
-  })
+  return ok({ record: { recordId: 'char-kaelen', data: characterData(overrides) } })
 }
 
 /** The seeded campaign's row; `activeThreatDc` is 12 in the seed (ADR 0011). */
 function campaignGet(overrides: Record<string, unknown> = {}) {
   return ok({ record: { recordId: DEFAULT_CAMPAIGN_ID, data: { activeThreatDc: 12, ...overrides } } })
+}
+
+/** A `characters` roster read: the party-wide authorisation's one query. */
+function roster(records: { recordId: string; data: Record<string, unknown> }[]) {
+  return ok({ records, count: records.length })
+}
+
+/** Another character's row, as the roster query returns it. */
+function otherCharacter(overrides: Record<string, unknown> = {}, recordId = 'char-joeblo') {
+  return {
+    recordId,
+    data: { ...characterData(), name: 'Joeblo', userId: 'user-bob', ...overrides },
+  }
 }
 
 /** `tools.get` answering a character then the campaign. */
@@ -587,5 +606,146 @@ describe('rollSkillCheck pending check', () => {
     expect(result).toMatchObject({ success: false, code: 'write_failed' })
     // The sheet still owes the check: nothing answered it.
     expect(tools.update).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Authorisation is table-wide even though storage is per character (`P5.31`,
+ * ADR 0030 amendment 2026-11-20).
+ *
+ * Per-character storage made this action read only the caller's own row, and with
+ * nothing pending on it a player fell through to the scene DC and wrote a real
+ * `roll-logs` row for a stat the GM asked of someone else. These tests pin the
+ * refusal: it happens before the die, before any write, and it names the sheet
+ * the table is actually waiting on — while two characters who each owe a check
+ * can still roll their own.
+ */
+describe('rollSkillCheck table-wide authorisation', () => {
+  it('refuses the caller while another character owes a check, before the die', async () => {
+    // The observed bug: the GM asked Joeblo for WIS and Kaelen rolled WIS too.
+    const draw = vi.spyOn(globalThis.crypto, 'getRandomValues')
+    const tools = createFakeTools({
+      get: getRouter({ characters: characterGet(), campaigns: campaignGet() }),
+      query: roster([otherCharacter({ pendingStat: 'wis', pendingDc: 13 })]),
+    })
+
+    const result = await rollSkillCheck(
+      context(tools, { characterId: 'char-kaelen', statName: 'wis' }),
+    )
+
+    expect(result).toEqual({
+      success: false,
+      code: 'check_owed_by_other',
+      error: 'Joeblo is being asked for a WIS check; you have not been asked to roll',
+    })
+    // Nothing rolled and nothing written: no evidence, no spent request.
+    expect(draw).not.toHaveBeenCalled()
+    expect(tools.create).not.toHaveBeenCalled()
+    expect(tools.update).not.toHaveBeenCalled()
+    // The party is read from the campaign, bounded like every other roster read.
+    expect(tools.query).toHaveBeenCalledWith('characters', {
+      where: { campaignId: DEFAULT_CAMPAIGN_ID },
+      limit: 200,
+    })
+  })
+
+  it('fails closed when the party cannot be read', async () => {
+    // An unreadable party must not authorise anything: same code, generic
+    // message, no die and no row.
+    const draw = vi.spyOn(globalThis.crypto, 'getRandomValues')
+    const tools = createFakeTools({
+      get: getRouter({ characters: characterGet(), campaigns: campaignGet() }),
+      query: failed('read_refused', 'the roster was refused'),
+    })
+
+    const result = await rollSkillCheck(
+      context(tools, { characterId: 'char-kaelen', statName: 'dex' }),
+    )
+
+    expect(result).toEqual({
+      success: false,
+      code: 'check_owed_by_other',
+      error: "The party's pending checks could not be read; the roll was refused",
+    })
+    expect(draw).not.toHaveBeenCalled()
+    expect(tools.create).not.toHaveBeenCalled()
+  })
+
+  it('lets two characters each roll the check they owe', async () => {
+    // Kaelen owes DEX 17; the roster also holds Joeblo owing WIS 9. Each sheet
+    // answers its own ask, and neither ask overwrites the other (ADR 0030).
+    stubSeed(18)
+    const dexTools = createFakeTools({
+      get: getRouter({
+        characters: characterGet({ pendingStat: 'dex', pendingDc: 17 }),
+        campaigns: campaignGet(),
+      }),
+      query: roster([otherCharacter({ pendingStat: 'wis', pendingDc: 9 })]),
+    })
+
+    const dex = await rollSkillCheck(
+      context(dexTools, { characterId: 'char-kaelen', statName: 'dex' }),
+    )
+
+    expect(dex).toMatchObject({ success: true, data: { targetDc: 17 } })
+    // The caller owes a check, so the party is never consulted for this roll.
+    expect(dexTools.query).not.toHaveBeenCalled()
+
+    stubSeed(10)
+    const wisTools = createFakeTools({
+      get: getRouter({
+        characters: characterGet({
+          userId: 'user-bob',
+          name: 'Joeblo',
+          pendingStat: 'wis',
+          pendingDc: 9,
+        }),
+        campaigns: campaignGet(),
+      }),
+      query: roster([otherCharacter({ pendingStat: 'dex', pendingDc: 17 })]),
+    })
+
+    const joeblo = await rollSkillCheck({
+      ...context(wisTools, { characterId: 'char-joeblo', statName: 'wis' }),
+      userId: 'user-bob',
+    })
+
+    expect(joeblo).toMatchObject({ success: true, data: { targetDc: 9 } })
+    expect(wisTools.query).not.toHaveBeenCalled()
+  })
+
+  it('ignores the caller’s own row in the roster read', async () => {
+    // Only *another* sheet's check gates this one; the caller's row was already
+    // read and owes nothing here.
+    stubSeed(13)
+    const tools = createFakeTools({
+      get: getRouter({ characters: characterGet(), campaigns: campaignGet() }),
+      query: roster([
+        otherCharacter({ pendingStat: 'dex', pendingDc: 17 }, 'char-kaelen'),
+      ]),
+    })
+
+    const result = await rollSkillCheck(
+      context(tools, { characterId: 'char-kaelen', statName: 'dex' }),
+    )
+
+    expect(result).toMatchObject({ success: true, data: { targetDc: 12 } })
+  })
+
+  it('ignores a half-written roster row rather than refusing every roll', async () => {
+    // A hand-edited or half-written row is not a request, so the free roll at the
+    // scene DC stands — the same tolerance `pendingCheckOf` applies to the caller.
+    stubSeed(13)
+    const tools = createFakeTools({
+      get: getRouter({ characters: characterGet(), campaigns: campaignGet() }),
+      query: roster([otherCharacter({ pendingStat: 'luck', pendingDc: 14 })]),
+    })
+
+    const result = await rollSkillCheck(
+      context(tools, { characterId: 'char-kaelen', statName: 'dex' }),
+    )
+
+    expect(result).toMatchObject({ success: true, data: { targetDc: 12 } })
+    expect(tools.create).toHaveBeenCalledTimes(1)
   })
 })

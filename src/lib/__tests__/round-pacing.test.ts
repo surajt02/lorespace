@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { recordRoundTurn } from '@/lib/round-pacing'
+import { recordRoundTurn, shouldStreamGmTurn } from '@/lib/round-pacing'
 import { DEFAULT_CAMPAIGN_ID } from '@/constants'
 
 /**
@@ -90,7 +90,7 @@ describe('recordRoundTurn', () => {
       playerTurn: true,
     })
 
-    expect(outcome).toEqual({ marked: true, roundNumber: 4, nextRound: 4 })
+    expect(outcome).toEqual({ marked: true, roundNumber: 4, nextRound: 4, rolledOver: false })
     // The mark is the only write: no rollover while someone is still waiting.
     expect(updates).toEqual([
       { collection: 'characters', recordId: 'char-ash', data: { actedRound: 4 } },
@@ -110,7 +110,7 @@ describe('recordRoundTurn', () => {
       playerTurn: true,
     })
 
-    expect(outcome).toEqual({ marked: true, roundNumber: 4, nextRound: 5 })
+    expect(outcome).toEqual({ marked: true, roundNumber: 4, nextRound: 5, rolledOver: true })
     // Mark first, then the new round: the rollover has to see the mark.
     expect(updates).toEqual([
       { collection: 'characters', recordId: 'char-vesper', data: { actedRound: 4 } },
@@ -131,7 +131,7 @@ describe('recordRoundTurn', () => {
       playerTurn: true,
     })
 
-    expect(outcome).toEqual({ marked: true, roundNumber: 2, nextRound: 3 })
+    expect(outcome).toEqual({ marked: true, roundNumber: 2, nextRound: 3, rolledOver: true })
     expect(updates.map((update) => update.collection)).toEqual(['characters', 'campaigns'])
   })
 
@@ -145,7 +145,7 @@ describe('recordRoundTurn', () => {
         playerTurn: true,
       })
 
-      expect(outcome).toEqual({ marked: true, roundNumber: 1, nextRound: 2 })
+      expect(outcome).toEqual({ marked: true, roundNumber: 1, nextRound: 2, rolledOver: true })
       expect(updates).toHaveLength(2)
     }
   })
@@ -193,5 +193,32 @@ describe('recordRoundTurn', () => {
       }),
     ).resolves.toEqual({ marked: false, reason: 'read_failed' })
     expect(tools.update).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * The pacing decision (`P5.33`, ADR 0031, amended 2026-11-20): the model answers
+ * a whole round, so only the turn that closes one calls it. Every engine beat
+ * answers immediately — a beat that waited on a round would strand the table,
+ * which is the failure the amendment exists to avoid in the other direction.
+ */
+describe('shouldStreamGmTurn', () => {
+  it('answers a real player turn only once the round is complete', () => {
+    expect(shouldStreamGmTurn({ synthetic: false, transient: false, roundComplete: true })).toBe(
+      true,
+    )
+    // Another player still owes a move: the message is recorded and waits.
+    expect(shouldStreamGmTurn({ synthetic: false, transient: false, roundComplete: false })).toBe(
+      false,
+    )
+  })
+
+  it('always answers a synthetic beat or a transient correction', () => {
+    expect(shouldStreamGmTurn({ synthetic: true, transient: false, roundComplete: false })).toBe(
+      true,
+    )
+    expect(shouldStreamGmTurn({ synthetic: false, transient: true, roundComplete: false })).toBe(
+      true,
+    )
   })
 })

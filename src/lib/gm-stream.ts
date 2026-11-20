@@ -8,6 +8,8 @@
  *   token, the speaker's `characterName`, and `synthetic` for an engine beat
  *   (the opening, a resolved roll). The Worker writes both sides of the thread;
  *   the browser never persists a GM message (`gm-messages-schema.ts`).
+ *   A **202** is a queued turn, not an error: the message is in the thread and
+ *   the GM answers once the round closes (ADR 0031 amended).
  * - **The decode.** The body is the AI SDK's SSE stream; the wire decoding is
  *   the SDK's (`parseSseLine` + `decodeAiStreamChunk`), and this file keeps only
  *   the text deltas. Reasoning chunks decode to `null` and are dropped, so a
@@ -127,6 +129,14 @@ export function useGmStream({ onTurnEnd }: UseGmStreamOptions = {}): GmStream {
         }),
         signal: controller.signal,
       })
+      // 202 (`P5.33`): the turn is recorded and the round is still open, so no
+      // model was called and there is nothing to stream — the message waits in
+      // the batch for the player whose move closes the round. Success, not a
+      // failure: no error state, no text, and `finally` still clears the spinner.
+      if (response.status === 202) {
+        await response.json().catch(() => null)
+        return
+      }
       if (!response.ok || !response.body) {
         const detail = response.body ? await response.text().catch(() => '') : ''
         throw new Error(detail || `Request failed: ${String(response.status)}`)

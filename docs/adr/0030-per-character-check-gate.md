@@ -46,6 +46,22 @@ storing it once for the whole table was the mistake.
   the viewer's DC. Another player's outstanding check is not the viewer's problem
   and never dims their cards.
 
+### Amendment — 2026-11-20: authorisation is table-wide
+
+Per-character storage made the server read only the caller's own row, and with no
+pending check of their own a player fell through to the scene DC and rolled a
+stat nobody had asked them for (a real `roll-logs` row for another player's WIS
+check). Storage stays per character; **authorisation is not**:
+
+- My sheet owes a check → only that stat, at that DC.
+- **Another** sheet owes a check → every other character's roll is refused with
+  `check_owed_by_other`, and their cards are inert with a line naming who owes
+  what. Two characters may still be asked at once; neither ask overwrites the
+  other.
+- Nothing owed anywhere → the free roll at the scene DC stands.
+- The composer stays open while someone else owes a check: your move is yours,
+  your dice are not.
+
 ## Consequences
 
 - **Positive:** two players can each owe a roll at the same time; nobody is

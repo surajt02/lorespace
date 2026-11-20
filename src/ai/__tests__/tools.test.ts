@@ -697,4 +697,15 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('never repeat a previous paragraph')
     expect(prompt).toContain('one or two short paragraphs mid-round')
   })
+
+  /**
+   * Round batching (`P5.33`, ADR 0031 amended): the route now calls the model
+   * once per completed round, so several players' actions reach the GM as one
+   * turn. Without this the model answers the first line and drops the rest.
+   */
+  it('says a whole round may arrive at once and a roll arrives alone', () => {
+    expect(prompt).toContain('You receive a whole round')
+    expect(prompt).toContain('answer all of them in one turn')
+    expect(prompt).toContain('A roll arrives alone')
+  })
 })

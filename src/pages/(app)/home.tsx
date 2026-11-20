@@ -62,7 +62,7 @@ import { DEFAULT_CAMPAIGN_ID } from '@/constants'
 import { callAction, ActionCallError } from '@/lib/actions'
 import { progressLabel } from '@/lib/campaign-arc'
 import { DEFAULT_CAMPAIGN_SEED, type CampaignRow } from '@/lib/campaign-seed'
-import { dcDisplay, pendingOf } from '@/lib/pending-check'
+import { dcDisplay, owedElsewhere, pendingOf } from '@/lib/pending-check'
 import { requestsRoll, statNamedInText } from '@/lib/gm-prompts'
 import { awaitsMove } from '@/lib/turn-status'
 import type { AbilityScoreKey } from '@/lib/party-presence'
@@ -230,9 +230,16 @@ export default function HomePage() {
 
   // The check this character owes (`P5.19`, ADR 0030), read from the viewer's own
   // row: the sheet highlights exactly that stat, the banner shows its DC, and an
-  // empty `pendingStat` means nothing is owed. Another player's ask lives on
-  // their row and never reaches this one.
+  // empty `pendingStat` means nothing is owed. Another player's ask reaches this
+  // sheet only as `owedElsewhere` below — never as the viewer's own check.
   const pending = pendingOf(myCharacter?.data)
+  // Another sheet's outstanding check (`P5.31`, ADR 0030 amendment 2026-11-20).
+  // Storage is per character, authorisation is table-wide: while the GM waits on
+  // someone else's die, this viewer's cards are inert even though their own row
+  // owes nothing. Signed out there is no player, so nothing is claimed.
+  const owedElsewhereCheck = isSignedIn
+    ? owedElsewhere(characterRecords, myCharacter?.recordId ?? '')
+    : null
   // Whose move it is (ADR 0031, amended 2026-11-20): the console says it, so the
   // GM does not have to name the players who owe one. Signed out there is no
   // player and no sheet, so nothing is ever claimed; `awaitsMove` also refuses a
@@ -502,6 +509,7 @@ export default function HomePage() {
                 items={myItems}
                 pending={pending}
                 fallbackStat={fallbackStat}
+                owedElsewhere={owedElsewhereCheck}
               />
               <InventoryPanel mode={sheetMode} status={inventoryPanelStatus} items={myItems} />
             </aside>
