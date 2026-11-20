@@ -1760,7 +1760,7 @@ describe('startCampaign', () => {
   it('clears packs and the log, heals, re-kits and writes its marker last', async () => {
     const tools = createFakeTools({ query: ok(ROSTER) })
     tools.deleteWhere.mockImplementation(async (collection: string) =>
-      ok({ deleted: collection === 'inventory' ? 2 : 5 }),
+      ok({ deleted: collection === 'inventory' ? 2 : collection === 'gm-messages' ? 3 : 5 }),
     )
 
     const result = await startCampaign(context(tools))
@@ -1771,6 +1771,7 @@ describe('startCampaign', () => {
         sceneIndex: 0,
         progress: 'Act I · Scene 1 of 5',
         clearedRolls: 5,
+        clearedMessages: 3,
         clearedItems: 2,
         healedCharacters: 2,
         grantedItems: 4,
@@ -1789,6 +1790,13 @@ describe('startCampaign', () => {
     expect(tools.deleteWhere).toHaveBeenNthCalledWith(
       2,
       'roll-logs',
+      { campaignId: DEFAULT_CAMPAIGN_ID },
+      100,
+    )
+    // A new game is a new conversation (ADR 0027): the GM thread goes too.
+    expect(tools.deleteWhere).toHaveBeenNthCalledWith(
+      3,
+      'gm-messages',
       { campaignId: DEFAULT_CAMPAIGN_ID },
       100,
     )

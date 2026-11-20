@@ -496,3 +496,17 @@ init).
 - **Regression to fix in Phase 6:** stat cards are inert until a check is
   requested, so `presence.spec.ts`'s bare `stat-card-*` click no longer rolls
   (noted on `P6.2`).
+
+### Revision 3 — 2026-11-20 (new game, new conversation; no ghosts)
+
+- `startCampaign` now drains `gm-messages` too (`P5.25`): a new game starts an
+  empty thread, and the opening beat writes the first narration. Live check: 19
+  turns → one.
+- The GM's snapshot is filtered to **the caller plus the thread's recent
+  speakers** (`P5.26`), passed through a widened `GmToolContext`; the brief says
+  never to name a character who is not in that list. Synthetic beats carry the
+  caller's character name for presence only (stored under `__beat__`, never
+  rendered), so the opening after a reset addresses the real player instead of
+  falling back to every `characters` row.
+- The stale test-account character ("Ash" with no items) was removed from the dev
+  table; the signed-out preview roster now lists only the real character.

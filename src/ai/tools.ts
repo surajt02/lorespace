@@ -36,6 +36,16 @@ import type { Env } from '../../worker.js'
 
 type ToolExecutor = (toolName: string, params: Record<string, unknown>) => Promise<unknown>
 
+/**
+ * What the GM's tools get besides the SDK's agent context: the characters who
+ * are actually at the table this turn (the caller plus everyone who has spoken
+ * in the thread). The snapshot is filtered to them, so a stale character row —
+ * a test account's sheet, a player who has gone home — is never narrated.
+ */
+export type GmToolContext = AgentToolContext<Env> & {
+  presentCharacterNames?: readonly string[]
+}
+
 // Deleting a record is deliberately absent from this list (`P5.4`): the GM
 // never needs it, there is no soft delete or transaction to undo it, and every
 // tool in this set is also auto-exposed over MCP. Re-add only as a narrow,
@@ -298,12 +308,38 @@ function project(row: SnapshotRow, columns: readonly string[]): Record<string, u
   return projected
 }
 
+/**
+ * The party is who is at the table, not every `characters` row. The list is the
+ * caller plus the thread's recent speakers; an empty or absent list falls back
+ * to every row so a caller that cannot know better (a local agent) still sees
+ * the table rather than nothing.
+ */
+function presentCharacters(
+  rows: SnapshotRow[],
+  names?: readonly string[],
+): SnapshotRow[] {
+  if (!names || names.length === 0) return rows
+  const wanted = new Set(
+    names
+      .map((name) => name.trim().toLowerCase())
+      .filter((name) => name.length > 0),
+  )
+  if (wanted.size === 0) return rows
+  return rows.filter((row) => {
+    const name = row.data.name
+    return typeof name === 'string' && wanted.has(name.trim().toLowerCase())
+  })
+}
+
 function snapshotFailed(error: string) {
   return { success: false as const, code: 'snapshot_failed' as const, error }
 }
 
 /** The GM's one read: campaign, party and the ten newest roll rows. */
-async function readCampaignSnapshot(executor: ToolExecutor): Promise<Record<string, unknown>> {
+async function readCampaignSnapshot(
+  executor: ToolExecutor,
+  presentCharacterNames?: readonly string[],
+): Promise<Record<string, unknown>> {
   const campaign = await queryRecords(executor, 'campaigns', { limit: 1 })
   if (!campaign.ok) return snapshotFailed(campaign.error)
 
@@ -321,7 +357,9 @@ async function readCampaignSnapshot(executor: ToolExecutor): Promise<Record<stri
   return {
     success: true,
     campaign: campaign.rows[0] ? project(campaign.rows[0], CAMPAIGN_COLUMNS) : null,
-    characters: characters.rows.map((row) => project(row, CHARACTER_COLUMNS)),
+    characters: presentCharacters(characters.rows, presentCharacterNames).map((row) =>
+      project(row, CHARACTER_COLUMNS),
+    ),
     recentRolls: rolls.rows.map((row) => project(row, ROLL_COLUMNS)),
   }
 }
@@ -374,7 +412,7 @@ const GM_TOOL_DESCRIPTIONS: Record<GmToolName, string> = {
     'Ask one character for one ability check at a steady DC of your choosing (5-30) before you ask for it in prose. The app records the request as the single live check: the table can roll only that stat, and the DC shown is this one. Set a different DC for every action.',
 }
 
-export function buildTools(executor: ToolExecutor, context: AgentToolContext<Env>): ToolSet {
+export function buildTools(executor: ToolExecutor, context: GmToolContext): ToolSet {
   const tools: ToolSet = {}
 
   for (const def of BUILT_IN_TOOLS) {
@@ -394,7 +432,7 @@ export function buildTools(executor: ToolExecutor, context: AgentToolContext<Env
   tools[GM_READ_TOOLS[0]] = tool({
     description: GM_TOOL_DESCRIPTIONS.get_campaign_snapshot,
     inputSchema: z.object({}),
-    execute: async () => readCampaignSnapshot(executor),
+    execute: async () => readCampaignSnapshot(executor, context.presentCharacterNames),
   })
 
   for (const name of GM_WRITE_TOOLS) {

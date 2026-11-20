@@ -1379,6 +1379,7 @@ export interface StartCampaignData {
   sceneIndex: number
   progress: string
   clearedRolls: number
+  clearedMessages: number
   clearedItems: number
   healedCharacters: number
   grantedItems: number
@@ -1438,6 +1439,14 @@ export async function startCampaign(
   const rolls = await drainCollection(tools, 'roll-logs', { campaignId: DEFAULT_CAMPAIGN_ID })
   if (!rolls.ok) return writeFailed('roll-logs', rolls.error, applied)
   applied.push('roll-logs')
+
+  // A new game is a new conversation (ADR 0027): the shared GM thread belongs to
+  // the run, so it goes with the log. The opening beat repopulates it.
+  const messages = await drainCollection(tools, 'gm-messages', {
+    campaignId: DEFAULT_CAMPAIGN_ID,
+  })
+  if (!messages.ok) return writeFailed('gm-messages', messages.error, applied)
+  applied.push('gm-messages')
 
   // The scene is an upsert of the known id; only the title is taken from the
   // existing row, so a reset never renames the campaign.
@@ -1518,6 +1527,7 @@ export async function startCampaign(
       sceneIndex: opening.sceneIndex,
       progress: progressLabel(opening.sceneIndex),
       clearedRolls: rolls.deleted,
+      clearedMessages: messages.deleted,
       clearedItems: items.deleted,
       healedCharacters,
       grantedItems,

@@ -90,7 +90,13 @@ interface ThreadRow {
  * such rows (`Array.prototype.sort` is stable) — and a read failure degrades to
  * an empty history rather than failing a turn the table is waiting on.
  */
-async function loadThread(ownerTools: ActionTools): Promise<ModelMessage[]> {
+/** What the model reads, plus the character names who spoke in it. */
+interface ThreadHistory {
+  messages: ModelMessage[]
+  speakers: string[]
+}
+
+async function loadThread(ownerTools: ActionTools): Promise<ThreadHistory> {
   let result: ActionResult<QueryActionData<Record<string, unknown>>>
   try {
     result = await ownerTools.query('gm-messages', {
@@ -99,11 +105,11 @@ async function loadThread(ownerTools: ActionTools): Promise<ModelMessage[]> {
     })
   } catch (error) {
     console.error(`[gm-chat] thread read threw: ${loggableError(error)}`)
-    return []
+    return { messages: [] as ModelMessage[], speakers: [] as string[] }
   }
   if (!result.success) {
     console.error(`[gm-chat] thread read failed: ${result.error}`)
-    return []
+    return { messages: [] as ModelMessage[], speakers: [] as string[] }
   }
 
   const rows: ThreadRow[] = result.data.records.map((record) => ({
@@ -114,6 +120,7 @@ async function loadThread(ownerTools: ActionTools): Promise<ModelMessage[]> {
   rows.sort((a, b) => (Date.parse(a.createdAt ?? '') || 0) - (Date.parse(b.createdAt ?? '') || 0))
 
   const messages: ModelMessage[] = []
+  const speakers: string[] = []
   for (const { data } of rows.slice(-THREAD_TURN_LIMIT)) {
     const content = typeof data.content === 'string' ? data.content : ''
     if (content.trim() === '') continue
@@ -121,12 +128,13 @@ async function loadThread(ownerTools: ActionTools): Promise<ModelMessage[]> {
       const name = typeof data.characterName === 'string' ? data.characterName.trim() : ''
       // A synthetic beat has no speaker: the sentinel never becomes a prefix.
       const attributed = name !== '' && name !== BEAT_SENTINEL
+      if (attributed) speakers.push(name)
       messages.push({ role: 'user', content: attributed ? `${name}: ${content}` : content })
     } else if (data.role === 'assistant') {
       messages.push({ role: 'assistant', content })
     }
   }
-  return messages
+  return { messages, speakers }
 }
 
 export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth): void {
@@ -201,7 +209,7 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
     // *and* in the appended message below — the model would answer the same
     // sentence twice. The row still lands before the model is called, so a turn
     // that reached the GM is always in the thread.
-    const history = await loadThread(ownerTools)
+    const thread = await loadThread(ownerTools)
 
     // The user's row lands before the model is called: a turn that reached the
     // GM must be in the thread, and a failed write is refused here rather than
@@ -226,8 +234,13 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
     // row it reads back, so the prefix never reaches the player's view — and a
     // synthetic beat has no speaker to attribute it to.
     const modelName = synthetic ? '' : characterName
+    // A synthetic beat still knows who is playing: the panel sends the viewer's
+    // character with it so the snapshot is filtered to the real table. The row
+    // is stored under the sentinel either way (it is never rendered), but the
+    // speaker counts for presence.
+    const presentSpeaker = typeof body.characterName === 'string' ? body.characterName.trim() : ''
     const messages: ModelMessage[] = [
-      ...history,
+      ...thread.messages,
       { role: 'user', content: modelName ? `${modelName}: ${content}` : content },
     ]
 
@@ -235,11 +248,19 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
     // player can read the public table and nothing they do not own. The GM write
     // tools bypass this identity on purpose — they write as the owner through
     // `applyGmMutation` and are gated to this path (ADR 0022).
+    // Who is at the table: everyone who has spoken in this thread (the caller
+    // included, since their row is written before this point) plus this turn's
+    // speaker. The snapshot is filtered to these names, so a character whose
+    // player is not here — a test account's sheet, a player who has left — is
+    // never addressed or narrated (P5.26).
+    const presentCharacterNames = [
+      ...new Set([...thread.speakers, presentSpeaker].map((name) => name.trim()).filter(Boolean)),
+    ]
     const tools = buildTools(
       createUserToolExecutor(c.env, auth.userId, c.req.raw.signal, {
         room: `app:${c.env.DEEPSPACE_APP_ID}`,
       }),
-      { env: c.env, userId: auth.userId, request: c.req.raw },
+      { env: c.env, userId: auth.userId, request: c.req.raw, presentCharacterNames },
     )
 
     // Allocated before streaming so the client can tag its in-flight overlay

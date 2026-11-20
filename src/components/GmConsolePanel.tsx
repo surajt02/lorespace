@@ -257,7 +257,11 @@ export function GmConsolePanel({
       content: next.content,
       // Attribution is a field: the route prefixes the model's copy and the
       // thread labels the row from `characterName`.
-      characterName: next.synthetic ? '' : characterName,
+      // The name travels even on a synthetic beat: it is never rendered (the
+      // row is stored under the sentinel) but it tells the server who is at the
+      // table, so the snapshot is filtered to real players instead of every
+      // `characters` row (P5.26).
+      characterName,
       ...(next.synthetic || !character?.recordId ? {} : { characterId: character.recordId }),
       synthetic: next.synthetic,
       modelId,

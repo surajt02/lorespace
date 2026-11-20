@@ -982,6 +982,18 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       clickable, every other stat is disabled, with a label naming who owes the
       roll.
 
+- [x] `P5.25` A new game starts a new conversation: `startCampaign` drains
+      `gm-messages` with the packs and the log (the opening beat repopulates it),
+      so nothing from the previous run is narrated. — 2026-11-20 revision
+      (live: 19 turns → the new opening narration only)
+- [x] `P5.26` The GM's party is who is at the table: `get_campaign_snapshot`
+      filters `characters` to the caller plus the thread's recent speakers, passed
+      through the tool context, and the brief says never to name a character who
+      is not in that list. Synthetic beats carry the caller's character for
+      presence (hidden from the thread), so the opening after a reset addresses
+      the player, not a stale row. — 2026-11-20 revision (ghost test character
+      removed; signed-out roster lists only `joeblo`)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.
