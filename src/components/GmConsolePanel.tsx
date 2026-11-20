@@ -155,6 +155,8 @@ export interface GmConsolePanelProps {
    * only while nothing is pending, so it never overrules a real check.
    */
   pending?: PendingCheck | null
+  /** The characters playing right now; the GM's snapshot is filtered to them. */
+  onlineCharacterNames?: string[]
 }
 
 /**
@@ -170,6 +172,7 @@ export function GmConsolePanel({
   enemyName,
   onDraftChange,
   pending = null,
+  onlineCharacterNames = [],
 }: GmConsolePanelProps) {
   const [input, setInput] = useState('')
   const [queue, setQueue] = useState<QueuedTurn[]>([])
@@ -280,8 +283,9 @@ export function GmConsolePanel({
       ...(next.synthetic || !character?.recordId ? {} : { characterId: character.recordId }),
       synthetic: next.synthetic,
       modelId,
+      onlineCharacterNames,
     })
-  }, [queue, signedIn, isLoading, send, characterName, character?.recordId, modelId])
+  }, [queue, signedIn, isLoading, send, characterName, character?.recordId, modelId, onlineCharacterNames])
 
   // A resolved roll fires exactly one automatic turn (ADR 0012). The first
   // non-empty snapshot is the baseline; every unseen id is marked, and the
@@ -331,10 +335,23 @@ export function GmConsolePanel({
     if (!signedIn) return
     if (!openBeatId) return
     if (openedBeat.current === openBeatId) return
+    // The beat is the click's consequence, not the mount's: a remount (a hot
+    // reload keeps this id) must not narrate the opening a second time, so an
+    // answer written after the click already opened the story.
+    const openedAt = Number(openBeatId)
+    const alreadyOpened = threadRows.some(
+      (row) =>
+        row.data.role === 'assistant' &&
+        (Date.parse(row.createdAt ?? '') || 0) > openedAt,
+    )
+    if (alreadyOpened) {
+      openedBeat.current = openBeatId
+      return
+    }
     openedBeat.current = openBeatId
     enqueue(buildOpeningPrompt(progress ?? ''), true)
     // `enqueue` is stable in behaviour; see the roll effect above.
-  }, [openBeatId, progress, signedIn])
+  }, [openBeatId, progress, signedIn, threadRows])
 
   // The chip prompts cite the viewer's newest roll when there is one.
   const latestRoll = useMemo(() => {

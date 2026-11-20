@@ -40,6 +40,12 @@ export interface GmTurnRequest {
   synthetic?: boolean
   /** The selected model id (`localStorage['deepspace-ai-model']`). */
   modelId?: string
+  /**
+   * The characters playing right now (you plus present peers, `P5.28`). The
+   * route filters the GM's snapshot to this set, so an offline character is a
+   * name on the roster and nothing more.
+   */
+  onlineCharacterNames?: string[]
 }
 
 export interface GmStream {
@@ -108,6 +114,9 @@ export function useGmStream({ onTurnEnd }: UseGmStreamOptions = {}): GmStream {
           ...(turn.characterId ? { characterId: turn.characterId } : {}),
           ...(turn.synthetic ? { synthetic: true } : {}),
           ...(turn.modelId ? { modelId: turn.modelId } : {}),
+          ...(turn.onlineCharacterNames && turn.onlineCharacterNames.length > 0
+            ? { onlineCharacterNames: turn.onlineCharacterNames }
+            : {}),
         }),
         signal: controller.signal,
       })

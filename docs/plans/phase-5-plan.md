@@ -510,3 +510,17 @@ init).
   falling back to every `characters` row.
 - The stale test-account character ("Ash" with no items) was removed from the dev
   table; the signed-out preview roster now lists only the real character.
+
+### Revision 5 — 2026-11-20 (roster parity, online-only table, no resent intro)
+
+- `P5.28`: `buildParty` appends unmatched `characters` rows with `isOnline: false`,
+  so both windows list the same party; the roster shows a filled dot plus an
+  `offline` label, and signed out keeps the no-claim `undefined` (ADR 0006).
+- The presence bar reports the online character names upward; the console sends
+  them with every turn and the route filters the snapshot to caller ∪ online.
+  A solo session is single-player by construction (ADR 0029, supersedes the
+  thread-speaker rule of `P5.26`).
+- The opening beat no longer re-sends after a remount: it is skipped when an
+  assistant row newer than the click already exists. The correction beat also
+  forbids re-narrating the scene, so a missed `request_check` cannot look like a
+  second intro.

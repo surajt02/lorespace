@@ -132,6 +132,9 @@ export default function HomePage() {
   // True while the viewer is composing a GM message; `PartyPresenceBar`
   // broadcasts it as `isTypingAction` for the other windows' rosters (`P5.9`).
   const [gmComposing, setGmComposing] = useState(false)
+  // The characters actually playing (`P5.28`): reported by the presence bar and
+  // handed to each GM turn, so the GM plays with who is here and nobody else.
+  const [onlineCharacterNames, setOnlineCharacterNames] = useState<string[]>([])
   const { error: toastError, success: toastSuccess } = useToast()
 
   // "Start New Campaign" (ADR 0025, ADR 0026): the modal is the gate, `starting`
@@ -404,6 +407,7 @@ export default function HomePage() {
                     myCharacter={myCharacter}
                     userId={userId ?? ''}
                     isTyping={gmComposing}
+                    onOnlineNames={setOnlineCharacterNames}
                   />
                 ) : (
                   <PartyRoster members={previewRoster} />
@@ -467,6 +471,7 @@ export default function HomePage() {
                   enemyName={campaign.enemyName}
                   onDraftChange={setGmComposing}
                   pending={pending}
+                  onlineCharacterNames={onlineCharacterNames}
                 />
               </div>
             </section>

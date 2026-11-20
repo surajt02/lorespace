@@ -30,6 +30,13 @@ export interface PartyMember {
   maxHp: number
   isSelf: boolean
   hasCharacter: boolean
+  /**
+   * The player is at the table right now (their socket is open, or it is you).
+   * The roster lists everyone in the party either way (`P5.28`); this is what
+   * tells a present player from an absent one — and the GM only plays with the
+   * present ones.
+   */
+  isOnline: boolean
   /** A peer is composing a GM message (`P5.9`). Always `false` for self. */
   isTyping: boolean
 }
@@ -102,6 +109,7 @@ export function buildParty({
       maxHp: myCharacter.data.maxHp,
       isSelf: true,
       hasCharacter: true,
+      isOnline: true,
       // Self never shows a typing marker: it is your own composer, and the
       // socket excludes self anyway.
       isTyping: false,
@@ -129,6 +137,7 @@ export function buildParty({
         maxHp: 0,
         isSelf: false,
         hasCharacter: false,
+        isOnline: true,
         isTyping: peerIsTyping(peer.state),
       })
       continue
@@ -142,7 +151,29 @@ export function buildParty({
       maxHp: row.data.maxHp,
       isSelf: false,
       hasCharacter: true,
+      isOnline: true,
       isTyping: peerIsTyping(peer.state),
+    })
+  }
+
+  // Parity with the signed-out preview (`P5.28`): the roster is the party, not
+  // the present players. A character whose owner is not connected is listed as
+  // offline instead of vanishing, so both windows show the same table — and the
+  // GM is told only the online ones are playing.
+  for (const record of characters) {
+    const userId = record.data.userId
+    if (typeof userId !== 'string' || userId === '' || listed.has(userId)) continue
+    listed.add(userId)
+    members.push({
+      userId,
+      name: record.data.name,
+      archetype: record.data.archetype,
+      hp: record.data.hp,
+      maxHp: record.data.maxHp,
+      isSelf: false,
+      hasCharacter: true,
+      isOnline: false,
+      isTyping: false,
     })
   }
 

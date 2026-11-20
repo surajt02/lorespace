@@ -34,12 +34,19 @@ export function PartyPresenceBar({
   myCharacter,
   userId,
   isTyping = false,
+  onOnlineNames,
 }: {
   characters: RecordData<CharacterRow>[]
   myCharacter: RecordData<CharacterRow> | null
   userId: string
   /** The viewer is composing a GM message (`P5.9`). */
   isTyping?: boolean
+  /**
+   * The character names who are actually playing right now — you plus every
+   * present peer with a sheet. The GM is told this set, so an offline character
+   * is in the roster but not in the story (`P5.28`).
+   */
+  onOnlineNames?: (names: string[]) => void
 }) {
   const { peers, connected, updateState } = usePresenceRoom(DEFAULT_CAMPAIGN_PRESENCE_SCOPE)
 
@@ -67,6 +74,17 @@ export function PartyPresenceBar({
     [peers, characters, myCharacter, userId],
   )
 
+  const onlineNames = useMemo(() => {
+    const names = party.filter((member) => member.isOnline && member.hasCharacter).map((m) => m.name)
+    return [...new Set(names)]
+  }, [party])
+
+  // Reported rather than read by the parent: the presence socket lives here, and
+  // `home` only needs the names to hand to the GM turn.
+  useEffect(() => {
+    onOnlineNames?.(onlineNames)
+  }, [onlineNames, onOnlineNames])
+
   return (
     <PartyRoster
       members={party.map((member) => ({
@@ -78,7 +96,7 @@ export function PartyPresenceBar({
         // A dot only while the socket is actually open: a member whose
         // connection was refused (or is still handshaking) is not "online",
         // and the row still renders because presence is not who they are.
-        online: member.isSelf || connected,
+        online: member.isOnline,
         isSelf: member.isSelf,
         isTyping: member.isTyping,
       }))}

@@ -55,6 +55,10 @@ type ResolveAuth = (req: Request, env: Env) => Promise<VerifyResult | null>
 
 /** What one player typed. Far above a table message; blocks megabyte payloads. */
 const MAX_CONTENT_LENGTH = 2_000
+/** A character name's bound, matching `characters.name`'s schema limit. */
+const MAX_NAME_LENGTH = 40
+/** No table is larger than this; a longer list is trimmed, not trusted. */
+const MAX_ONLINE_NAMES = 24
 
 /** Rows read per turn. The thread is small; this only bounds a pathological one. */
 const THREAD_ROW_LIMIT = 200
@@ -157,6 +161,7 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
         characterId?: unknown
         modelId?: unknown
         synthetic?: unknown
+        onlineCharacterNames?: unknown
       }>()
       .catch(
         () =>
@@ -165,6 +170,7 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
             characterName?: unknown
             modelId?: unknown
             synthetic?: unknown
+            onlineCharacterNames?: unknown
           }),
       )
 
@@ -248,13 +254,22 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
     // player can read the public table and nothing they do not own. The GM write
     // tools bypass this identity on purpose — they write as the owner through
     // `applyGmMutation` and are gated to this path (ADR 0022).
-    // Who is at the table: everyone who has spoken in this thread (the caller
-    // included, since their row is written before this point) plus this turn's
-    // speaker. The snapshot is filtered to these names, so a character whose
-    // player is not here — a test account's sheet, a player who has left — is
-    // never addressed or narrated (P5.26).
+    // Who is playing: the caller plus every character the panel reports as
+    // online (`P5.28`). The snapshot is filtered to this set, so a character
+    // whose owner is not connected — an offline party member, a test account — is
+    // a roster row and nothing more. The list is client-supplied, so it is
+    // bounded and shape-checked here; it can only ever *narrow* what the model
+    // sees, never grant a read the caller could not make (the tool executor still
+    // runs as the caller).
+    const reportedOnline = Array.isArray(body.onlineCharacterNames)
+      ? body.onlineCharacterNames
+          .filter((name): name is string => typeof name === 'string')
+          .map((name) => name.trim().slice(0, MAX_NAME_LENGTH))
+          .filter((name) => name.length > 0)
+          .slice(0, MAX_ONLINE_NAMES)
+      : []
     const presentCharacterNames = [
-      ...new Set([...thread.speakers, presentSpeaker].map((name) => name.trim()).filter(Boolean)),
+      ...new Set([...reportedOnline, presentSpeaker].map((name) => name.trim()).filter(Boolean)),
     ]
     const tools = buildTools(
       createUserToolExecutor(c.env, auth.userId, c.req.raw.signal, {

@@ -1004,6 +1004,16 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       opening beat reproduced the dead end, then self-healed through the
       correction into a real `wis`/13 check)
 
+- [x] `P5.28` Roster parity and an online-only table
+      ([ADR 0029](./adr/0029-roster-parity-and-online-table.md)): the roster lists
+      every party character in both windows with `isOnline` (filled dot, `offline`
+      micro-label; no claim signed out), `PartyPresenceBar` reports the online
+      names, and each GM turn carries them so `get_campaign_snapshot` returns the
+      caller plus online characters only. — 2026-11-20 revision (live: roster
+      `Vesper online / joeblo offline`; POST body `["Vesper"]` while joeblo is
+      away). The opening beat is also no longer re-sent by a remount: it is
+      skipped when an answer written after the click already exists.
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.

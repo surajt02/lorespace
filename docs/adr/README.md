@@ -52,3 +52,4 @@ an accident.
 | [0026](./0026-reset-clears-roll-log.md) | The new-game reset clears the roll log too | Accepted | content / game flow |
 | [0027](./0027-shared-gm-thread.md) | One shared GM thread per campaign | Accepted | AI / realtime |
 | [0028](./0028-one-dc-per-action.md) | One DC per action, and only the requested roll counts | Accepted | game mechanics / AI |
+| [0029](./0029-roster-parity-and-online-table.md) | The party is the roster; the table is who is online | Accepted | realtime / AI |

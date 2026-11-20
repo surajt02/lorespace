@@ -89,6 +89,14 @@ export function PartyRoster({ members }: { members: RosterMember[] }) {
                         <span className="sr-only">{member.online ? 'online' : 'offline'}</span>
                       </>
                     )}
+                    {member.online === false && (
+                      <span
+                        data-testid="roster-offline"
+                        className="font-pixel text-[10px] uppercase text-muted-foreground"
+                      >
+                        offline
+                      </span>
+                    )}
                     {member.isTyping === true && member.isSelf !== true && (
                       <span
                         data-testid="roster-typing"

@@ -90,17 +90,22 @@ describe('buildParty', () => {
       myUserId: KAELEN.data.userId,
     })
 
-    expect(party).toEqual([
-      {
-        userId: KAELEN.data.userId,
-        name: KAELEN.data.name,
-        archetype: KAELEN.data.archetype,
-        hp: KAELEN.data.hp,
-        maxHp: KAELEN.data.maxHp,
-        isSelf: true,
-        hasCharacter: true,
-        isTyping: false,
-      },
+    expect(party[0]).toEqual({
+      userId: KAELEN.data.userId,
+      name: KAELEN.data.name,
+      archetype: KAELEN.data.archetype,
+      hp: KAELEN.data.hp,
+      maxHp: KAELEN.data.maxHp,
+      isSelf: true,
+      hasCharacter: true,
+      isOnline: true,
+      isTyping: false,
+    })
+    // Parity with the signed-out preview (`P5.28`): the other party member is
+    // listed, and marked offline rather than hidden.
+    expect(party.map((member) => [member.name, member.isOnline])).toEqual([
+      ['Kaelen', true],
+      ['Vesper', false],
     ])
   })
 
@@ -136,7 +141,11 @@ describe('buildParty', () => {
       myUserId: KAELEN.data.userId,
     })
 
-    expect(party.map((member) => member.userId)).toEqual([KAELEN.data.userId])
+    // The anonymous peer adds nothing; the offline party member is still listed.
+    expect(party.map((member) => member.userId)).toEqual([
+      KAELEN.data.userId,
+      VESPER.data.userId,
+    ])
   })
 
   it('joins a peer to their character row for HP', () => {
@@ -155,6 +164,7 @@ describe('buildParty', () => {
       maxHp: VESPER.data.maxHp,
       isSelf: false,
       hasCharacter: true,
+      isOnline: true,
       isTyping: false,
     })
   })
@@ -175,6 +185,8 @@ describe('buildParty', () => {
       ['user-vesper', true],
       // No sheet, but still composing: presence is not gated on a character row.
       ['user-new', true],
+      // The row nobody is sitting at: listed, offline, never typing.
+      [VESPER.data.userId, false],
     ])
   })
 
@@ -218,6 +230,7 @@ describe('buildParty', () => {
         maxHp: 0,
         isSelf: false,
         hasCharacter: false,
+        isOnline: true,
         isTyping: false,
       },
       {
@@ -228,6 +241,30 @@ describe('buildParty', () => {
         maxHp: 0,
         isSelf: false,
         hasCharacter: false,
+        isOnline: true,
+        isTyping: false,
+      },
+      // Nobody sits at either party row, so both are listed offline.
+      {
+        userId: KAELEN.data.userId,
+        name: KAELEN.data.name,
+        archetype: KAELEN.data.archetype,
+        hp: KAELEN.data.hp,
+        maxHp: KAELEN.data.maxHp,
+        isSelf: false,
+        hasCharacter: true,
+        isOnline: false,
+        isTyping: false,
+      },
+      {
+        userId: VESPER.data.userId,
+        name: VESPER.data.name,
+        archetype: VESPER.data.archetype,
+        hp: VESPER.data.hp,
+        maxHp: VESPER.data.maxHp,
+        isSelf: false,
+        hasCharacter: true,
+        isOnline: false,
         isTyping: false,
       },
     ])
@@ -271,6 +308,7 @@ describe('buildParty', () => {
       KAELEN.data.userId,
       'user-a',
       'user-b',
+      VESPER.data.userId,
     ])
     // The first listing wins, so a re-announced peer cannot jump the queue.
     expect(party[1]?.name).toBe(VESPER.data.name)
@@ -284,7 +322,33 @@ describe('buildParty', () => {
       myUserId: KAELEN.data.userId,
     })
 
-    expect(party).toHaveLength(1)
-    expect(party[0]?.isSelf).toBe(true)
+    // Self appears once as self; the other party member is the only other row.
+    expect(party.map((member) => [member.userId, member.isSelf])).toEqual([
+      [KAELEN.data.userId, true],
+      [VESPER.data.userId, false],
+    ])
+  })
+
+  it('reports the online names for the GM turn', () => {
+    // `P5.28`: the GM plays with who is here, so the bar hands the panel exactly
+    // the present characters — an offline party member is not among them.
+    const party = buildParty({
+      peers: [{ userId: 'user-vesper', state: state({ characterId: VESPER.recordId }) }],
+      characters: PREVIEW_CHARACTERS,
+      myCharacter: KAELEN,
+      myUserId: KAELEN.data.userId,
+    })
+    const online = party.filter((member) => member.isOnline && member.hasCharacter)
+    expect(online.map((member) => member.name)).toEqual(['Kaelen', 'Vesper'])
+
+    const alone = buildParty({
+      peers: [],
+      characters: PREVIEW_CHARACTERS,
+      myCharacter: KAELEN,
+      myUserId: KAELEN.data.userId,
+    })
+    expect(
+      alone.filter((member) => member.isOnline && member.hasCharacter).map((m) => m.name),
+    ).toEqual(['Kaelen'])
   })
 })

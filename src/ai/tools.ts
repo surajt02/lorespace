@@ -400,7 +400,7 @@ async function runGmWrite(
 
 const GM_TOOL_DESCRIPTIONS: Record<GmToolName, string> = {
   get_campaign_snapshot:
-    "Read the table's current state: the campaign scene, every character's stats and HP, and the ten newest roll-log entries. Read-only, and the only way to verify a reported roll.",
+    "Read the table's current state: the campaign scene, the stats and HP of every character who is online, and the ten newest roll-log entries. Read-only, and the only way to verify a reported roll.",
   modify_character_hp:
     "Move one character's HP by a delta (negative for damage, positive for healing). The app clamps to 0..maxHp and writes a combat row; use the returned before/after numbers in your narration.",
   grant_character_loot:

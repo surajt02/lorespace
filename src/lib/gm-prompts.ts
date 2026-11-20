@@ -235,5 +235,5 @@ export function statNamedInText(text: string): AbilityScoreKey | null {
 export function buildCheckFixPrompt(stat: AbilityScoreKey, characterName: string): string {
   const name = characterName.trim()
   const who = name === '' ? 'the acting character' : name
-  return `You asked ${who} to roll ${stat.toUpperCase()} but no check is open, so the table cannot roll and the story has stopped. Call request_check for ${who} with stat ${JSON.stringify(stat)} and the DC you intended, then stop. One sentence of narration at most.`
+  return `You asked ${who} to roll ${stat.toUpperCase()} but no check is open, so the table cannot roll and the story has stopped. Call request_check for ${who} with stat ${JSON.stringify(stat)} and the DC you intended. Do not narrate: do not repeat, continue or re-describe the scene or your previous message. The tool call is the whole reply.`
 }
