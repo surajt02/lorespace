@@ -107,9 +107,10 @@ export function CharacterSheetPanel({
   character: RecordData<CharacterRow> | null
   items: RecordData<InventoryRow>[]
   /**
-   * The check the GM has asked for, when one is pending (`P5.19`). The server
-   * refuses any other stat (`roll_not_requested`), so the sheet only makes the
-   * requested card clickable — one check is live at a time.
+   * The check this character owes, when one is pending (`P5.19`, ADR 0030). The
+   * server refuses any other stat (`roll_not_requested`), so the sheet only makes
+   * the requested card clickable. It is read from the viewer's own row, so
+   * another player's ask never dims these cards.
    */
   pending?: PendingCheck | null
   /**
@@ -232,7 +233,6 @@ export function CharacterSheetPanel({
   return (
     <SheetBody
       character={character.data}
-      characterId={character.recordId}
       carried={items.length}
       pending={pending}
       fallbackStat={fallbackStat}
@@ -313,7 +313,6 @@ function SheetSkeleton() {
  *  stay display-only (signed-out preview, or a sheet that is not the viewer's). */
 function SheetBody({
   character,
-  characterId,
   carried,
   pending,
   fallbackStat,
@@ -321,7 +320,6 @@ function SheetBody({
   rollingStat,
 }: {
   character: CharacterRow
-  characterId: string
   carried: number
   pending: PendingCheck | null
   fallbackStat: AbilityScoreKey | null
@@ -333,14 +331,10 @@ function SheetBody({
   const ratio = maxHp > 0 ? hp / maxHp : 0
 
   // One line about the live check: the viewer's own card reads as an
-  // instruction ("Roll DEX against 14"); someone else's names them, because
-  // this panel only holds the viewer's row and cannot resolve another sheet.
-  const checkIsMine = pending !== null && (pending.characterId === '' || pending.characterId === characterId)
-  const label = checkIsMine
-    ? pendingLabel(pending)
-    : pending
-      ? pendingLabel(pending, 'Another adventurer')
-      : pendingLabel(null, undefined, fallbackStat)
+  // instruction ("Roll DEX against 14"). This panel only holds the viewer's row,
+  // and that row is the whole gate (ADR 0030), so there is no other sheet to
+  // describe here.
+  const label = pending ? pendingLabel(pending) : pendingLabel(null, fallbackStat)
 
   return (
     <section data-testid="character-sheet" className="pixel-frame bg-card p-3">
@@ -407,7 +401,7 @@ function SheetBody({
             </>
           )
 
-          const state = statCardState({ pending, characterId, stat: key, fallbackStat })
+          const state = statCardState({ pending, stat: key, fallbackStat })
           const rollable = state === 'rollable'
 
           if (!onRoll) {
@@ -425,8 +419,8 @@ function SheetBody({
                 size="sm"
                 data-testid={`stat-card-${key}`}
                 // What the sheet can do is decided by `pending-check.ts`, the
-                // same rule the server enforces: only the requested stat of the
-                // requested character is clickable (`P5.20`).
+                // same rule the server enforces from this row: only the
+                // requested stat of this character is clickable (`P5.20`).
                 data-pending={rollable ? 'true' : undefined}
                 aria-label={
                   rollable ? `Roll a ${statLabel} check` : `${statLabel} check not requested`

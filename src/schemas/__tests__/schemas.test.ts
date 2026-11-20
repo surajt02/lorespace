@@ -78,28 +78,35 @@ describe('data-model contracts later phases depend on', () => {
     return schema
   }
 
-  it('keeps the campaign scene at twelve columns, with the arc position a number', () => {
+  it('keeps the campaign scene at ten columns, with the arc position and round as numbers', () => {
     const campaigns = schemaNamed('campaigns')
     const sceneIndex = campaigns.columns.find((column) => column.name === 'sceneIndex')
+    const roundNumber = campaigns.columns.find((column) => column.name === 'roundNumber')
 
-    expect(campaigns.columns).toHaveLength(12)
+    expect(campaigns.columns).toHaveLength(10)
     expect(sceneIndex?.storage).toBe('number')
     expect(sceneIndex?.default).toBe(0)
     expect(sceneIndex?.required).toBeUndefined()
+    // The round (ADR 0031): additive with a default, so an existing campaign row
+    // reads as round 1 rather than needing a migration.
+    expect(roundNumber?.storage).toBe('number')
+    expect(roundNumber?.interpretation).toBe('plain')
+    expect(roundNumber?.default).toBe(1)
+    expect(roundNumber?.required).toBeUndefined()
   })
 
   /**
-   * The pending check (`P5.19`): three additive columns on the campaign, and the
-   * "nothing pending" defaults a roll, an advance and a reset return them to.
-   * `pendingStat` selects over the real six abilities — `wis`, never the
-   * `wy` typo — because `rollSkillCheck` refuses anything not in this list.
+   * The pending check (`P5.19`, ADR 0030): two additive columns on the character
+   * that owes the roll, and the "nothing pending" defaults a roll, an advance and
+   * a reset return them to. `pendingStat` selects over the real six abilities —
+   * `wis`, never the `wy` typo — because `rollSkillCheck` refuses anything not in
+   * this list. The campaign row deliberately carries none of it any more: one
+   * slot for the whole table let one player's ask block or overwrite another's.
    */
-  it('keeps the pending check on the campaign, defaulting to nothing pending', () => {
-    const campaigns = schemaNamed('campaigns')
-    const column = (name: string) => campaigns.columns.find((entry) => entry.name === name)
+  it('keeps each pending check on its character, defaulting to nothing pending', () => {
+    const characters = schemaNamed('characters')
+    const column = (name: string) => characters.columns.find((entry) => entry.name === name)
 
-    expect(column('pendingCharacterId')?.storage).toBe('text')
-    expect(column('pendingCharacterId')?.default).toBe('')
     expect(column('pendingStat')?.interpretation).toEqual({
       kind: 'select',
       options: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
@@ -107,9 +114,14 @@ describe('data-model contracts later phases depend on', () => {
     expect(column('pendingStat')?.default).toBe('')
     expect(column('pendingDc')?.storage).toBe('number')
     expect(column('pendingDc')?.default).toBe(0)
-    // Additive: none of the three is required, so an existing row still reads.
-    for (const name of ['pendingCharacterId', 'pendingStat', 'pendingDc']) {
+    // Additive: neither is required, so an existing row still reads.
+    for (const name of ['pendingStat', 'pendingDc']) {
       expect(column(name)?.required).toBeUndefined()
+    }
+    // The campaign no longer has a slot for them (ADR 0030).
+    const campaigns = schemaNamed('campaigns')
+    for (const name of ['pendingCharacterId', 'pendingStat', 'pendingDc']) {
+      expect(campaigns.columns.some((entry) => entry.name === name)).toBe(false)
     }
   })
 
@@ -157,12 +169,19 @@ describe('data-model contracts later phases depend on', () => {
   it('keeps one character row per user per campaign, owned via userId', () => {
     const characters = schemaNamed('characters')
     const userId = characters.columns.find((column) => column.name === 'userId')
+    const actedRound = characters.columns.find((column) => column.name === 'actedRound')
 
-    expect(characters.columns).toHaveLength(13)
+    expect(characters.columns).toHaveLength(16)
     expect(characters.ownerField).toBe('userId')
     expect(characters.uniqueOn).toEqual(['userId', 'campaignId'])
     expect(userId?.userBound).toBe(true)
     expect(userId?.immutable).toBe(true)
+    // Who has acted this round (ADR 0031): 0 is "not yet", the same sentinel
+    // style as the pending check above, and the column is additive.
+    expect(actedRound?.storage).toBe('number')
+    expect(actedRound?.interpretation).toBe('plain')
+    expect(actedRound?.default).toBe(0)
+    expect(actedRound?.required).toBeUndefined()
   })
 
   it('keeps inventory at seven columns, owned by userId and named by character', () => {

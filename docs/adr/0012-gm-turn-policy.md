@@ -1,6 +1,6 @@
 # 0012 — The GM answers the latest message and auto-resolves rolls
 
-- **Status:** Accepted
+- **Status:** Superseded by [0031](./0031-round-pacing.md)
 - **Date:** 2026-11-18
 - **Area:** AI
 - **Constraints:** `P5.5`, `P5.7`, `P4.4` interaction

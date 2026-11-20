@@ -21,7 +21,7 @@ import { DEFAULT_CAMPAIGN_SEED, type CampaignRow } from './campaign-seed'
 // import `CampaignRow` from the fixture module.
 export type { CampaignRow } from './campaign-seed'
 
-/** `characters` — 13 columns. `userId` is `userBound` on the server. */
+/** `characters` — 15 columns. `userId` is `userBound` on the server. */
 export interface CharacterRow {
   userId: string
   campaignId: string
@@ -36,6 +36,9 @@ export interface CharacterRow {
   int: number
   wis: number
   cha: number
+  /** The check this character owes (`P5.31`): `''` stat / `0` DC is none. */
+  pendingStat?: string
+  pendingDc?: number
 }
 
 /** `inventory` — 7 columns. `characterId` holds a character **recordId**. */

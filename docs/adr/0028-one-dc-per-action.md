@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-11-19
 - **Area:** game mechanics / AI
-- **Constraints:** `P5.19`
+- **Constraints:** `P5.19`; the storage (campaign columns) is superseded by
+  [0030](./0030-per-character-check-gate.md), the rules below stand
 - **Supersedes:** the "the check's DC is the scene's `activeThreatDc`" clause of
   [0023](./0023-campaign-reset-and-scene-progression.md), and step 2 of
   [0024](./0024-narrative-combat.md) (the GM no longer sets a check's DC through

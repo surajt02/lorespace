@@ -5,9 +5,11 @@
  *
  * The active DC lives beside the prose, not in the meta row: it is the number the
  * table is being asked to beat, so it is read at a glance (`P5.20`). It shows the
- * **pending check's** DC while a roll is owed — with a pulse, because the table
- * is waiting on a click — and the scene's baseline DC otherwise. That is what
- * makes a risky jump (17) and a heavy lever (12) different numbers in one scene.
+ * **viewer's pending check's** DC while that character owes a roll — with a
+ * pulse, because they are being waited on — and the scene's baseline DC
+ * otherwise. That is what makes a risky jump (17) and a heavy lever (12)
+ * different numbers in one scene. Another player's ask lives on their own row and
+ * does not move this number (ADR 0030).
  *
  * Prop-driven (`P1.10`): `P2.x`/`P3.x` pass a live campaign row instead of the
  * fixture. The enemy block is a branch, not a fixture decision — ADR 0011's
@@ -39,12 +41,12 @@ export interface SceneBannerProps {
   /** The reset is in flight: the button announces it and cannot be clicked. */
   starting?: boolean
   /**
-   * The DC the table is currently up against: the pending check's own number
-   * while one is owed, else the scene's (`dcDisplay`). Falls back to the row's
+   * The DC this viewer is up against: their pending check's own number while one
+   * is owed, else the scene's (`dcDisplay`). Falls back to the row's
    * `activeThreatDc` when a caller renders the banner on its own.
    */
   activeDc?: number
-  /** A check is pending: the block pulses, because the table must roll. */
+  /** The viewer's check is pending: the block pulses, because they must roll. */
   dcPending?: boolean
 }
 

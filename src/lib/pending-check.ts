@@ -1,12 +1,17 @@
 /**
- * The one pending check, as the client reads it (`P5.19`, `P5.20`).
+ * One character's pending check, as the client reads it (`P5.19`, `P5.20`,
+ * `P5.31`).
  *
- * The GM asks for a check through `request_check`, which stores it on the
- * campaign row (`pendingCharacterId` / `pendingStat` / `pendingDc`). That row is
- * the single source: the sheet cannot highlight a stat the engine did not
- * record, and it cannot enable one the engine would refuse. `rollSkillCheck`
- * enforces the same rule on the server, so this module is the *display* half of
- * one decision, not a second opinion.
+ * The GM asks for a check through `request_check`, which stores it on **that
+ * character's row** (`pendingStat` / `pendingDc`, ADR 0030). The row is the
+ * single source: the sheet cannot highlight a stat the engine did not record,
+ * and it cannot enable one the engine would refuse. `rollSkillCheck` enforces
+ * the same rule on the server from the same row, so this module is the *display*
+ * half of one decision, not a second opinion.
+ *
+ * Because the row IS the character, a pending check addressed to someone else is
+ * invisible here: two players can owe a roll at once and neither can block or
+ * overwrite the other. The panel only ever calls this with the viewer's own row.
  *
  * Tolerance matches the action (`pendingCheckOf`): a half-written row — an
  * unknown ability key, a non-positive or non-finite DC — is "nothing pending"
@@ -18,27 +23,24 @@
 
 import type { AbilityScoreKey } from '@/lib/party-presence'
 
-/** The one check the GM has asked for and the table has not rolled yet. */
+/** The check one character owes and has not rolled yet. */
 export interface PendingCheck {
-  /** `''` when the request does not name a character; any caller may then roll it. */
-  characterId: string
   stat: AbilityScoreKey
   dc: number
 }
 
 /**
- * The `campaigns` columns a pending check occupies. A live row carries them, but
- * `CampaignRow` predates them (they are additive), so the reader takes `unknown`
- * and validates every field — a hand-edited row must not become a gate no player
- * can satisfy.
+ * The `characters` columns a pending check occupies. A live row carries them,
+ * but `CharacterRow` treats them as optional (the columns are additive), so the
+ * reader takes `unknown` and validates every field — a hand-edited row must not
+ * become a gate no player can satisfy.
  */
 export interface PendingSource {
-  pendingCharacterId?: unknown
   pendingStat?: unknown
   pendingDc?: unknown
 }
 
-/** The six ability keys, in schema order — `campaigns.pendingStat`'s options. */
+/** The six ability keys, in schema order — `characters.pendingStat`'s options. */
 const ABILITY_KEYS: readonly AbilityScoreKey[] = ['str', 'dex', 'con', 'int', 'wis', 'cha']
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -50,24 +52,19 @@ function isAbilityKey(value: unknown): value is AbilityScoreKey {
 }
 
 /**
- * The campaign row's pending check, or `null` when nothing is pending.
+ * One character row's pending check, or `null` when nothing is pending.
  *
- * A campaign that is missing, `null`, or half-written reads as "nothing
- * pending": the sheet then shows the scene's DC and no stat is highlighted,
- * exactly as it did before the gate existed.
+ * A row that is missing, `null`, or half-written reads as "nothing pending": the
+ * sheet then shows the scene's DC and no stat is highlighted, exactly as it did
+ * before the gate existed.
  */
-export function pendingOf(campaign: unknown): PendingCheck | null {
-  if (!isRecord(campaign)) return null
-  const row = campaign as PendingSource
+export function pendingOf(character: unknown): PendingCheck | null {
+  if (!isRecord(character)) return null
+  const row = character as PendingSource
   if (!isAbilityKey(row.pendingStat)) return null
   const dc = row.pendingDc
   if (typeof dc !== 'number' || !Number.isFinite(dc) || dc < 1) return null
-  return {
-    characterId:
-      typeof row.pendingCharacterId === 'string' ? row.pendingCharacterId.trim() : '',
-    stat: row.pendingStat,
-    dc,
-  }
+  return { stat: row.pendingStat, dc }
 }
 
 /**
@@ -79,25 +76,22 @@ export function dcDisplay(pending: PendingCheck | null, sceneDc: number): number
   return pending ? pending.dc : sceneDc
 }
 
-export type StatCardState = 'rollable' | 'waiting-self' | 'waiting-other'
+export type StatCardState = 'rollable' | 'waiting'
 
 /**
- * What one stat card may do right now.
+ * What one of the viewer's stat cards may do right now.
  *
- * `rollable` is the pending stat of the character the check belongs to (or of
- * any character, when the request named none). That character's other stats are
- * `waiting-self`; every other character's sheet — and every sheet, when nothing
- * is pending — is `waiting-other`, i.e. inert. The table can only roll what the
- * GM asked for, which is also all `rollSkillCheck` will accept.
+ * `rollable` is exactly the pending stat on this sheet; every other card —
+ * including all six when nothing is pending — is `waiting`, i.e. inert. That is
+ * all `rollSkillCheck` will accept from this character, and another character's
+ * check never dims these cards, because it lives on their row, not this one.
  */
 export function statCardState({
   pending,
-  characterId,
   stat,
   fallbackStat = null,
 }: {
   pending: PendingCheck | null
-  characterId: string
   stat: AbilityScoreKey
   /**
    * The ability the GM last named without registering a check (`P5.19`). A model
@@ -107,29 +101,23 @@ export function statCardState({
    */
   fallbackStat?: AbilityScoreKey | null
 }): StatCardState {
-  if (!pending) return fallbackStat === stat ? 'rollable' : 'waiting-other'
-  if (pending.characterId !== '' && pending.characterId !== characterId) return 'waiting-other'
-  return pending.stat === stat ? 'rollable' : 'waiting-self'
+  if (!pending) return fallbackStat === stat ? 'rollable' : 'waiting'
+  return pending.stat === stat ? 'rollable' : 'waiting'
 }
 
 /**
- * A short line for the sheet: what the table is waiting on.
+ * A short line for the sheet: what this character is waiting on.
  *
- * `characterName` is the name the check belongs to, when the caller knows it —
- * the panel only holds the viewer's own row, so it passes nothing while the
- * viewer is the one rolling ("Roll DEX against 14") and a stand-in when the
- * check belongs to someone else ("Another adventurer must roll DEX").
+ * The panel only holds the viewer's own row, so the pending form is always an
+ * instruction to them ("Roll DEX against 14"); there is no "another adventurer
+ * must roll" line any more, because that check is on that adventurer's sheet.
  */
 export function pendingLabel(
   pending: PendingCheck | null,
-  characterName?: string,
   fallbackStat?: AbilityScoreKey | null,
 ): string {
   if (!pending) {
     return fallbackStat ? `The GM asked for ${fallbackStat.toUpperCase()} — roll it` : 'Waiting on the GM…'
   }
-  const stat = pending.stat.toUpperCase()
-  const name = characterName?.trim() ?? ''
-  if (name.length > 0) return `${name} must roll ${stat}`
-  return `Roll ${stat} against ${pending.dc}`
+  return `Roll ${pending.stat.toUpperCase()} against ${pending.dc}`
 }

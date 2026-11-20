@@ -209,10 +209,33 @@ export default function HomePage() {
   // seed carries it too, so neither branch can render an empty label.
   const sceneIndex = campaign.sceneIndex ?? 0
   const progress = progressLabel(sceneIndex)
-  // The one check the GM has asked for (`P5.19`), read from the campaign row: the
-  // sheet highlights exactly that stat, the banner shows its DC, and an empty
-  // `pendingStat` means nothing is owed.
-  const pending = pendingOf(campaign)
+  // Anything the player has done counts as a game under way. A scene past the
+  // first is proof the engine advanced; a non-empty feed is proof the table has
+  // been played at all — including the one row a reset leaves behind ("A new
+  // game begins", ADR 0026), which is exactly what makes the label read "Start
+  // New Campaign" the moment a game starts rather than the moment the first die
+  // is rolled. A freshly seeded table has no rows, so it offers "Start
+  // campaign".
+  const hasActiveGame = sceneIndex > 0 || liveRolls.length > 0
+  const startLabel = hasActiveGame ? 'Start New Campaign' : 'Start campaign'
+
+  // Signed in, your sheet is the row bound to your user id — no row yet means no
+  // character, so the panel renders the Forge. Signed out you are watching the
+  // table: the first live character when the collection has one, the fixture
+  // character when nobody has seeded yet (ADR 0014).
+  const myCharacter = isSignedIn
+    ? (characterRecords.find((record) => record.data.userId === userId) ?? null)
+    : (characterRecords[0] ?? PREVIEW_CHARACTERS[0] ?? null)
+
+  // The check this character owes (`P5.19`, ADR 0030), read from the viewer's own
+  // row: the sheet highlights exactly that stat, the banner shows its DC, and an
+  // empty `pendingStat` means nothing is owed. Another player's ask lives on
+  // their row and never reaches this one.
+  const pending = pendingOf(myCharacter?.data)
+  // Whether anybody at the table owes a check. The console's corrective beat for
+  // a narrated-but-unregistered roll is suppressed while one exists, so it cannot
+  // re-arm an ask that is already recorded on some sheet.
+  const anyPendingCheck = characterRecords.some((record) => pendingOf(record.data) !== null)
   // The safety valve for a narrated-but-unregistered roll: the stat the GM named
   // stays rollable at the scene DC, and only until a roll answers that message.
   // A real pending check always wins, so this can never widen the gate.
@@ -233,23 +256,6 @@ export default function HomePage() {
     if (answered) return null
     return requestsRoll(latest.data.content) ? statNamedInText(latest.data.content) : null
   }, [pending, gmRecords, liveRolls])
-  // Anything the player has done counts as a game under way. A scene past the
-  // first is proof the engine advanced; a non-empty feed is proof the table has
-  // been played at all — including the one row a reset leaves behind ("A new
-  // game begins", ADR 0026), which is exactly what makes the label read "Start
-  // New Campaign" the moment a game starts rather than the moment the first die
-  // is rolled. A freshly seeded table has no rows, so it offers "Start
-  // campaign".
-  const hasActiveGame = sceneIndex > 0 || liveRolls.length > 0
-  const startLabel = hasActiveGame ? 'Start New Campaign' : 'Start campaign'
-
-  // Signed in, your sheet is the row bound to your user id — no row yet means no
-  // character, so the panel renders the Forge. Signed out you are watching the
-  // table: the first live character when the collection has one, the fixture
-  // character when nobody has seeded yet (ADR 0014).
-  const myCharacter = isSignedIn
-    ? (characterRecords.find((record) => record.data.userId === userId) ?? null)
-    : (characterRecords[0] ?? PREVIEW_CHARACTERS[0] ?? null)
 
   // True while the sheet is showing a live row to a signed-out viewer; that is
   // also what decides the pack and the roster below, so one character cannot
@@ -470,7 +476,7 @@ export default function HomePage() {
                   progress={progress}
                   enemyName={campaign.enemyName}
                   onDraftChange={setGmComposing}
-                  pending={pending}
+                  pendingCheck={anyPendingCheck}
                   onlineCharacterNames={onlineCharacterNames}
                 />
               </div>

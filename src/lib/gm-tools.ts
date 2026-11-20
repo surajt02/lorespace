@@ -53,7 +53,7 @@ export const ATMOSPHERE_TAGS = ['exploration', 'combat', 'tavern', 'dungeon', 'b
 /** `inventory.category` options, in schema order (ADR 0016: no `relic`). */
 export const ITEM_CATEGORIES = ['weapon', 'armor', 'consumable', 'quest'] as const
 
-/** The six ability keys, in schema order — `campaigns.pendingStat`'s options. */
+/** The six ability keys, in schema order — `characters.pendingStat`'s options. */
 export const ABILITY_KEYS = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const
 
 // ============================================================================
@@ -105,9 +105,11 @@ export const damageEnemyInputSchema = z.object({
 })
 
 /**
- * `request_check` — the one check the table owes (`P5.19`): who rolls, which
- * ability, and that action's own DC. The DC is bounded to a d20's reachable
- * range, so a model cannot ask for an impossible or trivial number.
+ * `request_check` — the check one character owes (`P5.19`, ADR 0030): who rolls,
+ * which ability, and that action's own DC. It is written onto that character's
+ * row, so another player's request neither blocks nor overwrites this one. The
+ * DC is bounded to a d20's reachable range, so a model cannot ask for an
+ * impossible or trivial number.
  */
 export const requestCheckInputSchema = z.object({
   characterId: z.string().min(1),

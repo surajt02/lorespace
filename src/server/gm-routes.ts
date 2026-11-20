@@ -45,6 +45,7 @@ import {
 import type { ActionResult, ActionTools, QueryActionData, VerifyResult } from 'deepspace/worker'
 import { buildSystemPrompt, buildTools } from '../ai/tools.js'
 import { DEFAULT_CAMPAIGN_ID } from '../constants.js'
+import { recordRoundTurn } from '../lib/round-pacing.js'
 import { schemas } from '../schemas.js'
 import { createActionTools } from './action-routes.js'
 // Type-only — TypeScript strips it at runtime, so this file never imports the
@@ -285,6 +286,20 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
     const presentCharacterNames = [
       ...new Set([...reportedOnline, presentSpeaker].map((name) => name.trim()).filter(Boolean)),
     ]
+
+    // Round pacing (ADR 0031): a real player's turn marks their character as
+    // having acted in the current round BEFORE the model is called, so the
+    // snapshot the GM reads already shows this speaker as done — and when the
+    // last online character has acted, the round rolls over here, so the GM
+    // stages the new one in this same reply. An engine beat and a transient
+    // correction are the app speaking, not a character acting, so neither
+    // marks anything. A bookkeeping failure is logged, never returned: it must
+    // not cost a player their message.
+    await recordRoundTurn(ownerTools, {
+      userId: auth.userId,
+      onlineCharacterNames: presentCharacterNames,
+      playerTurn: !synthetic && !transient,
+    })
     const tools = buildTools(
       createUserToolExecutor(c.env, auth.userId, c.req.raw.signal, {
         room: `app:${c.env.DEEPSPACE_APP_ID}`,

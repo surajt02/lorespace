@@ -329,6 +329,35 @@ describe('buildParty', () => {
     ])
   })
 
+  it('resolves a peer by their character row when the payload has no id', () => {
+    // P5.33: presence can hydrate empty after a DO restart, and a window whose
+    // identity never changed never re-sends. The readable `characters` row is
+    // the authority, so a peer without a `characterId` is not "No adventurer".
+    const party = buildParty({
+      peers: [{ userId: VESPER.data.userId, state: {} }],
+      characters: PREVIEW_CHARACTERS,
+      myCharacter: KAELEN,
+      myUserId: KAELEN.data.userId,
+    })
+
+    const peer = party.find((member) => member.userId === VESPER.data.userId)
+    expect(peer?.name).toBe(VESPER.data.name)
+    expect(peer?.hasCharacter).toBe(true)
+    expect(peer?.hp).toBe(VESPER.data.hp)
+  })
+
+  it('resolves a peer whose payload points at a stale character id', () => {
+    const party = buildParty({
+      peers: [{ userId: VESPER.data.userId, state: { characterId: 'char-deleted' } }],
+      characters: PREVIEW_CHARACTERS,
+      myCharacter: null,
+      myUserId: 'user-me',
+    })
+
+    const peer = party.find((member) => member.userId === VESPER.data.userId)
+    expect(peer?.name).toBe(VESPER.data.name)
+  })
+
   it('reports the online names for the GM turn', () => {
     // `P5.28`: the GM plays with who is here, so the bar hands the panel exactly
     // the present characters — an offline party member is not among them.

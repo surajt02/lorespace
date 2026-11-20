@@ -10,12 +10,16 @@
  * index onto them. It is additive with a default, so existing rows read as
  * scene 0.
  *
- * The `pending*` trio is the one check the GM has asked for and the table has
- * not rolled yet (`P5.19`): the character it belongs to, the ability key, and
- * its own DC. It is deliberately on the campaign rather than derived from the
- * GM's prose — the sheet has to know which stat is live, and `rollSkillCheck`
- * has to refuse everything else. Empty stat / `0` DC means "nothing pending",
- * which is also the state a roll, a scene advance and a reset return it to.
+ * The pending check is no longer here: it belongs to a character
+ * (`characters.pendingStat` / `pendingDc`, ADR 0030), because two players can
+ * each owe their own roll and one campaign-wide slot blocked or overwrote them.
+ * `sceneIndex` and the scene columns are the whole of the shared state now,
+ * plus the round.
+ *
+ * `roundNumber` is the table's round (ADR 0031): a player's turn stamps
+ * `characters.actedRound` with it, and the engine increments it once every
+ * online character has acted. Nothing else advances it — no timer, no idle
+ * turn. It is additive with a default, so existing rows read as round 1.
  *
  * `'*'` and `viewer` both carry read-only access on purpose: `viewer` is the
  * anonymous role today, `'*'` is the SDK's catch-all fallback for any role
@@ -36,18 +40,7 @@ export const campaignsSchema: CollectionSchema = {
     { name: 'enemyHp', storage: 'number', interpretation: 'plain', default: 0 },
     { name: 'enemyMaxHp', storage: 'number', interpretation: 'plain', default: 0 },
     { name: 'sceneIndex', storage: 'number', interpretation: 'plain', default: 0 },
-    // The pending check (`P5.19`): one action, one DC, one character. `''` stat
-    // is the "nothing pending" sentinel the select's `default` carries — the
-    // same convention `roll-logs.statName` uses, since select options are UI
-    // metadata rather than a write-time constraint.
-    { name: 'pendingCharacterId', storage: 'text', interpretation: 'plain', default: '' },
-    {
-      name: 'pendingStat',
-      storage: 'text',
-      interpretation: { kind: 'select', options: ['str', 'dex', 'con', 'int', 'wis', 'cha'] },
-      default: '',
-    },
-    { name: 'pendingDc', storage: 'number', interpretation: 'plain', default: 0 },
+    { name: 'roundNumber', storage: 'number', interpretation: 'plain', default: 1 },
   ],
   permissions: {
     '*': { read: true, create: false, update: false, delete: false },

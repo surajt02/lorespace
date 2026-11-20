@@ -53,3 +53,5 @@ an accident.
 | [0027](./0027-shared-gm-thread.md) | One shared GM thread per campaign | Accepted | AI / realtime |
 | [0028](./0028-one-dc-per-action.md) | One DC per action, and only the requested roll counts | Accepted | game mechanics / AI |
 | [0029](./0029-roster-parity-and-online-table.md) | The party is the roster; the table is who is online | Accepted | realtime / AI |
+| [0030](./0030-per-character-check-gate.md) | The check gate belongs to the character, not the campaign | Accepted | game mechanics / AI |
+| [0031](./0031-round-pacing.md) | Round pacing: stage the table, resolve each action as it comes | Accepted | AI / game flow |

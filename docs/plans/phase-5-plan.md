@@ -524,3 +524,23 @@ init).
   assistant row newer than the click already exists. The correction beat also
   forbids re-narrating the scene, so a missed `request_check` cannot look like a
   second intro.
+
+### Revision 7 — 2026-11-20 (multiplayer: per-character gate, rounds, roster join)
+
+- `P5.31` (ADR 0030): the pending check moved from the campaign to `characters`
+  (`pendingStat`/`pendingDc`). Two players can each owe their own roll; a
+  mismatch is still refused before the die; the request is spent on success and
+  failure; a scene advance clears the party, a reset clears every character with
+  HP. The GM snapshot now projects each character's owed check — omitting it was
+  why the GM re-armed a check that was already live.
+- `P5.32` (ADR 0031): `campaigns.roundNumber` + `characters.actedRound`,
+  `src/lib/round-pacing.ts` marks a real player turn before the model call and
+  rolls the round over only when every online character has acted. The brief
+  stages every un-acted player by name and resolves each action as it arrives;
+  a new game starts at round 1. ADR 0012 is superseded.
+- `P5.33`: `buildParty` resolves a peer by `characters.userId` before falling back
+  to "No adventurer" — presence state can hydrate empty after a DO restart, and
+  the row is the authority.
+- Open and unchanged: `P5.29` (a check owed by a player who disconnects holds the
+  table), an unanswered round never expires, and an offline member's sheet shows
+  last-written values.

@@ -414,25 +414,20 @@ describe('rollSkillCheck write failure', () => {
 })
 
 /**
- * One check is live at a time (`P5.19`). The GM's request lives on the campaign
- * row, so the action — not the browser — decides whether a roll was asked for,
- * which DC it is against, and when the request is spent.
+ * Each character carries its own pending check (`P5.19`, ADR 0030). The GM's
+ * request lives on the roller's row, so the action — not the browser — decides
+ * whether a roll was asked for, which DC it is against, and when the request is
+ * spent. Another sheet's request is invisible here and can never gate this one.
  */
 describe('rollSkillCheck pending check', () => {
-  /** A campaign with an unanswered request on Kaelen's DEX at DC 17. */
-  function pendingCampaign(overrides: Record<string, unknown> = {}) {
-    return campaignGet({
-      activeThreatDc: 12,
-      pendingCharacterId: 'char-kaelen',
-      pendingStat: 'dex',
-      pendingDc: 17,
-      ...overrides,
-    })
+  /** The caller's row with an unanswered request on Kaelen's DEX at DC 17. */
+  function pendingCharacter(overrides: Record<string, unknown> = {}) {
+    return characterGet({ pendingStat: 'dex', pendingDc: 17, ...overrides })
   }
 
   it('refuses a stat that was not requested, writing nothing', async () => {
     const tools = createFakeTools({
-      get: getRouter({ characters: characterGet(), campaigns: pendingCampaign() }),
+      get: getRouter({ characters: pendingCharacter(), campaigns: campaignGet() }),
     })
 
     const result = await rollSkillCheck(
@@ -442,32 +437,30 @@ describe('rollSkillCheck pending check', () => {
     expect(result).toEqual({
       success: false,
       code: 'roll_not_requested',
-      error: 'The table is waiting on a DEX check; INT was not requested',
+      error: 'You are being asked for a DEX check; INT was not requested',
     })
     // No die was spent: the refusal is before the draw and before the row.
     expect(tools.create).not.toHaveBeenCalled()
     expect(tools.update).not.toHaveBeenCalled()
   })
 
-  it('refuses the requested stat from a different character, writing nothing', async () => {
+  it('clears only the roller’s own request, never another sheet or the campaign', async () => {
+    // Ash owes a DEX check; Joeblo owes one too, and nothing here may spend it.
+    stubSeed(20)
     const tools = createFakeTools({
-      get: getRouter({
-        // The caller owns this sheet, but the request named another character.
-        characters: characterGet({ userId: CALLER_ID }),
-        campaigns: pendingCampaign({ pendingCharacterId: 'char-borin' }),
-      }),
+      get: getRouter({ characters: pendingCharacter(), campaigns: campaignGet() }),
     })
 
     const result = await rollSkillCheck(
       context(tools, { characterId: 'char-kaelen', statName: 'dex' }),
     )
 
-    expect(result).toEqual({
-      success: false,
-      code: 'roll_not_requested',
-      error: 'The table is waiting on a DEX check from another character',
-    })
-    expect(tools.create).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ success: true, data: { targetDc: 17 } })
+    // Exactly one write, to the roller's row: the campaign carries no gate any
+    // more, and another character's pending pair is theirs until they roll.
+    expect(tools.update.mock.calls).toEqual([
+      ['characters', 'char-kaelen', { pendingStat: '', pendingDc: 0 }],
+    ])
   })
 
   it('rolls against the pending DC, not the scene DC, and clears the request', async () => {
@@ -475,7 +468,7 @@ describe('rollSkillCheck pending check', () => {
     // request's 17. The row must say 17 and failure.
     stubSeed(13)
     const tools = createFakeTools({
-      get: getRouter({ characters: characterGet(), campaigns: pendingCampaign() }),
+      get: getRouter({ characters: pendingCharacter(), campaigns: campaignGet() }),
     })
 
     const result = await rollSkillCheck(
@@ -495,40 +488,36 @@ describe('rollSkillCheck pending check', () => {
     })
     const [, row] = tools.create.mock.calls[0] as [string, Record<string, unknown>]
     expect(row).toMatchObject({ statName: 'dex', targetDc: 17, outcome: 'failure' })
-    expect(tools.update).toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, {
-      pendingCharacterId: '',
+    expect(tools.update).toHaveBeenCalledWith('characters', 'char-kaelen', {
       pendingStat: '',
       pendingDc: 0,
     })
   })
 
-  it('accepts a roll the request left unnamed by character', async () => {
-    stubSeed(20)
+  it('spends a failed check as well: the request is answered either way', async () => {
+    // A miss is still a resolution (ADR 0030): the gate must not stay armed.
+    stubSeed(2)
     const tools = createFakeTools({
-      get: getRouter({
-        characters: characterGet(),
-        campaigns: pendingCampaign({ pendingCharacterId: '' }),
-      }),
+      get: getRouter({ characters: pendingCharacter(), campaigns: campaignGet() }),
     })
 
     const result = await rollSkillCheck(
       context(tools, { characterId: 'char-kaelen', statName: 'dex' }),
     )
 
-    expect(result).toMatchObject({ success: true, data: { targetDc: 17 } })
+    expect(result).toMatchObject({ success: true, data: { targetDc: 17, outcome: 'failure' } })
+    expect(tools.update).toHaveBeenCalledWith('characters', 'char-kaelen', {
+      pendingStat: '',
+      pendingDc: 0,
+    })
   })
 
   it('falls back to the scene DC when nothing is pending', async () => {
     stubSeed(13)
     const tools = createFakeTools({
       get: getRouter({
-        characters: characterGet(),
-        campaigns: campaignGet({
-          activeThreatDc: 12,
-          pendingCharacterId: '',
-          pendingStat: '',
-          pendingDc: 0,
-        }),
+        characters: characterGet({ pendingStat: '', pendingDc: 0 }),
+        campaigns: campaignGet({ activeThreatDc: 12 }),
       }),
     })
 
@@ -541,19 +530,19 @@ describe('rollSkillCheck pending check', () => {
     expect(tools.update).not.toHaveBeenCalled()
   })
 
-  it('ignores a half-written pending row rather than locking the table out', async () => {
+  it('ignores a half-written pending row rather than locking the sheet out', async () => {
     // A `pendingStat` outside the six, or a DC of 0, is not a request. The
     // scene DC governs, exactly as it did before P5.19.
     for (const pending of [
-      { pendingCharacterId: 'char-kaelen', pendingStat: 'luck', pendingDc: 17 },
-      { pendingCharacterId: 'char-kaelen', pendingStat: 'dex', pendingDc: 0 },
-      { pendingCharacterId: 'char-kaelen', pendingStat: 'dex', pendingDc: '17' },
+      { pendingStat: 'luck', pendingDc: 17 },
+      { pendingStat: 'dex', pendingDc: 0 },
+      { pendingStat: 'dex', pendingDc: '17' },
     ]) {
       stubSeed(13)
       const tools = createFakeTools({
         get: getRouter({
-          characters: characterGet(),
-          campaigns: campaignGet({ activeThreatDc: 12, ...pending }),
+          characters: characterGet(pending),
+          campaigns: campaignGet({ activeThreatDc: 12 }),
         }),
       })
 
@@ -569,7 +558,7 @@ describe('rollSkillCheck pending check', () => {
   it('keeps the roll a success when clearing the request fails', async () => {
     stubSeed(18)
     const tools = createFakeTools({
-      get: getRouter({ characters: characterGet(), campaigns: pendingCampaign() }),
+      get: getRouter({ characters: pendingCharacter(), campaigns: campaignGet() }),
     })
     tools.update.mockResolvedValue(failed('write_refused', 'update refused'))
 
@@ -587,7 +576,7 @@ describe('rollSkillCheck pending check', () => {
   it('does not clear the request when the roll itself could not be written', async () => {
     stubSeed(18)
     const tools = createFakeTools({
-      get: getRouter({ characters: characterGet(), campaigns: pendingCampaign() }),
+      get: getRouter({ characters: pendingCharacter(), campaigns: campaignGet() }),
       create: failed('write_refused', 'roll-logs refused the row'),
     })
 
@@ -596,7 +585,7 @@ describe('rollSkillCheck pending check', () => {
     )
 
     expect(result).toMatchObject({ success: false, code: 'write_failed' })
-    // The table still owes the check: nothing answered it.
+    // The sheet still owes the check: nothing answered it.
     expect(tools.update).not.toHaveBeenCalled()
   })
 })

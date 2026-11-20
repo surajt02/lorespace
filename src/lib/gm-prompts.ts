@@ -230,10 +230,12 @@ export function statNamedInText(text: string): AbilityScoreKey | null {
 /**
  * One corrective beat, sent when the GM asks for a roll it never registered.
  * The gate is absolute (`rollSkillCheck` refuses anything unrequested), so the
- * only fix is to make the request real — never to loosen the gate.
+ * only fix is to make the request real — never to loosen the gate. The check
+ * lives on the character's own row (ADR 0030), so the beat also says to leave a
+ * check that is already owed alone rather than re-arming it.
  */
 export function buildCheckFixPrompt(stat: AbilityScoreKey, characterName: string): string {
   const name = characterName.trim()
   const who = name === '' ? 'the acting character' : name
-  return `You asked ${who} to roll ${stat.toUpperCase()} but no check is open, so the table cannot roll and the story has stopped. Call request_check for ${who} with stat ${JSON.stringify(stat)} and the DC you intended. Do not narrate: do not repeat, continue or re-describe the scene or your previous message. The tool call is the whole reply.`
+  return `You asked ${who} to roll ${stat.toUpperCase()} but their sheet shows no check open, so the table cannot roll and the story has stopped. Call request_check for ${who} with stat ${JSON.stringify(stat)} and the DC you intended. If that check is already owed on their row, it is live — do not re-arm it or change its DC. Do not narrate: do not repeat, continue or re-describe the scene or your previous message. The tool call is the whole reply.`
 }

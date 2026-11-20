@@ -1034,6 +1034,34 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       no text now streams a full reply; the local thread's poisoned row and three
       orphan turns were removed)
 
+- [x] `P5.31` Per-character check gate
+      ([ADR 0030](./adr/0030-per-character-check-gate.md)): move
+      `pendingStat`/`pendingDc` from `campaigns` to `characters`, drop the
+      campaign trio, make `request_check` write the target character,
+      `rollSkillCheck` read only the caller's own row and clear on success **and
+      failure**, clear the whole party on a scene advance and on reset, project
+      each character's pending state into the GM snapshot (today the omission is
+      why the GM re-arms a check that is already owed), and read the viewer's row
+      in the sheet and banner. — 2026-11-20 (characters 16 columns, campaigns 9→10
+      with the round; `roll_not_requested` still refuses before the die; the clear
+      happens on success **and** failure; 307 tests)
+- [x] `P5.32` Round pacing ([ADR 0031](./adr/0031-round-pacing.md)): `campaigns.roundNumber`
+      and `characters.actedRound`; a player turn marks the caller before the model
+      call; the round increments when every online character has acted; the
+      snapshot carries the round plus who has acted and what each owes; the brief
+      stages the un-acted in prose ("Vesper, what are you doing?") and resolves
+      each action as it arrives, never asking someone who has already acted.
+      A new game resets the round to 1 and every `actedRound` to 0. — 2026-11-20
+      (`src/lib/round-pacing.ts`, 315 tests; live two-window probe: both rosters
+      resolve each other, the reply names both players)
+- [x] `P5.33` Roster join fallback: presence state can hydrate empty (DO restart
+      sends `PRESENCE_SYNC`/`JOIN` with `state: {}`), and `buildParty` adds the
+      peer to `listed` before resolving their row, so a readable `characters` row
+      is never used and the peer renders as "No adventurer". Resolve the row by
+      `characters.userId === peer.userId` first, and fall back to the row when the
+      payload's `characterId` is missing or unresolvable. — 2026-11-20 (two new
+      tests: empty payload, stale id; the row wins in both)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.

@@ -122,11 +122,18 @@ export function buildParty({
     if (listed.has(peer.userId)) continue
     listed.add(peer.userId)
 
+    // Two ways to find a peer's sheet, and the payload is only a hint. Presence
+    // state can hydrate empty — a Durable Object restart sends `PRESENCE_SYNC`/
+    // `PRESENCE_JOIN` with `state: {}`, and a window whose identity never changed
+    // never re-sends — so a peer can arrive with no `characterId` while their
+    // `characters` row is perfectly readable. The row is the authority
+    // (`characters.userId` is the same auth id presence carries, `P5.33`).
     const characterId = peerCharacterId(peer.state)
     const row =
-      characterId === null
+      (characterId === null
         ? undefined
-        : characters.find((record) => record.recordId === characterId)
+        : characters.find((record) => record.recordId === characterId)) ??
+      characters.find((record) => record.data.userId === peer.userId)
 
     if (!row) {
       members.push({

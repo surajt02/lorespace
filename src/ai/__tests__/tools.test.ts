@@ -213,6 +213,9 @@ describe('get_campaign_snapshot', () => {
       enemyName: 'Gloom Wisp',
       enemyHp: 9,
       enemyMaxHp: 12,
+      // The round (ADR 0031): the first adventurer has acted in it, the others
+      // have not — which is what "who is still waiting" is read from.
+      roundNumber: 3,
       createdBy: 'owner-user',
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
@@ -236,6 +239,11 @@ describe('get_campaign_snapshot', () => {
         int: 10,
         wis: 11,
         cha: 9,
+        // Only the first adventurer owes a check: the snapshot must show each
+        // character's own pending pair, not one campaign-wide slot (ADR 0030).
+        pendingStat: index === 0 ? 'wis' : '',
+        pendingDc: index === 0 ? 13 : 0,
+        actedRound: index === 0 ? 3 : 2,
         createdBy: `player-${index}`,
       },
     }
@@ -307,6 +315,7 @@ describe('get_campaign_snapshot', () => {
         'enemyName',
         'enemyHp',
         'enemyMaxHp',
+        'roundNumber',
       ].sort(),
     )
     expect(Object.keys(result.characters[0]).sort()).toEqual(
@@ -323,8 +332,20 @@ describe('get_campaign_snapshot', () => {
         'int',
         'wis',
         'cha',
+        'pendingStat',
+        'pendingDc',
+        'actedRound',
       ].sort(),
     )
+    // The owed check is visible per character, which is what stops the GM
+    // re-arming one that is already live (P5.31).
+    expect(result.characters[0]).toMatchObject({ pendingStat: 'wis', pendingDc: 13 })
+    expect(result.characters[1]).toMatchObject({ pendingStat: '', pendingDc: 0 })
+    // The round and who has acted in it (ADR 0031). The GM compares the two
+    // numbers itself, which is why no derived "waiting" field is projected.
+    expect(result.campaign).toMatchObject({ roundNumber: 3 })
+    expect(result.characters[0]).toMatchObject({ actedRound: 3 })
+    expect(result.characters[1]).toMatchObject({ actedRound: 2 })
     expect(Object.keys(result.recentRolls[0]).sort()).toEqual(
       [
         'recordId',
@@ -543,9 +564,9 @@ describe('GM write tools inside the GM chat turn', () => {
     })
     const update = calls.find((call) => call.tool === 'records.update')
     expect(update?.params).toMatchObject({
-      collection: 'campaigns',
-      recordId: DEFAULT_CAMPAIGN_ID,
-      data: { pendingCharacterId: 'char-1', pendingStat: 'dex', pendingDc: 17 },
+      collection: 'characters',
+      recordId: 'char-1',
+      data: { pendingStat: 'dex', pendingDc: 17 },
     })
     // A request is not an outcome: nothing goes into the feed for it.
     expect(calls.some((call) => call.params.collection === 'roll-logs')).toBe(false)
@@ -631,10 +652,28 @@ describe('buildSystemPrompt', () => {
     // GM must never ask which player it is (P5.20).
     expect(prompt).toContain('Name: what they do')
     expect(prompt).toContain('Never ask which player it is')
-    expect(prompt).toContain('Address exactly one character by name per turn')
     // Per-action DC: the request is a record, not the scene's single number.
     expect(prompt).toContain('request_check')
     expect(prompt).toContain('One action, one number')
     expect(prompt).toContain('set the DC per action')
+  })
+
+  /**
+   * Round pacing (`P5.32`, ADR 0031) replaces "address exactly one character
+   * per turn": the engine owns the round, and the GM stages every character
+   * still waiting on it instead of answering whoever spoke last.
+   */
+  it('stages everyone who has not acted, and resolves each action as it arrives', () => {
+    expect(prompt).toContain('THE ROUND')
+    expect(prompt).toContain('roundNumber')
+    expect(prompt).toContain('actedRound')
+    expect(prompt).toContain('address every character who has not acted')
+    expect(prompt).toContain('name each')
+    expect(prompt).toContain('Resolve each action as it arrives')
+    expect(prompt).toContain('Never ask or act for a character who has already acted')
+    expect(prompt).toContain('a new `roundNumber` means the whole table waits')
+    // The single-address rule is what made a two-player table read as two
+    // private games sharing a dice log (ADR 0031).
+    expect(prompt).not.toContain('Address exactly one character')
   })
 })

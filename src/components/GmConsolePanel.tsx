@@ -40,7 +40,6 @@ import {
 } from '@/lib/gm-prompts'
 import { useGmStream } from '@/lib/gm-stream'
 import { buildCheckFixPrompt, requestsRoll, statNamedInText } from '@/lib/gm-prompts'
-import type { PendingCheck } from '@/lib/pending-check'
 import { newestFirst } from '@/lib/roll-announcements'
 import type { RollLogRow } from '@/lib/preview-data'
 import { cn } from '@/lib/utils'
@@ -152,11 +151,13 @@ export interface GmConsolePanelProps {
   /** The composer went between empty and non-empty (typing presence). */
   onDraftChange?: (hasText: boolean) => void
   /**
-   * The check the engine is waiting on (`P5.19`). When the GM narrates a roll
-   * without registering one, the console sends a single corrective beat — but
-   * only while nothing is pending, so it never overrules a real check.
+   * Somebody at the table already owes a check (`P5.19`, ADR 0030). When the GM
+   * narrates a roll without registering one, the console sends a single
+   * corrective beat — but only while nobody's row carries a check, so it can
+   * never re-arm or overrule one that is already owed (on this sheet or any
+   * other).
    */
-  pending?: PendingCheck | null
+  pendingCheck?: boolean
   /** The characters playing right now; the GM's snapshot is filtered to them. */
   onlineCharacterNames?: string[]
 }
@@ -173,7 +174,7 @@ export function GmConsolePanel({
   progress,
   enemyName,
   onDraftChange,
-  pending = null,
+  pendingCheck = false,
   onlineCharacterNames = [],
 }: GmConsolePanelProps) {
   const [input, setInput] = useState('')
@@ -316,7 +317,7 @@ export function GmConsolePanel({
   // sheet's `fallbackStat` is the second net — if this turn also fails, the named
   // stat is still rollable at the scene DC.
   useEffect(() => {
-    if (!signedIn || isLoading || pending) return
+    if (!signedIn || isLoading || pendingCheck) return
     const lastAnswer = [...threadRows].reverse().find((row) => row.data.role === 'assistant')
     if (!lastAnswer) return
     if (corrected.current.has(lastAnswer.recordId)) return
@@ -338,7 +339,7 @@ export function GmConsolePanel({
     corrected.current.add(lastAnswer.recordId)
     // Transient, not a beat: it must never enter history (`P5.30`).
     enqueue(buildCheckFixPrompt(stat, characterName), false, true)
-  }, [threadRows, pending, signedIn, isLoading, characterName, rolls])
+  }, [threadRows, pendingCheck, signedIn, isLoading, characterName, rolls])
 
   // "Start campaign" opens the story (ADR 0023): queued once per id, sent as an
   // engine beat so the instruction never renders.

@@ -782,7 +782,9 @@ describe('forgeCharacter', () => {
 
     const [character, ...items] = writes
     expect(character.collection).toBe('characters')
-    // All 13 `characters` columns, and nothing the caller supplied for hp/ac.
+    // The 13 columns Forge owns, and nothing the caller supplied for hp/ac.
+    // (`pendingStat`/`pendingDc` are the schema's "nothing pending" defaults,
+    // not a forge input — ADR 0030.)
     expect(character.data).toEqual({
       userId: 'user-alice',
       campaignId: DEFAULT_CAMPAIGN_ID,
@@ -1314,12 +1316,10 @@ describe('applyGmMutation scene advance (ADR 0023)', () => {
       },
       limit: 500,
     })
+    // The advance writes scene columns only: the pending check lives on each
+    // character's row now, and no character in this fixture owes one (ADR 0030).
     expect(tools.update).toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, {
       ...sceneColumns(1),
-      // An accepted advance drops the previous scene's pending check (P5.19).
-      pendingCharacterId: '',
-      pendingStat: '',
-      pendingDc: 0,
     })
     const marker = tools.create.mock.calls.find((call) => call[0] === 'roll-logs')
     expect(marker?.[1]).toMatchObject({
@@ -1328,14 +1328,9 @@ describe('applyGmMutation scene advance (ADR 0023)', () => {
     })
   })
 
-  it('clears the pending check on an accepted advance', async () => {
+  it('clears the whole party’s pending checks on an accepted advance', async () => {
     const tools = createFakeTools({
-      get: campaignGet({
-        sceneIndex: 0,
-        pendingCharacterId: 'char-kaelen',
-        pendingStat: 'dex',
-        pendingDc: 12,
-      }),
+      get: campaignGet({ sceneIndex: 0 }),
       query: ok({
         records: [
           {
@@ -1347,8 +1342,18 @@ describe('applyGmMutation scene advance (ADR 0023)', () => {
               outcome: 'success',
             },
           },
+          {
+            recordId: 'char-ash',
+            data: { campaignId: DEFAULT_CAMPAIGN_ID, pendingStat: 'dex', pendingDc: 12 },
+          },
+          {
+            recordId: 'char-borin',
+            data: { campaignId: DEFAULT_CAMPAIGN_ID, pendingStat: 'wis', pendingDc: 9 },
+          },
+          // A sheet that owes nothing must not be written for nothing.
+          { recordId: 'char-quiet', data: { campaignId: DEFAULT_CAMPAIGN_ID } },
         ],
-        count: 1,
+        count: 4,
       }),
     })
 
@@ -1357,9 +1362,60 @@ describe('applyGmMutation scene advance (ADR 0023)', () => {
     )
 
     expect(result).toMatchObject({ success: true, data: { scene: { sceneIndex: 1 } } })
-    // The request belonged to the scene the table just closed (P5.19).
-    const scene = tools.update.mock.calls.find((call) => call[0] === 'campaigns')?.[2]
-    expect(scene).toMatchObject({ pendingCharacterId: '', pendingStat: '', pendingDc: 0 })
+    // The requests belonged to the scene the table just closed (ADR 0030).
+    expect(tools.update).toHaveBeenCalledWith('characters', 'char-ash', {
+      pendingStat: '',
+      pendingDc: 0,
+    })
+    expect(tools.update).toHaveBeenCalledWith('characters', 'char-borin', {
+      pendingStat: '',
+      pendingDc: 0,
+    })
+    expect(tools.update).not.toHaveBeenCalledWith('characters', 'char-quiet', expect.anything())
+    // The campaign row carries no gate any more.
+    expect(tools.update).toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, {
+      ...sceneColumns(1),
+    })
+  })
+
+  it('refuses the advance when a pending check cannot be cleared', async () => {
+    // The checks belong to the scene being closed, so the clear runs before the
+    // scene write: a failure leaves the table where it was rather than half moved.
+    const tools = createFakeTools({
+      get: campaignGet({ sceneIndex: 0 }),
+      query: ok({
+        records: [
+          {
+            recordId: 'roll-1',
+            data: {
+              campaignId: DEFAULT_CAMPAIGN_ID,
+              entryType: 'roll',
+              targetDc: 12,
+              outcome: 'success',
+            },
+          },
+          {
+            recordId: 'char-ash',
+            data: { campaignId: DEFAULT_CAMPAIGN_ID, pendingStat: 'dex', pendingDc: 12 },
+          },
+        ],
+        count: 2,
+      }),
+      update: failed('write_refused', 'update refused'),
+    })
+
+    const result = await applyGmMutation(
+      context(tools, { mutation: { kind: 'update_scene', scene: { sceneIndex: 1 } } }),
+    )
+
+    expect(result).toEqual({
+      success: false,
+      code: 'write_failed',
+      error: 'update refused',
+      details: { stage: 'pending_clear', applied: [] },
+    })
+    expect(tools.update).not.toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, expect.anything())
+    expect(tools.create).not.toHaveBeenCalled()
   })
 
   it('lets the model override the new scene columns without changing the position', async () => {
@@ -1394,9 +1450,6 @@ describe('applyGmMutation scene advance (ADR 0023)', () => {
       ...sceneColumns(1),
       activeThreatDc: 16,
       sceneSummary: 'The ward burns.',
-      pendingCharacterId: '',
-      pendingStat: '',
-      pendingDc: 0,
     })
   })
 
@@ -1480,9 +1533,6 @@ describe('applyGmMutation scene advance (ADR 0023)', () => {
     if (!result.success) throw new Error(`expected success, got ${result.code}`)
     expect(tools.update).toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, {
       ...sceneColumns(3),
-      pendingCharacterId: '',
-      pendingStat: '',
-      pendingDc: 0,
     })
   })
 
@@ -1597,7 +1647,7 @@ describe('applyGmMutation enemy damage (ADR 0024)', () => {
  * live campaign row, not from the feed.
  */
 describe('applyGmMutation request_check (P5.19)', () => {
-  it('writes the three pending columns and no roll-logs row', async () => {
+  it('writes the pending pair on the target character and no roll-logs row', async () => {
     const tools = createFakeTools({ get: characterGet(18, 24) })
 
     const result = await applyGmMutation(
@@ -1615,14 +1665,14 @@ describe('applyGmMutation request_check (P5.19)', () => {
       },
     })
     expect(tools.update).toHaveBeenCalledTimes(1)
-    expect(tools.update).toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, {
-      pendingCharacterId: 'char-kaelen',
+    expect(tools.update).toHaveBeenCalledWith('characters', 'char-kaelen', {
       pendingStat: 'dex',
       pendingDc: 17,
     })
-    // A request for a roll is not a roll: no evidence row, no character write.
+    // A request for a roll is not a roll: no evidence row, and the campaign row
+    // (which has no gate any more, ADR 0030) is not written.
     expect(tools.create).not.toHaveBeenCalled()
-    expect(tools.update).not.toHaveBeenCalledWith('characters', expect.anything(), expect.anything())
+    expect(tools.update).not.toHaveBeenCalledWith('campaigns', expect.anything(), expect.anything())
   })
 
   it('refuses a character outside this campaign and writes nothing', async () => {
@@ -1801,23 +1851,28 @@ describe('startCampaign', () => {
       100,
     )
 
-    // The scene is scene 0 of the arc, under the campaign's existing title, with
-    // nothing pending: a new game has not asked the table for a check yet (P5.19).
+    // The scene is scene 0 of the arc, under the campaign's existing title: the
+    // campaign row carries no pending check any more (ADR 0030).
     expect(tools.create.mock.calls[0]).toEqual([
       'campaigns',
-      {
-        title: DEFAULT_CAMPAIGN_SEED.title,
-        ...sceneColumns(0),
-        pendingCharacterId: '',
-        pendingStat: '',
-        pendingDc: 0,
-      },
+      { title: DEFAULT_CAMPAIGN_SEED.title, ...sceneColumns(0), roundNumber: 1 },
       DEFAULT_CAMPAIGN_ID,
     ])
 
-    // HP comes from each row's own maxHp, never from the caller.
-    expect(tools.update).toHaveBeenNthCalledWith(1, 'characters', 'char-ash', { hp: 24 })
-    expect(tools.update).toHaveBeenNthCalledWith(2, 'characters', 'char-borin', { hp: 19 })
+    // HP comes from each row's own maxHp, never from the caller, and the same
+    // write clears that character's pending check (ADR 0030).
+    expect(tools.update).toHaveBeenNthCalledWith(1, 'characters', 'char-ash', {
+      hp: 24,
+      pendingStat: '',
+      pendingDc: 0,
+      actedRound: 0,
+    })
+    expect(tools.update).toHaveBeenNthCalledWith(2, 'characters', 'char-borin', {
+      hp: 19,
+      pendingStat: '',
+      pendingDc: 0,
+      actedRound: 0,
+    })
 
     // Starter kits are the Forge rows, owned by each character's owner.
     const itemWrites = tools.create.mock.calls.filter((call) => call[0] === 'inventory')
@@ -1867,18 +1922,26 @@ describe('startCampaign', () => {
     expect(tools.create.mock.calls[0][1]).toMatchObject({ title: 'The Table of Ash' })
   })
 
-  it('clears any pending check on the reset row', async () => {
-    // A reset is a new game: the previous run's request must not survive it and
-    // leave the table with one live stat (P5.19).
+  it('clears every character’s pending check on the reset', async () => {
+    // A reset is a new game: the previous run's requests must not survive it and
+    // leave a sheet with one live stat (P5.19, ADR 0030). It travels in the same
+    // write that restores HP, so no character row is touched twice.
     const tools = createFakeTools({ query: ok(ROSTER) })
 
     await startCampaign(context(tools))
 
-    expect(tools.create.mock.calls[0][1]).toMatchObject({
-      pendingCharacterId: '',
-      pendingStat: '',
-      pendingDc: 0,
-    })
+    expect(tools.update).toHaveBeenCalledTimes(2)
+    for (const recordId of ['char-ash', 'char-borin']) {
+      expect(tools.update).toHaveBeenCalledWith('characters', recordId, {
+        hp: recordId === 'char-ash' ? 24 : 19,
+        pendingStat: '',
+        pendingDc: 0,
+        // A new game is round one, and nobody has acted in it yet (ADR 0031).
+        actedRound: 0,
+      })
+    }
+    // The campaign row does not carry the gate any more.
+    expect(tools.create.mock.calls[0][1]).not.toHaveProperty('pendingStat')
   })
 
   it('stops at a failed drain and reports the stages that landed', async () => {
