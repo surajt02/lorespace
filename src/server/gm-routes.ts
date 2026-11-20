@@ -32,6 +32,12 @@
  * One answer is not a stream: a real player turn whose round is still open is
  * recorded and marked, then answered **202** `{ waiting: true, roundNumber }`
  * with no model call (ADR 0031, amended 2026-11-20).
+ *
+ * A **roll turn** (`rollTurn: true`) is the engine's, not a window's. The route
+ * reads the batch out of `roll-logs` itself and claims it with the campaign's
+ * `lastRollTurnAt` cursor before streaming, so two open windows asking for the
+ * same roll produce one turn — and that turn carries every roll resolved since
+ * the last one, each attributed to its own roller.
  */
 
 import type { Hono } from 'hono'
@@ -49,6 +55,8 @@ import {
 import type { ActionResult, ActionTools, QueryActionData, VerifyResult } from 'deepspace/worker'
 import { buildSystemPrompt, buildTools } from '../ai/tools.js'
 import { DEFAULT_CAMPAIGN_ID } from '../constants.js'
+import { buildRollBatchPrompt, type RollBatchRow } from '../lib/gm-prompts.js'
+import { pendingOf } from '../lib/pending-check.js'
 import { recordRoundTurn, shouldStreamGmTurn } from '../lib/round-pacing.js'
 import { schemas } from '../schemas.js'
 import { createActionTools } from './action-routes.js'
@@ -59,6 +67,12 @@ import type { AppContext, Env } from '../../worker.js'
 type ResolveAuth = (req: Request, env: Env) => Promise<VerifyResult | null>
 
 /** What one player typed. Far above a table message; blocks megabyte payloads. */
+/**
+ * The GM's default model when a caller names none: the same free-tier-safe pick
+ * the console uses (`P5.13`). The catalog default is Opus, which this app's plan
+ * refuses with 402.
+ */
+const GM_DEFAULT_MODEL_ID = 'claude-haiku-5-5'
 const MAX_CONTENT_LENGTH = 2_000
 /** A character name's bound, matching `characters.name`'s schema limit. */
 const MAX_NAME_LENGTH = 40
@@ -70,6 +84,12 @@ const THREAD_ROW_LIMIT = 200
 
 /** Turns handed to the model — the thread's tail, oldest first. */
 const THREAD_TURN_LIMIT = 30
+
+/** Characters read to find an owed check; no table is larger than this. */
+const ROLL_BATCH_ROSTER_LIMIT = 200
+
+/** `roll-logs` rows read for one batch; a larger backlog is answered over turns. */
+const ROLL_BATCH_LIMIT = 50
 
 /**
  * The `characterName` a synthetic beat is persisted under. It is a sentinel, not
@@ -146,6 +166,131 @@ async function loadThread(ownerTools: ActionTools): Promise<ThreadHistory> {
   return { messages, speakers }
 }
 
+/**
+ * What one roll turn resolved to: a batch to stream, or the reason it may not.
+ *
+ * `waiting` is the load-bearing refusal — a roll is not resolved until every
+ * check the GM asked has come back, so the turn waits (ADR 0031, amended
+ * 2026-11-20) rather than narrating one player's die and the rest of the table's
+ * state. Both refusals answer **202** because they are pacing, not errors.
+ */
+type RollBatchResult =
+  | { kind: 'batch'; prompt: string; claimed: number; previous: number }
+  | { kind: 'waiting' }
+  | { kind: 'no_new_rolls' }
+  | { kind: 'failed' }
+
+/**
+ * Claims this roll turn's batch from the engine's own state.
+ *
+ * The order is the whole fix for "two windows, two turns":
+ *
+ * 1. **Wait while a check is owed.** Any character with a valid
+ *    `pendingStat`/`pendingDc` means the table's dice are not in, so there is
+ *    nothing to resolve yet.
+ * 2. **Read the cursor.** `campaigns.lastRollTurnAt` is the creation time of the
+ *    newest row already handed to the model; only rows after it are new.
+ * 3. **Nothing new -> `202 { reason: 'no_new_rolls' }`.** This is what the
+ *    second window's request gets after the first one claimed the batch.
+ * 4. **Claim before streaming.** The cursor is written *before* the model is
+ *    called, so a competing request finds no new rows instead of narrating them
+ *    twice. The read-then-write is not atomic (no transactions across
+ *    `tools.*`), so two requests that read before either writes can both stream;
+ *    the cursor narrows that window to the microseconds between the read and the
+ *    write rather than closing it.
+ *
+ * The rows are returned oldest first: the GM narrates the table's story in the
+ * order it happened, not in whatever order the read returned.
+ */
+async function claimRollBatch(ownerTools: ActionTools): Promise<RollBatchResult> {
+  let roster: ActionResult<QueryActionData<Record<string, unknown>>>
+  try {
+    roster = await ownerTools.query('characters', {
+      where: { campaignId: DEFAULT_CAMPAIGN_ID },
+      limit: ROLL_BATCH_ROSTER_LIMIT,
+    })
+  } catch (error) {
+    console.error(`[gm-chat] roll batch roster read threw: ${loggableError(error)}`)
+    return { kind: 'failed' }
+  }
+  if (!roster.success) {
+    // Fail closed: without the roster this route cannot tell an un-rolled check
+    // from a resolved one, and narrating a half-answered table is the bug.
+    console.error(`[gm-chat] roll batch roster read failed: ${roster.error}`)
+    return { kind: 'failed' }
+  }
+  const owed = roster.data.records.some((record) => pendingOf(record.data) !== null)
+  if (owed) return { kind: 'waiting' }
+
+  let campaign: ActionResult<QueryActionData<{ lastRollTurnAt?: unknown }>>
+  try {
+    campaign = await ownerTools.query('campaigns', {
+      where: { recordId: DEFAULT_CAMPAIGN_ID },
+      limit: 1,
+    })
+  } catch (error) {
+    console.error(`[gm-chat] roll batch cursor read threw: ${loggableError(error)}`)
+    return { kind: 'failed' }
+  }
+  if (!campaign.success) {
+    console.error(`[gm-chat] roll batch cursor read failed: ${campaign.error}`)
+    return { kind: 'failed' }
+  }
+  const storedCursor = campaign.data.records[0]?.data?.lastRollTurnAt
+  const cursor =
+    typeof storedCursor === 'number' && Number.isFinite(storedCursor) ? storedCursor : 0
+
+  let rolls: ActionResult<QueryActionData<Record<string, unknown>>>
+  try {
+    rolls = await ownerTools.query('roll-logs', {
+      where: { campaignId: DEFAULT_CAMPAIGN_ID, entryType: 'roll' },
+      limit: ROLL_BATCH_LIMIT,
+    })
+  } catch (error) {
+    console.error(`[gm-chat] roll batch read threw: ${loggableError(error)}`)
+    return { kind: 'failed' }
+  }
+  if (!rolls.success) {
+    console.error(`[gm-chat] roll batch read failed: ${rolls.error}`)
+    return { kind: 'failed' }
+  }
+
+  // A row with no readable `createdAt` parses as epoch 0, which is older than
+  // any cursor — an unattributable row never becomes "new".
+  const fresh = rolls.data.records
+    .map((record) => ({
+      at: Date.parse(record.createdAt ?? '') || 0,
+      row: { recordId: record.recordId, data: record.data ?? {} } as RollBatchRow,
+    }))
+    .filter((entry) => entry.at > cursor)
+    .sort((a, b) => a.at - b.at)
+  if (fresh.length === 0) return { kind: 'no_new_rolls' }
+
+  const newest = fresh[fresh.length - 1].at
+  try {
+    const claimed = await ownerTools.update('campaigns', DEFAULT_CAMPAIGN_ID, {
+      lastRollTurnAt: newest,
+    })
+    if (!claimed.success) {
+      console.error(`[gm-chat] roll batch claim failed: ${claimed.error}`)
+      return { kind: 'failed' }
+    }
+  } catch (error) {
+    console.error(`[gm-chat] roll batch claim threw: ${loggableError(error)}`)
+    return { kind: 'failed' }
+  }
+
+  return {
+    kind: 'batch',
+    prompt: buildRollBatchPrompt(fresh.map((entry) => entry.row)),
+    // What a failed turn needs to hand the batch back: the cursor it claimed and
+    // the one it replaced. A provider error or an empty narration must not spend
+    // the dice — the next roll turn retries the same batch.
+    claimed: newest,
+    previous: cursor,
+  }
+}
+
 export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth): void {
   app.post('/api/gm/chat', async (c) => {
     const auth = await resolveAuth(c.req.raw, c.env)
@@ -167,6 +312,7 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
         modelId?: unknown
         synthetic?: unknown
         transient?: unknown
+        rollTurn?: unknown
         onlineCharacterNames?: unknown
       }>()
       .catch(
@@ -177,22 +323,28 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
             modelId?: unknown
             synthetic?: unknown
             transient?: unknown
+            rollTurn?: unknown
             onlineCharacterNames?: unknown
           }),
       )
 
+    // A roll turn is the engine's, not a player's (ADR 0031, amended
+    // 2026-11-20): the route selects the batch from `roll-logs`, so the client's
+    // placeholder content is ignored rather than trusted, and only the flag is
+    // required.
+    const rollTurn = body.rollTurn === true
     const rawContent = body.content
-    if (typeof rawContent !== 'string' || rawContent.trim() === '') {
+    if (!rollTurn && (typeof rawContent !== 'string' || rawContent.trim() === '')) {
       return c.json({ error: 'content is required' }, 400)
     }
-    const content = rawContent.trim()
-    if (content.length > MAX_CONTENT_LENGTH) {
+    const content = typeof rawContent === 'string' ? rawContent.trim() : ''
+    if (!rollTurn && content.length > MAX_CONTENT_LENGTH) {
       return c.json({ error: `content exceeds ${MAX_CONTENT_LENGTH} chars` }, 400)
     }
     // A synthetic beat is an engine instruction (the opening, a resolved roll),
     // not something a player said: it is persisted under the sentinel so the
     // panel can hide it, and reaches the model without a speaker prefix.
-    const synthetic = body.synthetic === true
+    const synthetic = rollTurn || body.synthetic === true
     const characterName = synthetic
       ? BEAT_SENTINEL
       : typeof body.characterName === 'string'
@@ -206,13 +358,20 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
     // silences every later turn (the failure this flag exists to prevent).
     const transient = body.transient === true
 
-    const selectedModel = resolveDeepSpaceAgentModel(body.modelId, 'application')
+    // A caller that names no model gets the console's default, not the catalog's:
+    // the catalog default (Opus) is refused on this app's plan, which turned a
+    // missing `modelId` into a 402 with the batch already claimed.
+    const requestedModelId =
+      typeof body.modelId === 'string' && body.modelId.trim() !== ''
+        ? body.modelId
+        : GM_DEFAULT_MODEL_ID
+    const selectedModel = resolveDeepSpaceAgentModel(requestedModelId, 'application')
     if (!selectedModel) {
       // Name the valid ids: the caller has no other way to learn them here.
       const modelIds = listDeepSpaceAgentModels('application').map((model) => model.id)
       return c.json(
         {
-          error: `Unknown modelId: ${String(body.modelId)}. Valid: ${modelIds.join(', ')}`,
+          error: `Unknown modelId: ${String(requestedModelId)}. Valid: ${modelIds.join(', ')}`,
           code: 'unknown_model',
           modelIds,
         },
@@ -223,6 +382,53 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
     // The thread is written by the Worker alone (`gm-messages` is member
     // read-only), so persistence uses the owner-credential action tools.
     const ownerTools = createActionTools(c.env, c.env.OWNER_USER_ID, c.env.APP_OWNER_JWT)
+
+    // A roll turn's content is built here, from `roll-logs` (ADR 0031, amended
+    // 2026-11-20). The batch is claimed **before** the history is read and before
+    // anything streams: claiming is a write to the campaign cursor, and it is
+    // what makes the second window's identical request find nothing new instead
+    // of narrating the same dice again.
+    let turnContent = content
+    // The roll batch this turn claimed, if any: the cursor to hand back when the
+    // turn produces nothing (provider error, empty narration, failed write).
+    let rollClaim: { claimed: number; previous: number } | null = null
+    if (rollTurn) {
+      const batch = await claimRollBatch(ownerTools)
+      if (batch.kind === 'waiting') {
+        // A check is still owed: the die is not in, so there is nothing to
+        // resolve and no model call. The roll stays unclaimed and the batch
+        // grows until the last one lands.
+        return c.json({ waiting: true }, 202)
+      }
+      if (batch.kind === 'no_new_rolls') {
+        // Already claimed by another window (or by an earlier request in this
+        // one): pacing, not an error.
+        return c.json({ waiting: false, reason: 'no_new_rolls' }, 202)
+      }
+      if (batch.kind === 'failed') {
+        return c.json({ error: 'Could not read the roll batch' }, 500)
+      }
+      turnContent = batch.prompt
+      rollClaim = { claimed: batch.claimed, previous: batch.previous }
+    }
+
+    // Give the dice back. Called when a turn ends without a narration, so a
+    // failed model call cannot silently swallow a batch of rolls.
+    const restoreRollClaim = async (): Promise<void> => {
+      if (!rollClaim) return
+      const { previous } = rollClaim
+      rollClaim = null
+      try {
+        const restored = await ownerTools.update('campaigns', DEFAULT_CAMPAIGN_ID, {
+          lastRollTurnAt: previous,
+        })
+        if (!restored.success) {
+          console.error(`[gm-chat] roll claim restore failed: ${restored.error}`)
+        }
+      } catch (error) {
+        console.error(`[gm-chat] roll claim restore threw: ${loggableError(error)}`)
+      }
+    }
 
     // History is loaded BEFORE the user row is written: `loadThread` reads the
     // thread back, and loading after the write would put this turn in `history`
@@ -241,7 +447,7 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
             campaignId: DEFAULT_CAMPAIGN_ID,
             role: 'user',
             characterName,
-            content,
+            content: turnContent,
           })
           .catch((error: unknown) => {
             console.error(`[gm-chat] user row write threw: ${loggableError(error)}`)
@@ -266,7 +472,7 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
       transient || typeof body.characterName !== 'string' ? '' : body.characterName.trim()
     const messages: ModelMessage[] = [
       ...thread.messages,
-      { role: 'user', content: modelName ? `${modelName}: ${content}` : content },
+      { role: 'user', content: modelName ? `${modelName}: ${turnContent}` : turnContent },
     ]
 
     // Tools run as the verified caller: `records.*` keeps per-record RBAC, so a
@@ -344,6 +550,7 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
       const parts = buildUiParts(responseMessages)
       if (text.trim() === '' && parts.length === 0) {
         console.warn('[gm-chat] FINISH empty turn, skipping persist')
+        await restoreRollClaim()
         return
       }
       try {
@@ -356,9 +563,11 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
         })
         if (!written.success) {
           console.error(`[gm-chat] assistant row write failed: ${written.error}`)
+          await restoreRollClaim()
         }
       } catch (error) {
         console.error(`[gm-chat] assistant row write threw: ${loggableError(error)}`)
+        await restoreRollClaim()
       }
     }
 
@@ -375,6 +584,7 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
       // steps that did complete, and a zero-step abort saves nothing.
       abortSignal: c.req.raw.signal,
       onError: ({ error }) => {
+        void restoreRollClaim()
         console.error(
           `[gm-chat] stream error: ${deepSpaceAgentErrorSummary(error, {
             profile: 'application',

@@ -1102,6 +1102,20 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       149px/15% at 768×1024; numeral 48px → 30px; Start button and DC visible at
       every size)
 
+- [x] `P5.39` Rolls batch and the server owns the trigger: a roll turn waits while
+      any character owes a check, then one turn carries every roll since
+      `campaigns.lastRollTurnAt`, claimed by the route before streaming so two open
+      windows cannot each narrate the same dice. The GM narrates each roll for its
+      own roller only and never advances a character whose roll is not in the batch.
+      — 2026-11-20 (`buildRollBatchPrompt`, cursor reset on a new game, 334 tests;
+      the remaining read-then-write race is documented, no transactions available)
+- [x] `P5.40` A failed turn hands the dice back: if the stream errors, the narration
+      is empty or the assistant row fails to write, the route restores
+      `lastRollTurnAt` to the pre-claim value so the batch is retried instead of
+      being silently spent. Also: a request that names no `modelId` now defaults to
+      `claude-haiku-5-5` instead of the catalog's Opus, which 402s on this plan and
+      used to burn the batch before failing. — 2026-11-20
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.

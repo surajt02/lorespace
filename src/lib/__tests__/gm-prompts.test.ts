@@ -3,7 +3,7 @@ import type { RecordData } from 'deepspace'
 import {
   buildCheckFixPrompt,
   buildOpeningPrompt,
-  buildRollPrompt,
+  buildRollBatchPrompt,
   requestsRoll,
   statNamedInText,
   unresolvedRolls,
@@ -13,11 +13,12 @@ import { PREVIEW_ROLLS, type RollLogRow } from '@/lib/preview-data'
 /**
  * Unit tests for the GM prompt builders (`P5.7`).
  *
- * The automatic turn must carry the `roll-logs` numbers verbatim with a stable
- * payload (ADR 0009 — the model verifies, it does not invent). `unresolvedRolls`
- * is the whole one-turn-per-roll cap (ADR 0012), so its filters are asserted
- * directly. The missed-check correction is the other thing worth pinning: it is
- * the only net under a model that narrates a roll without registering it.
+ * A roll turn carries **every** roll resolved since the last one (ADR 0031,
+ * amended 2026-11-20): both row ids, both rollers, and the rule that a character
+ * whose roll is not in the batch is not narrated. `unresolvedRolls` is only the
+ * console's dedupe now, so its filters are asserted directly. The missed-check
+ * correction is the other thing worth pinning: it is the only net under a model
+ * that narrates a roll without registering it.
  *
  * No snapshots, no jsdom, no network.
  */
@@ -44,31 +45,66 @@ function row(
   }
 }
 
-describe('buildRollPrompt', () => {
-  const prompt = buildRollPrompt(KAELEN_DOOR)
+describe('buildRollBatchPrompt', () => {
+  const batch = buildRollBatchPrompt([
+    {
+      recordId: 'roll-wis',
+      data: {
+        characterName: 'Kaelen',
+        statName: 'wis',
+        rawRoll: 14,
+        modifier: 3,
+        total: 17,
+        targetDc: 12,
+        outcome: 'success',
+      },
+    },
+    {
+      recordId: 'roll-dex',
+      data: {
+        characterName: 'Vesper',
+        statName: 'dex',
+        rawRoll: 4,
+        modifier: 1,
+        total: 5,
+        targetDc: 13,
+        outcome: 'failure',
+      },
+    },
+  ])
 
-  it('carries the roller, the dice line and the outcome', () => {
-    expect(prompt).toContain('Kaelen')
-    expect(prompt).toContain('STR')
-    expect(prompt).toContain('d20(14)')
-    expect(prompt).toContain('= 17 vs DC 12')
-    expect(prompt).toContain('success')
+  it('lists every roll with both row ids and both rollers', () => {
+    expect(batch).toContain('roll-wis')
+    expect(batch).toContain('roll-dex')
+    expect(batch).toContain('Kaelen')
+    expect(batch).toContain('Vesper')
+    expect(batch).toContain('2 rolls resolved')
   })
 
-  it('carries all five payload fields', () => {
-    const payload = prompt.slice(prompt.indexOf('{"'))
-    expect(JSON.parse(payload.slice(0, payload.indexOf('}') + 1))).toEqual({
-      rawRoll: 14,
-      modifier: 3,
-      total: 17,
-      targetDc: 12,
-      outcome: 'success',
-    })
+  it('carries each roll\'s own numbers, not the newest one twice', () => {
+    expect(batch).toContain('WIS d20(14) +3 = 17 vs DC 12 — success')
+    expect(batch).toContain('DEX d20(4) +1 = 5 vs DC 13 — failure')
+    // Two rows, two lines, in the order given.
+    expect(batch.indexOf('Kaelen')).toBeLessThan(batch.indexOf('Vesper'))
   })
 
-  it('names the row it must be verified against', () => {
-    expect(prompt).toContain(KAELEN_DOOR.recordId)
-    expect(prompt).toContain('roll-logs')
+  it('attributes each roll to its own roller and forbids the rest of the table', () => {
+    expect(batch).toContain('attribute it to its own roller only')
+    expect(batch).toContain(
+      'Never narrate, resolve or advance a character whose roll is not listed here',
+    )
+  })
+
+  it('keeps the engine-owned numbers and the row to verify against', () => {
+    expect(batch).toContain('`roll-logs`')
+    expect(batch).toContain('do not roll again')
+    expect(batch).toContain('`damage_enemy`')
+  })
+
+  it('reads one roll as one, not as a batch of one', () => {
+    expect(buildRollBatchPrompt([{ recordId: 'roll-solo', data: {} }])).toContain(
+      'One roll resolved',
+    )
   })
 })
 

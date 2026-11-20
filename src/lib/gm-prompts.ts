@@ -5,13 +5,15 @@
  * are testable without a socket and the panel stays a container. Two rules ride
  * on that:
  *
- * - **The engine owns the numbers** (ADR 0009). `buildRollPrompt` copies the
- *   `roll-logs` row — raw die, modifier, total, DC, outcome — and names the row
- *   id, so the GM verifies against the record instead of inventing a d20.
- * - **One automatic turn per roll** (ADR 0012). `unresolvedRolls` is the whole
- *   cap: it reports rows this window has not announced, and the panel marks
- *   every unseen id as announced when it sends, so a burst collapses to one turn
- *   and a row never fires twice.
+ * - **The engine owns the numbers** (ADR 0009). `buildRollBatchPrompt` copies
+ *   the `roll-logs` rows — raw die, modifier, total, DC, outcome — and names
+ *   each row id, so the GM verifies against the records instead of inventing a
+ *   d20.
+ * - **Rolls batch, and the server owns the turn** (ADR 0031, amended
+ *   2026-11-20). `unresolvedRolls` is only the console's per-window dedupe now:
+ *   it decides *when to ask*, while the route decides *what the turn carries*.
+ *   One turn covers every roll resolved since the last one, each attributed to
+ *   its own roller.
  * - **The GM opens the story** (ADR 0023). `buildOpeningPrompt` is the click's
  *   message, and the only one that is not a reply: it names the act and scene so
  *   the opening narration is attributable to "Start campaign" rather than a
@@ -40,15 +42,6 @@ function outcomeWords(outcome: string): string {
 }
 
 /**
- * `d20(14) + 3 = 17 vs DC 12 — success`. The one roll sentence the builders
- * carry, so the GM reads the same shape wherever a roll is reported.
- */
-function rollLine(row: RollLogRow): string {
-  const stat = row.statName ? row.statName.toUpperCase() : 'check'
-  return `${stat} d20(${row.rawRoll}) ${formatModifier(row.modifier)} = ${row.total} vs DC ${row.targetDc} — ${outcomeWords(row.outcome)}`
-}
-
-/**
  * The opening turn "Start campaign" sends (ADR 0023, `P5.17`).
  *
  * One user message that puts the GM at the top of the arc: it reads the record
@@ -74,34 +67,70 @@ export function buildOpeningPrompt(progress: string, sceneTitle?: string): strin
 }
 
 /**
- * The automatic turn after a resolved roll (`P5.7`, ADR 0012).
- *
- * Carries the human line and a compact JSON payload with the five numbers the
- * GM must not recompute: `rawRoll`, `modifier`, `total`, `targetDc`, `outcome`.
- * The row id is named in the sentence so the GM can read the same row back out
- * of `roll-logs`.
+ * One roll as the route selects it out of `roll-logs`: the row id to verify
+ * against, and the numbers the GM must not recompute. Fields are optional
+ * because a hand-edited row can be missing them; a missing number reads as `0`
+ * rather than printing `undefined` at the table.
  */
-export function buildRollPrompt(row: RecordData<RollLogRow>): string {
-  const data = row.data
-  const payload = JSON.stringify({
-    rawRoll: data.rawRoll,
-    modifier: data.modifier,
-    total: data.total,
-    targetDc: data.targetDc,
-    outcome: data.outcome,
+export interface RollBatchRow {
+  recordId: string
+  data: {
+    characterName?: string
+    statName?: string
+    rawRoll?: number
+    modifier?: number
+    total?: number
+    targetDc?: number
+    outcome?: string
+  }
+}
+
+/** A number from a row that may not carry one. */
+function asNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+/**
+ * One roll turn for **every** roll resolved since the previous one (ADR 0031,
+ * amended 2026-11-20).
+ *
+ * The turn is built on the server from `roll-logs`, not by whichever window saw
+ * the row first, so two open windows cannot produce two turns and a batch is
+ * never split across replies. Each line names its roller and its row id, so the
+ * same roll is attributed the same way every time, and the instruction is
+ * explicit that a character absent from the list is not part of this turn —
+ * that is the rule that stopped one player's roll advancing another's position.
+ *
+ * Not buildable from an empty batch: a turn with no rolls would be a turn with
+ * nothing to resolve, so the caller answers `202` instead of calling this.
+ */
+export function buildRollBatchPrompt(rows: RollBatchRow[]): string {
+  const lines = rows.map((row, index) => {
+    const data = row.data
+    const name = data.characterName?.trim() || 'An unnamed adventurer'
+    const stat = data.statName?.trim() ? data.statName.trim().toUpperCase() : 'CHECK'
+    const outcome = data.outcome?.trim() ? outcomeWords(data.outcome.trim()) : 'info'
+    return `${index + 1}. ${name} — ${stat} d20(${asNumber(data.rawRoll)}) ${formatModifier(asNumber(data.modifier))} = ${asNumber(data.total)} vs DC ${asNumber(data.targetDc)} — ${outcome} (roll-logs row ${row.recordId})`
   })
+  const rolls = rows.length === 1 ? 'One roll resolved' : `${rows.length} rolls resolved`
   return [
-    `${data.characterName} rolls ${rollLine(data)}.`,
-    `Resolve it from the roll-logs row ${row.recordId}; do not roll again and do not invent a result.`,
-    `This is the resolution of the check you asked ${data.characterName} for: attribute it to ${data.characterName}, not to another sheet.`,
-    'Apply its consequence in this turn with one write tool — `damage_enemy` on a hit,',
-    `\`modify_character_hp\` on a miss — and then narrate what the table sees.`,
-    `Roll payload: ${payload}`,
+    `${rolls} since your last turn:`,
+    ...lines,
+    'Narrate each roll separately, in the order listed, and attribute it to its own roller only.',
+    'Verify each one against its `roll-logs` row; do not roll again and do not invent a result.',
+    'Apply each consequence in this turn with one write tool per roll — `damage_enemy` on a hit,',
+    '`modify_character_hp` on a miss — then narrate what the table sees.',
+    'Never narrate, resolve or advance a character whose roll is not listed here.',
   ].join('\n')
 }
 
 /**
  * The rolls this window still owes the GM a turn, newest first.
+ *
+ * The console's dedupe (`P5.7`, ADR 0031 amended): it reports the rows this
+ * window has not yet asked about, so a reprocessed snapshot does not spam the
+ * route and a reload does not re-ask for history. What the turn *contains* is
+ * the route's decision now — this only says "there may be something new".
  *
  * Only `entryType: 'roll'` rows: a `combat` or `gm_event` row is the GM's own
  * evidence and must not trigger a turn. `announced` is the caller's memory — it

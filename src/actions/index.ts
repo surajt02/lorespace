@@ -1563,8 +1563,10 @@ export async function startCampaign(
   // asked the table for anything yet. The characters' own pending columns are
   // cleared below, in the same write that restores their HP.
   // A new game is round one (ADR 0031): the round counter is part of the run, so
-  // it starts over with the scene rather than carrying the old pace forward.
-  const opening = { ...sceneColumns(0), roundNumber: 1 }
+  // it starts over with the scene rather than carrying the old pace forward. The
+  // roll cursor moves with it, so the first reshape of the new game is not read
+  // as an un-answered batch from the last one.
+  const opening = { ...sceneColumns(0), roundNumber: 1, lastRollTurnAt: 0 }
   const scene = await tools.create(
     'campaigns',
     { title, ...opening },

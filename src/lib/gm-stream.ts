@@ -41,6 +41,12 @@ export interface GmTurnRequest {
    */
   synthetic?: boolean
   /**
+   * A resolved-roll turn (`ADR 0031`, amended 2026-11-20). The route builds the
+   * batch itself from `roll-logs` and claims it with the campaign cursor, so
+   * `content` is only a placeholder and two windows cannot both produce a turn.
+   */
+  rollTurn?: boolean
+  /**
    * An instruction for this call only (`P5.30`): not persisted, not replayed.
    * Reserved for the correction sent when the GM narrates a roll it never
    * registered — storing it would teach the model to stop writing prose.
@@ -121,6 +127,7 @@ export function useGmStream({ onTurnEnd }: UseGmStreamOptions = {}): GmStream {
           characterName: turn.characterName ?? '',
           ...(turn.characterId ? { characterId: turn.characterId } : {}),
           ...(turn.synthetic ? { synthetic: true } : {}),
+          ...(turn.rollTurn ? { rollTurn: true } : {}),
           ...(turn.transient ? { transient: true } : {}),
           ...(turn.modelId ? { modelId: turn.modelId } : {}),
           ...(turn.onlineCharacterNames && turn.onlineCharacterNames.length > 0

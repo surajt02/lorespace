@@ -569,3 +569,18 @@ init).
   clamped to two lines, title/progress/button/enemy block compact, `ACTIVE DC`
   numeral 48px → 30px and still to the right of the prose. Measured 206px (23%) on
   desktop, 149px (19%) at 1024×768 and 149px (15%) at 768×1024.
+
+### Revision 11 — 2026-11-20 (rolls batch, the server owns the dice turn)
+
+- `P5.39`: a roll turn waits while any character owes a check; the route claims the
+  batch with `campaigns.lastRollTurnAt` before streaming, so one turn carries every
+  roll resolved since the previous one and two open windows cannot each narrate
+  them. The prompt lists each roll and forbids advancing anyone whose roll is not
+  in it. A new game resets the cursor.
+- `P5.40`: the claim is handed back when a turn produces nothing (stream error,
+  empty narration, failed assistant write), and a request without `modelId`
+  defaults to `claude-haiku-5-5` — the catalog default (Opus) 402s on this plan and
+  used to spend the batch before failing.
+- Known: the read-then-write claim race cannot be closed without a compare-and-set
+  in the record room; a probe against the live table claimed one historical batch
+  of eight already-narrated rolls, so a reset is advised before playing on.

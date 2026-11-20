@@ -31,12 +31,13 @@ import { ArrowUp, Check, Square } from 'lucide-react'
 import { Badge, Popover, PopoverContent, PopoverTrigger } from '@/components/ui'
 import { DEFAULT_CAMPAIGN_ID } from '@/constants'
 import {
+  buildCheckFixPrompt,
   buildOpeningPrompt,
-  buildRollPrompt,
+  requestsRoll,
+  statNamedInText,
   unresolvedRolls,
 } from '@/lib/gm-prompts'
 import { useGmStream } from '@/lib/gm-stream'
-import { buildCheckFixPrompt, requestsRoll, statNamedInText } from '@/lib/gm-prompts'
 import type { RollLogRow } from '@/lib/preview-data'
 import { cn } from '@/lib/utils'
 
@@ -109,6 +110,13 @@ function initialModelId(): string {
   return known && saved ? saved : (CONSOLE_MODELS[0]?.id ?? CONSOLE_DEFAULT_MODEL_ID)
 }
 
+/**
+ * The placeholder content a roll turn sends. The route ignores it and builds the
+ * batch prompt from `roll-logs` (ADR 0031, amended) — it exists only because a
+ * POST body reads better with the field present.
+ */
+const ROLL_TURN_PLACEHOLDER = 'Resolve the rolls since your last turn.'
+
 /** One turn waiting for the stream to be free: a player's line, or an engine beat. */
 interface QueuedTurn {
   id: number
@@ -116,6 +124,8 @@ interface QueuedTurn {
   synthetic: boolean
   /** A one-call instruction: never persisted (`P5.30`). */
   transient?: boolean
+  /** A resolved-roll turn: the route owns its content and its claim. */
+  rollTurn?: boolean
 }
 
 /** A rendered turn, live or preview, in one shape so the markup has one branch. */
@@ -131,7 +141,7 @@ export interface GmConsolePanelProps {
   signedIn: boolean
   /** The viewer's character, when they have one: names and attributes their lines. */
   character?: { name: string; recordId: string } | null
-  /** Live `roll-logs` rows; the automatic turn watches them (ADR 0012). */
+  /** Live `roll-logs` rows; this is when the console asks for a roll turn (ADR 0031, amended). */
   rolls: RecordData<RollLogRow>[]
   /** The signed-out script, rendered only while the live thread is empty. */
   preview: GmMessage[]
@@ -261,11 +271,19 @@ export function GmConsolePanel({
     element.scrollTop = element.scrollHeight
   }, [turns.length, streamedText, isLoading])
 
-  const enqueue = (content: string, synthetic = false, transient = false) => {
+  const enqueue = (
+    content: string,
+    synthetic = false,
+    transient = false,
+    rollTurn = false,
+  ) => {
     const trimmed = content.trim()
     if (trimmed === '') return
     seq.current += 1
-    setQueue((pending) => [...pending, { id: seq.current, content: trimmed, synthetic, transient }])
+    setQueue((pending) => [
+      ...pending,
+      { id: seq.current, content: trimmed, synthetic, transient, ...(rollTurn ? { rollTurn } : {}) },
+    ])
   }
 
   // One turn at a time: an opening beat and a resolved roll can both be queued
@@ -286,14 +304,19 @@ export function GmConsolePanel({
       ...(next.synthetic || !character?.recordId ? {} : { characterId: character.recordId }),
       synthetic: next.synthetic,
       ...(next.transient ? { transient: true } : {}),
+      ...(next.rollTurn ? { rollTurn: true } : {}),
       modelId,
       onlineCharacterNames,
     })
   }, [queue, signedIn, isLoading, send, characterName, character?.recordId, modelId, onlineCharacterNames])
 
-  // A resolved roll fires exactly one automatic turn (ADR 0012). The first
-  // non-empty snapshot is the baseline; every unseen id is marked, and the
-  // newest drives the turn, so a burst is one turn and no row fires twice.
+  // A resolved roll queues one roll turn (ADR 0031, amended 2026-11-20). The
+  // window still owns *when to ask* — the first non-empty snapshot is the
+  // baseline, every unseen id is marked, and a burst collapses to one request —
+  // but not *what the turn says*: the route reads the batch out of `roll-logs`
+  // and claims it with the campaign cursor, so a second window's identical
+  // request finds nothing new. That is what stops two rolls producing several
+  // out-of-order turns.
   useEffect(() => {
     if (!signedIn) return
     if (!baselined.current) {
@@ -305,10 +328,9 @@ export function GmConsolePanel({
     const pending = unresolvedRolls(rolls, announced.current)
     if (pending.length === 0) return
     for (const row of pending) announced.current.add(row.recordId)
-    const newest = pending[0]
     // `enqueue` is stable in behaviour (it only appends to state); it is not a
     // dependency because re-running on it would re-queue the same turn.
-    enqueue(buildRollPrompt(newest), true)
+    enqueue(ROLL_TURN_PLACEHOLDER, true, false, true)
   }, [rolls, signedIn])
 
   // A narrated roll with no request behind it is a dead end: the gate refuses

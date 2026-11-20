@@ -41,9 +41,17 @@ voice, so it cannot live in the prompt alone.
   called only when the round is complete — the last player's message is what
   triggers the turn, and the GM answers every action in the batch together. A
   second message from someone who already acted joins the batch and waits.
-- **A roll is not a move.** A resolved check and an engine beat (the opening, a
-  scene advance, the missed-check correction) always get an immediate turn; only
-  real player messages are gated on the round.
+- **A roll is not a move, but rolls batch.** A resolved check and an engine beat
+  (the opening, a scene advance, the missed-check correction) always get an
+  immediate turn; only real player messages are gated on the round.
+- **Amended 2026-11-20: one roll turn per batch, owned by the server.** Two
+  players rolling produced several turns out of order — one per roll, fired by
+  every open window, since the trigger was client-side with a per-window dedupe.
+  Now a roll turn waits while any character still owes a check, and the route
+  claims the batch with a `lastRollTurnAt` cursor before streaming, so exactly one
+  turn runs and it carries every roll resolved since the previous one. The GM
+  narrates each roll only for its own roller and never advances a character whose
+  roll is not in the batch.
 - There is no timer: a round closes when every online character has acted. The
   table assumes everyone is playing, so a silent window holds the story rather
   than being resolved on someone's behalf.

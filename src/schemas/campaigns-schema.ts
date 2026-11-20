@@ -21,6 +21,14 @@
  * online character has acted. Nothing else advances it — no timer, no idle
  * turn. It is additive with a default, so existing rows read as round 1.
  *
+ * `lastRollTurnAt` is the roll cursor (ADR 0031, amended 2026-11-20): the
+ * creation time of the newest `roll-logs` row already handed to the model, as
+ * epoch milliseconds. The route claims a batch by writing it **before** it
+ * streams, so every open window can ask for the roll turn and exactly one of
+ * them finds new rows. `0` means "no roll has been answered in this game", and
+ * a row without a `createdAt` sorts older than any cursor. Additive with a
+ * default, like the round.
+ *
  * `'*'` and `viewer` both carry read-only access on purpose: `viewer` is the
  * anonymous role today, `'*'` is the SDK's catch-all fallback for any role
  * added later. Members play (update), they do not delete the campaign.
@@ -41,6 +49,7 @@ export const campaignsSchema: CollectionSchema = {
     { name: 'enemyMaxHp', storage: 'number', interpretation: 'plain', default: 0 },
     { name: 'sceneIndex', storage: 'number', interpretation: 'plain', default: 0 },
     { name: 'roundNumber', storage: 'number', interpretation: 'plain', default: 1 },
+    { name: 'lastRollTurnAt', storage: 'number', interpretation: 'plain', default: 0 },
   ],
   permissions: {
     '*': { read: true, create: false, update: false, delete: false },

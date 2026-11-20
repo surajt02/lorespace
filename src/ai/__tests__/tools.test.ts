@@ -699,13 +699,20 @@ describe('buildSystemPrompt', () => {
   })
 
   /**
-   * Round batching (`P5.33`, ADR 0031 amended): the route now calls the model
-   * once per completed round, so several players' actions reach the GM as one
-   * turn. Without this the model answers the first line and drops the rest.
+   * Roll batching (`P5.33`, ADR 0031 amended 2026-11-20): the route now calls
+   * the model once per roll batch, so several rolls can reach the GM in one turn.
+   * Without this the model answers the first die and advances the rest of the
+   * table on the back of it.
    */
-  it('says a whole round may arrive at once and a roll arrives alone', () => {
+  it('says a whole round may arrive at once and rolls may arrive together', () => {
     expect(prompt).toContain('You receive a whole round')
     expect(prompt).toContain('answer all of them in one turn')
-    expect(prompt).toContain('A roll arrives alone')
+    expect(prompt).toContain('Rolls may arrive together too')
+    expect(prompt).toContain('Narrate each roll for its own roller only')
+    expect(prompt).toContain('never a character whose')
+    expect(prompt).toContain('roll is not in the batch')
+    // A roll is not "alone" any more: that sentence is what made one die look
+    // like a whole turn's worth of story.
+    expect(prompt).not.toContain('A roll arrives alone')
   })
 })

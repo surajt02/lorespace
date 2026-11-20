@@ -78,12 +78,15 @@ describe('data-model contracts later phases depend on', () => {
     return schema
   }
 
-  it('keeps the campaign scene at ten columns, with the arc position and round as numbers', () => {
+  it('keeps the campaign scene at eleven columns, with the scene, round and roll cursor as numbers', () => {
     const campaigns = schemaNamed('campaigns')
     const sceneIndex = campaigns.columns.find((column) => column.name === 'sceneIndex')
     const roundNumber = campaigns.columns.find((column) => column.name === 'roundNumber')
+    const lastRollTurnAt = campaigns.columns.find(
+      (column) => column.name === 'lastRollTurnAt',
+    )
 
-    expect(campaigns.columns).toHaveLength(10)
+    expect(campaigns.columns).toHaveLength(11)
     expect(sceneIndex?.storage).toBe('number')
     expect(sceneIndex?.default).toBe(0)
     expect(sceneIndex?.required).toBeUndefined()
@@ -93,6 +96,13 @@ describe('data-model contracts later phases depend on', () => {
     expect(roundNumber?.interpretation).toBe('plain')
     expect(roundNumber?.default).toBe(1)
     expect(roundNumber?.required).toBeUndefined()
+    // The roll cursor (ADR 0031, amended 2026-11-20): the newest `roll-logs`
+    // creation time already handed to the model. `0` is "no roll turn yet", and
+    // it is additive for the same reason as the round.
+    expect(lastRollTurnAt?.storage).toBe('number')
+    expect(lastRollTurnAt?.interpretation).toBe('plain')
+    expect(lastRollTurnAt?.default).toBe(0)
+    expect(lastRollTurnAt?.required).toBeUndefined()
   })
 
   /**

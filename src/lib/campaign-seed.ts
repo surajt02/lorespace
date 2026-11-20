@@ -13,7 +13,7 @@
 import { sceneColumns } from './campaign-arc'
 import type { CampaignAtmosphereTag } from './campaign-arc'
 
-/** `campaigns` — the nine columns registered in `campaigns-schema.ts`. */
+/** `campaigns` — the columns registered in `campaigns-schema.ts`. */
 export interface CampaignRow {
   title: string
   sceneIndex: number
@@ -29,6 +29,11 @@ export interface CampaignRow {
    * reads as absent, and the console then claims no move for anybody.
    */
   roundNumber?: number
+  /**
+   * The newest `roll-logs` creation time already handed to the model (ADR 0031,
+   * amended 2026-11-20), as epoch milliseconds. `0` means no roll turn yet.
+   */
+  lastRollTurnAt?: number
 }
 
 /**

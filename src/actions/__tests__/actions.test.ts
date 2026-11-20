@@ -1855,7 +1855,14 @@ describe('startCampaign', () => {
     // campaign row carries no pending check any more (ADR 0030).
     expect(tools.create.mock.calls[0]).toEqual([
       'campaigns',
-      { title: DEFAULT_CAMPAIGN_SEED.title, ...sceneColumns(0), roundNumber: 1 },
+      {
+        title: DEFAULT_CAMPAIGN_SEED.title,
+        ...sceneColumns(0),
+        roundNumber: 1,
+        // A new game has answered no roll (ADR 0031, amended): the cursor
+        // restarts with the round, so the last run's batch is not replayed.
+        lastRollTurnAt: 0,
+      },
       DEFAULT_CAMPAIGN_ID,
     ])
 
