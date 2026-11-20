@@ -100,6 +100,7 @@ export function CharacterSheetPanel({
   character,
   items,
   pending = null,
+  fallbackStat = null,
 }: {
   mode: SheetMode
   status: QueryStatus
@@ -111,6 +112,12 @@ export function CharacterSheetPanel({
    * requested card clickable — one check is live at a time.
    */
   pending?: PendingCheck | null
+  /**
+   * The ability the GM named in prose without registering a check. That card
+   * stays rollable so a forgotten `request_check` cannot strand the table; it is
+   * ignored while a real check is pending.
+   */
+  fallbackStat?: AbilityScoreKey | null
 }) {
   // Hooks run in every branch, so they live above the dispatch. `preview` simply
   // never renders the surfaces that use them. No mutation hook: this panel reads
@@ -228,6 +235,7 @@ export function CharacterSheetPanel({
       characterId={character.recordId}
       carried={items.length}
       pending={pending}
+      fallbackStat={fallbackStat}
       // Preview mode is read-only: no bearer token, so no roll (ADR 0005).
       onRoll={
         live
@@ -308,6 +316,7 @@ function SheetBody({
   characterId,
   carried,
   pending,
+  fallbackStat,
   onRoll,
   rollingStat,
 }: {
@@ -315,6 +324,7 @@ function SheetBody({
   characterId: string
   carried: number
   pending: PendingCheck | null
+  fallbackStat: AbilityScoreKey | null
   onRoll?: (statName: AbilityScoreKey) => void
   rollingStat?: AbilityScoreKey | null
 }) {
@@ -330,7 +340,7 @@ function SheetBody({
     ? pendingLabel(pending)
     : pending
       ? pendingLabel(pending, 'Another adventurer')
-      : pendingLabel(null)
+      : pendingLabel(null, undefined, fallbackStat)
 
   return (
     <section data-testid="character-sheet" className="pixel-frame bg-card p-3">
@@ -340,7 +350,7 @@ function SheetBody({
           <Badge variant="secondary" className="mt-1 font-pixel text-[10px] uppercase">
             {character.archetype}
           </Badge>
-          {pending !== null && (
+          {(pending !== null || fallbackStat !== null) && (
             <p
               data-testid="pending-header"
               className="mt-1 font-pixel text-[10px] uppercase text-primary"
@@ -397,7 +407,7 @@ function SheetBody({
             </>
           )
 
-          const state = statCardState({ pending, characterId, stat: key })
+          const state = statCardState({ pending, characterId, stat: key, fallbackStat })
           const rollable = state === 'rollable'
 
           if (!onRoll) {
@@ -442,7 +452,7 @@ function SheetBody({
         })}
       </ul>
 
-      {pending !== null && (
+      {(pending !== null || fallbackStat !== null) && (
         <p
           data-testid="pending-label"
           className="mt-2 font-pixel text-[10px] uppercase text-primary"

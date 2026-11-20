@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import type { RecordData } from 'deepspace'
 import {
   GM_CHIPS,
+  buildCheckFixPrompt,
   buildOpeningPrompt,
   buildQuickPrompt,
   buildRollPrompt,
+  requestsRoll,
+  statNamedInText,
   unresolvedRolls,
   type GmChipKind,
 } from '@/lib/gm-prompts'
@@ -230,5 +233,47 @@ describe('unresolvedRolls', () => {
     const announced = new Set(['roll-old'])
     unresolvedRolls(rows, announced)
     expect([...announced]).toEqual(['roll-old'])
+  })
+})
+
+describe('a roll the GM narrated without registering', () => {
+  it('reads the ability out of the requesting sentence', () => {
+    expect(statNamedInText('Roll WIS against 14 to see through the glamour.')).toBe('wis')
+    expect(statNamedInText('Give me a Wisdom check, Joeblo.')).toBe('wis')
+    expect(statNamedInText('Test your Strength or the door wins.')).toBe('str')
+    // Long forms and abbreviations both count, case-insensitively.
+    expect(statNamedInText('roll dex')).toBe('dex')
+  })
+
+  it('ignores prose that is not asking for a roll', () => {
+    expect(statNamedInText('The knife at your belt is cold steel.')).toBeNull()
+    expect(statNamedInText('')).toBeNull()
+  })
+
+  it('uses the last requesting sentence, not an earlier one', () => {
+    const text = 'Roll DEX to cross. Then the shrine asks: roll WIS against 12.'
+    expect(statNamedInText(text)).toBe('wis')
+  })
+
+  it('refuses to guess when one sentence names two abilities', () => {
+    expect(statNamedInText('Roll STR or DEX — your call.')).toBeNull()
+  })
+
+  it('does not mistake a recap for a request', () => {
+    expect(requestsRoll('You rolled WIS and the glamour broke.')).toBe(false)
+    expect(statNamedInText('You rolled WIS against 14 — the rune dims.')).toBeNull()
+  })
+
+  it('detects a roll request in prose', () => {
+    expect(requestsRoll('Roll WIS against 14.')).toBe(true)
+    expect(requestsRoll('Make a check for me.')).toBe(true)
+    expect(requestsRoll('The hall is silent.')).toBe(false)
+  })
+
+  it('writes a correction that names the character and the ability', () => {
+    const prompt = buildCheckFixPrompt('wis', 'Ash')
+    expect(prompt).toContain('Ash')
+    expect(prompt).toContain('request_check')
+    expect(prompt).toContain('wis')
   })
 })

@@ -94,12 +94,20 @@ export function statCardState({
   pending,
   characterId,
   stat,
+  fallbackStat = null,
 }: {
   pending: PendingCheck | null
   characterId: string
   stat: AbilityScoreKey
+  /**
+   * The ability the GM last named without registering a check (`P5.19`). A model
+   * that narrates "roll WIS" without calling `request_check` would otherwise
+   * strand the table with every card inert, so that one stat stays rollable and
+   * resolves at the scene DC. It never overrides a real pending check.
+   */
+  fallbackStat?: AbilityScoreKey | null
 }): StatCardState {
-  if (!pending) return 'waiting-other'
+  if (!pending) return fallbackStat === stat ? 'rollable' : 'waiting-other'
   if (pending.characterId !== '' && pending.characterId !== characterId) return 'waiting-other'
   return pending.stat === stat ? 'rollable' : 'waiting-self'
 }
@@ -112,8 +120,14 @@ export function statCardState({
  * viewer is the one rolling ("Roll DEX against 14") and a stand-in when the
  * check belongs to someone else ("Another adventurer must roll DEX").
  */
-export function pendingLabel(pending: PendingCheck | null, characterName?: string): string {
-  if (!pending) return 'Waiting on the GM…'
+export function pendingLabel(
+  pending: PendingCheck | null,
+  characterName?: string,
+  fallbackStat?: AbilityScoreKey | null,
+): string {
+  if (!pending) {
+    return fallbackStat ? `The GM asked for ${fallbackStat.toUpperCase()} — roll it` : 'Waiting on the GM…'
+  }
   const stat = pending.stat.toUpperCase()
   const name = characterName?.trim() ?? ''
   if (name.length > 0) return `${name} must roll ${stat}`

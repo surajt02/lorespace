@@ -994,6 +994,16 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       the player, not a stale row. — 2026-11-20 revision (ghost test character
       removed; signed-out roster lists only `joeblo`)
 
+- [x] `P5.27` A narrated roll can never strand the table: the console sends one
+      hidden correction when the GM asks for a roll without calling
+      `request_check` (once per turn, only within 3 minutes, never while a check
+      is pending), and the sheet keeps the named stat rollable at the scene DC
+      until a roll answers that message. Past-tense recaps ("you rolled WIS") are
+      not requests. The brief also says a check exists only once `request_check`
+      returned success. — 2026-11-20 revision (304 unit tests; your table's
+      opening beat reproduced the dead end, then self-healed through the
+      correction into a real `wis`/13 check)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.

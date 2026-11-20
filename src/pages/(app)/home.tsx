@@ -48,7 +48,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth, useQuery } from 'deepspace'
 import { CharacterSheetPanel, type QueryStatus, type SheetMode } from '@/components/CharacterSheetPanel'
-import { GmConsolePanel } from '@/components/GmConsolePanel'
+import { GmConsolePanel, type GmMessageRow } from '@/components/GmConsolePanel'
 import { InventoryPanel } from '@/components/InventoryPanel'
 import { ActionFeed } from '@/components/vtt/ActionFeed'
 import { PartyPresenceBar } from '@/components/PartyPresenceBar'
@@ -63,6 +63,7 @@ import { callAction, ActionCallError } from '@/lib/actions'
 import { progressLabel } from '@/lib/campaign-arc'
 import { DEFAULT_CAMPAIGN_SEED, type CampaignRow } from '@/lib/campaign-seed'
 import { dcDisplay, pendingOf } from '@/lib/pending-check'
+import { requestsRoll, statNamedInText } from '@/lib/gm-prompts'
 import type { AbilityScoreKey } from '@/lib/party-presence'
 import {
   PREVIEW_CAMPAIGN,
@@ -115,6 +116,13 @@ export default function HomePage() {
   // no re-query to restore the order), so newest-first is applied here once and
   // shared by the feed and the banner layer (`P4.18`).
   const liveRolls = useMemo(() => newestFirst(rollRecords), [rollRecords])
+
+  // The GM's newest answer, only to notice a roll it narrated without asking for
+  // (`P5.19`). That is a dead end otherwise: the gate refuses every stat that was
+  // not requested, so the table can neither roll nor continue.
+  const { records: gmRecords } = useQuery<GmMessageRow>('gm-messages', {
+    where: { campaignId: DEFAULT_CAMPAIGN_ID },
+  })
 
   // The feed's own height depends on this, so `/home` owns it: minimised, the
   // feed sizes to its four rows and the GM console takes the rest of the column
@@ -202,6 +210,26 @@ export default function HomePage() {
   // sheet highlights exactly that stat, the banner shows its DC, and an empty
   // `pendingStat` means nothing is owed.
   const pending = pendingOf(campaign)
+  // The safety valve for a narrated-but-unregistered roll: the stat the GM named
+  // stays rollable at the scene DC, and only until a roll answers that message.
+  // A real pending check always wins, so this can never widen the gate.
+  const fallbackStat = useMemo<AbilityScoreKey | null>(() => {
+    if (pending) return null
+    const answers = gmRecords
+      .filter(
+        (record) =>
+          record.data.role === 'assistant' && record.data.content.trim() !== '',
+      )
+      .sort(
+        (a, b) => (Date.parse(a.createdAt ?? '') || 0) - (Date.parse(b.createdAt ?? '') || 0),
+      )
+    const latest = answers[answers.length - 1]
+    if (!latest) return null
+    const askedAt = Date.parse(latest.createdAt ?? '') || 0
+    const answered = liveRolls.some((row) => (Date.parse(row.createdAt ?? '') || 0) > askedAt)
+    if (answered) return null
+    return requestsRoll(latest.data.content) ? statNamedInText(latest.data.content) : null
+  }, [pending, gmRecords, liveRolls])
   // Anything the player has done counts as a game under way. A scene past the
   // first is proof the engine advanced; a non-empty feed is proof the table has
   // been played at all — including the one row a reset leaves behind ("A new
@@ -438,6 +466,7 @@ export default function HomePage() {
                   progress={progress}
                   enemyName={campaign.enemyName}
                   onDraftChange={setGmComposing}
+                  pending={pending}
                 />
               </div>
             </section>
@@ -449,6 +478,7 @@ export default function HomePage() {
                 character={myCharacter}
                 items={myItems}
                 pending={pending}
+                fallbackStat={fallbackStat}
               />
               <InventoryPanel mode={sheetMode} status={inventoryPanelStatus} items={myItems} />
             </aside>

@@ -31,6 +31,7 @@
  */
 
 import type { RecordData } from 'deepspace'
+import type { AbilityScoreKey } from '@/lib/party-presence'
 import { formatModifier } from '@/lib/d20'
 import type { RollLogRow } from '@/lib/preview-data'
 import { newestFirst } from '@/lib/roll-announcements'
@@ -177,4 +178,62 @@ export function unresolvedRolls(
   return newestFirst(rows).filter(
     (row) => row.data.entryType === 'roll' && !announced.has(row.recordId),
   )
+}
+
+// ============================================================================
+// The check the GM asked for without recording it
+// ============================================================================
+
+/** Ability words, as prose writes them. Abbreviations first, long forms too. */
+const STAT_WORDS: readonly [AbilityScoreKey, RegExp][] = [
+  ['str', /\b(str|strength)\b/i],
+  ['dex', /\b(dex|dexterity)\b/i],
+  ['con', /\b(con|constitution)\b/i],
+  ['int', /\b(int|intelligence)\b/i],
+  ['wis', /\b(wis|wisdom)\b/i],
+  ['cha', /\b(cha|charisma)\b/i],
+]
+
+/**
+ * Did the GM ask for a roll at all?
+ *
+ * Past-tense narration is excluded: "you rolled WIS" recaps a roll that already
+ * happened, and treating it as a request would fire a pointless corrective turn
+ * after every resolved check.
+ */
+export function requestsRoll(text: string): boolean {
+  if (/\brolled\b/i.test(text)) return false
+  return /\b(roll|rolls|rolling|check|test|save)\b/i.test(text)
+}
+
+/**
+ * The one ability the GM named while asking for a roll, or `null`.
+ *
+ * This is the safety valve for a model that narrates a roll without calling
+ * `request_check`: the sheet enables exactly that stat so the table cannot be
+ * stranded, and the console sends one corrective beat. It reads the *last*
+ * requesting sentence only, and returns `null` when that sentence names more
+ * than one ability — guessing between two would enable the wrong roll.
+ */
+export function statNamedInText(text: string): AbilityScoreKey | null {
+  if (/\brolled\b/i.test(text)) return null
+  const sentences = text.split(/(?<=[.!?])\s+/)
+  for (let i = sentences.length - 1; i >= 0; i -= 1) {
+    const sentence = sentences[i]
+    if (!requestsRoll(sentence)) continue
+    const found = STAT_WORDS.filter(([, pattern]) => pattern.test(sentence))
+    return found.length === 1 ? found[0][0] : null
+  }
+  return null
+}
+
+/**
+ * One corrective beat, sent when the GM asks for a roll it never registered.
+ * The gate is absolute (`rollSkillCheck` refuses anything unrequested), so the
+ * only fix is to make the request real — never to loosen the gate.
+ */
+export function buildCheckFixPrompt(stat: AbilityScoreKey, characterName: string): string {
+  const name = characterName.trim()
+  const who = name === '' ? 'the acting character' : name
+  return `You asked ${who} to roll ${stat.toUpperCase()} but no check is open, so the table cannot roll and the story has stopped. Call request_check for ${who} with stat ${JSON.stringify(stat)} and the DC you intended, then stop. One sentence of narration at most.`
 }

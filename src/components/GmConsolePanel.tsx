@@ -39,6 +39,8 @@ import {
   type GmChipKind,
 } from '@/lib/gm-prompts'
 import { useGmStream } from '@/lib/gm-stream'
+import { buildCheckFixPrompt, requestsRoll, statNamedInText } from '@/lib/gm-prompts'
+import type { PendingCheck } from '@/lib/pending-check'
 import { newestFirst } from '@/lib/roll-announcements'
 import type { RollLogRow } from '@/lib/preview-data'
 import { cn } from '@/lib/utils'
@@ -66,6 +68,9 @@ export interface GmMessage {
 const BEAT_SENTINEL = '__beat__'
 
 const MODEL_STORAGE_KEY = 'deepspace-ai-model'
+
+/** How recent a GM turn must be for its missed check to warrant a correction. */
+const CHECK_FIX_WINDOW_MS = 3 * 60 * 1000
 
 /** The cheapest model the free plan answers (`P5.13`): Opus 402s on a fresh console. */
 const CONSOLE_DEFAULT_MODEL_ID = 'claude-haiku-5-5'
@@ -144,6 +149,12 @@ export interface GmConsolePanelProps {
   enemyName?: string
   /** The composer went between empty and non-empty (typing presence). */
   onDraftChange?: (hasText: boolean) => void
+  /**
+   * The check the engine is waiting on (`P5.19`). When the GM narrates a roll
+   * without registering one, the console sends a single corrective beat — but
+   * only while nothing is pending, so it never overrules a real check.
+   */
+  pending?: PendingCheck | null
 }
 
 /**
@@ -158,6 +169,7 @@ export function GmConsolePanel({
   progress,
   enemyName,
   onDraftChange,
+  pending = null,
 }: GmConsolePanelProps) {
   const [input, setInput] = useState('')
   const [queue, setQueue] = useState<QueuedTurn[]>([])
@@ -172,6 +184,9 @@ export function GmConsolePanel({
   const baselined = useRef(false)
   // The opening beat already queued, keyed by the page's one-shot id.
   const openedBeat = useRef<string | null>(null)
+  // Assistant rows already checked for a narrated-but-unregistered roll: one
+  // correction per GM turn, so a model that keeps forgetting cannot loop.
+  const corrected = useRef<Set<string>>(new Set())
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const { records } = useQuery<GmMessageRow>('gm-messages', {
@@ -287,6 +302,28 @@ export function GmConsolePanel({
     // dependency because re-running on it would re-queue the same turn.
     enqueue(buildRollPrompt(newest), true)
   }, [rolls, signedIn])
+
+  // A narrated roll with no request behind it is a dead end: the gate refuses
+  // every unrequested stat, so the table can neither roll nor continue. Send one
+  // hidden beat asking the GM to register the check it just described. The
+  // sheet's `fallbackStat` is the second net — if this turn also fails, the named
+  // stat is still rollable at the scene DC.
+  useEffect(() => {
+    if (!signedIn || isLoading || pending) return
+    const lastAnswer = [...threadRows].reverse().find((row) => row.data.role === 'assistant')
+    if (!lastAnswer) return
+    if (corrected.current.has(lastAnswer.recordId)) return
+    // Only a live mistake: a reload must not re-spend a turn correcting a turn
+    // that ended minutes (or a session) ago.
+    const answeredAt = Date.parse(lastAnswer.createdAt ?? '') || 0
+    if (answeredAt !== 0 && Date.now() - answeredAt > CHECK_FIX_WINDOW_MS) return
+    const text = lastAnswer.data.content
+    if (!requestsRoll(text)) return
+    const stat = statNamedInText(text)
+    if (!stat) return
+    corrected.current.add(lastAnswer.recordId)
+    enqueue(buildCheckFixPrompt(stat, characterName), true)
+  }, [threadRows, pending, signedIn, isLoading, characterName])
 
   // "Start campaign" opens the story (ADR 0023): queued once per id, sent as an
   // engine beat so the instruction never renders.

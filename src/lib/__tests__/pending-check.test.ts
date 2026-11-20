@@ -6,6 +6,7 @@ import {
   statCardState,
   type PendingCheck,
 } from '@/lib/pending-check'
+import type { AbilityScoreKey } from '@/lib/party-presence'
 
 /**
  * Unit tests for the pending-check display rules (`P5.19`, `P5.20`).
@@ -119,5 +120,37 @@ describe('pendingLabel', () => {
 
   it('ignores a blank name and upper-cases the stat', () => {
     expect(pendingLabel(pending({ stat: 'con', dc: 9 }), '   ')).toBe('Roll CON against 9')
+  })
+})
+
+describe('a narrated-but-unregistered roll (fallback)', () => {
+  const pending: PendingCheck = { characterId: 'char-1', stat: 'dex', dc: 14 }
+
+  it('makes the named stat rollable with nothing pending', () => {
+    const state = (stat: AbilityScoreKey) =>
+      statCardState({ pending: null, characterId: 'char-1', stat, fallbackStat: 'wis' })
+    expect(state('wis')).toBe('rollable')
+    expect(state('str')).toBe('waiting-other')
+  })
+
+  it('leaves every card inert without a fallback', () => {
+    expect(
+      statCardState({ pending: null, characterId: 'char-1', stat: 'wis', fallbackStat: null }),
+    ).toBe('waiting-other')
+  })
+
+  it('never widens a real pending check', () => {
+    // A pending DEX check wins: the fallback WIS card stays inert.
+    expect(
+      statCardState({ pending, characterId: 'char-1', stat: 'wis', fallbackStat: 'wis' }),
+    ).toBe('waiting-self')
+    expect(
+      statCardState({ pending, characterId: 'char-1', stat: 'dex', fallbackStat: 'wis' }),
+    ).toBe('rollable')
+  })
+
+  it('labels the fallback ask', () => {
+    expect(pendingLabel(null, undefined, 'wis')).toBe('The GM asked for WIS — roll it')
+    expect(pendingLabel(null)).toBe('Waiting on the GM…')
   })
 })
