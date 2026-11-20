@@ -39,6 +39,11 @@ export interface CharacterRow {
   /** The check this character owes (`P5.31`): `''` stat / `0` DC is none. */
   pendingStat?: string
   pendingDc?: number
+  /**
+   * The round this character last acted in (ADR 0031). Additive: absent reads as
+   * "cannot prove it is behind", so the sheet claims no move.
+   */
+  actedRound?: number
 }
 
 /** `inventory` — 7 columns. `characterId` holds a character **recordId**. */

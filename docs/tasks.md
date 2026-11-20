@@ -1051,6 +1051,8 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       snapshot carries the round plus who has acted and what each owes; the brief
       stages the un-acted in prose ("Vesper, what are you doing?") and resolves
       each action as it arrives, never asking someone who has already acted.
+      (Amended by `P5.34`: the interface shows who owes a move; the GM does not
+      remind.)
       A new game resets the round to 1 and every `actedRound` to 0. — 2026-11-20
       (`src/lib/round-pacing.ts`, 315 tests; live two-window probe: both rosters
       resolve each other, the reply names both players)
@@ -1061,6 +1063,15 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       `characters.userId === peer.userId` first, and fall back to the row when the
       payload's `characterId` is missing or unresolvable. — 2026-11-20 (two new
       tests: empty payload, stale id; the row wins in both)
+
+- [x] `P5.34` Waiting is an indicator, not a reminder: `AWAITING YOUR MOVE…` sits
+      above the composer for the player whose `actedRound` is behind
+      `roundNumber` (pure `turn-status.ts` helper, no new CSS), and the brief no
+      longer tells the GM to name or remind the players. It also forbids restating
+      the scene, the party's HP or another character's condition unless this turn
+      changed it, which is what bloated the thread. — 2026-11-20 (323 tests; live:
+      before any move both windows show it, after one acts only the other does,
+      and the reply carries no reminder text) [ADR 0031 amendment]
 
 ## Phase 6 — Gates, tests, deploy
 

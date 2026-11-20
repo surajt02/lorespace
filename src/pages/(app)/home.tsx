@@ -64,6 +64,7 @@ import { progressLabel } from '@/lib/campaign-arc'
 import { DEFAULT_CAMPAIGN_SEED, type CampaignRow } from '@/lib/campaign-seed'
 import { dcDisplay, pendingOf } from '@/lib/pending-check'
 import { requestsRoll, statNamedInText } from '@/lib/gm-prompts'
+import { awaitsMove } from '@/lib/turn-status'
 import type { AbilityScoreKey } from '@/lib/party-presence'
 import {
   PREVIEW_CAMPAIGN,
@@ -232,6 +233,16 @@ export default function HomePage() {
   // empty `pendingStat` means nothing is owed. Another player's ask lives on
   // their row and never reaches this one.
   const pending = pendingOf(myCharacter?.data)
+  // Whose move it is (ADR 0031, amended 2026-11-20): the console says it, so the
+  // GM does not have to name the players who owe one. Signed out there is no
+  // player and no sheet, so nothing is ever claimed; `awaitsMove` also refuses a
+  // row that cannot prove it is behind.
+  const awaitingMove =
+    isSignedIn &&
+    awaitsMove({
+      roundNumber: campaign.roundNumber,
+      actedRound: myCharacter?.data.actedRound,
+    })
   // Whether anybody at the table owes a check. The console's corrective beat for
   // a narrated-but-unregistered roll is suppressed while one exists, so it cannot
   // re-arm an ask that is already recorded on some sheet.
@@ -478,6 +489,7 @@ export default function HomePage() {
                   onDraftChange={setGmComposing}
                   pendingCheck={anyPendingCheck}
                   onlineCharacterNames={onlineCharacterNames}
+                  awaitingMove={awaitingMove}
                 />
               </div>
             </section>

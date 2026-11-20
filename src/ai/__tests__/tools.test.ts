@@ -659,21 +659,42 @@ describe('buildSystemPrompt', () => {
   })
 
   /**
-   * Round pacing (`P5.32`, ADR 0031) replaces "address exactly one character
-   * per turn": the engine owns the round, and the GM stages every character
-   * still waiting on it instead of answering whoever spoke last.
+   * Round pacing (`P5.32`, `P5.33`, ADR 0031). Amended 2026-11-20: the engine
+   * owns the round and its numbers, but **waiting is a UI indicator** — the
+   * console tells a player they owe a move, so the brief must stop asking the GM
+   * to stage or name the waiting and must forbid restating the table, which is
+   * what bloated the chat in live two-window play.
    */
-  it('stages everyone who has not acted, and resolves each action as it arrives', () => {
+  it('reads the round from the snapshot without staging or reminding anyone', () => {
     expect(prompt).toContain('THE ROUND')
     expect(prompt).toContain('roundNumber')
     expect(prompt).toContain('actedRound')
-    expect(prompt).toContain('address every character who has not acted')
-    expect(prompt).toContain('name each')
+    expect(prompt).toContain('Never remind anyone to')
+    expect(prompt).toContain('never name who is waiting')
+    expect(prompt).toContain('A new `roundNumber` means the scene has moved on')
     expect(prompt).toContain('Resolve each action as it arrives')
-    expect(prompt).toContain('Never ask or act for a character who has already acted')
-    expect(prompt).toContain('a new `roundNumber` means the whole table waits')
+    expect(prompt).toContain('never ask or act')
+    expect(prompt).toContain('for a character who has already acted this round')
+    // The staging/reminder language is what the amendment deleted: the console
+    // says it now, so the GM repeating it restates the table every turn.
+    expect(prompt).not.toContain('address every character who has not acted')
+    expect(prompt).not.toContain('name each')
+    expect(prompt).not.toContain('a new `roundNumber` means the whole table waits')
+    expect(prompt).not.toContain('Stage the table')
     // The single-address rule is what made a two-player table read as two
     // private games sharing a dice log (ADR 0031).
     expect(prompt).not.toContain('Address exactly one character')
+  })
+
+  /**
+   * Anti-repetition (ADR 0031 amendment): every mid-round reply restated the
+   * party's HP and the scene, so the thread filled with near-identical turns.
+   */
+  it('forbids restating the scene, the party or the previous paragraph', () => {
+    expect(prompt).toContain('Do not restate')
+    expect(prompt).toContain('unless this turn changed it')
+    expect(prompt).toContain('never summarise the')
+    expect(prompt).toContain('never repeat a previous paragraph')
+    expect(prompt).toContain('one or two short paragraphs mid-round')
   })
 })

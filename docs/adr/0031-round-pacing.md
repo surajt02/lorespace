@@ -43,9 +43,13 @@ voice, so it cannot live in the prompt alone.
   the round completes.
 - Single-player is unchanged in feel: a round of one is staged once, resolved, then
   staged again on the next turn.
-- **Waiting is prose.** There is no banner, no disabled composer, no "waiting on X"
-  chrome; the GM simply asks. That keeps the table's voice in one place and avoids
-  a UI that contradicts the fiction.
+- **Waiting is a UI indicator, not prose.** Amended 2026-11-20 after live
+  multiplayer play: the GM naming the players who owe a move made every mid-round
+  reply repeat the table's state, and the chat bloated. The console now shows
+  `AWAITING YOUR MOVE…` to the player whose `actedRound` is behind `roundNumber`,
+  and the GM no longer reminds anyone to act — it answers the action in front of
+  it. This reverses the original "waiting is prose" clause; the owner asked for
+  the indicator after playing with two windows.
 
 ## Consequences
 

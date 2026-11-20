@@ -24,6 +24,11 @@ export interface CampaignRow {
   enemyName: string
   enemyHp: number
   enemyMaxHp: number
+  /**
+   * The table's round (ADR 0031). Additive: a row written before rounds existed
+   * reads as absent, and the console then claims no move for anybody.
+   */
+  roundNumber?: number
 }
 
 /**

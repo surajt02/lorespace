@@ -160,6 +160,12 @@ export interface GmConsolePanelProps {
   pendingCheck?: boolean
   /** The characters playing right now; the GM's snapshot is filtered to them. */
   onlineCharacterNames?: string[]
+  /**
+   * The viewer's sheet is behind the campaign's round (ADR 0031, amended): they
+   * owe a move. The console says so, which is what lets the GM stop naming the
+   * players who are waiting. False or absent renders nothing.
+   */
+  awaitingMove?: boolean
 }
 
 /**
@@ -176,6 +182,7 @@ export function GmConsolePanel({
   onDraftChange,
   pendingCheck = false,
   onlineCharacterNames = [],
+  awaitingMove = false,
 }: GmConsolePanelProps) {
   const [input, setInput] = useState('')
   const [queue, setQueue] = useState<QueuedTurn[]>([])
@@ -484,6 +491,14 @@ export function GmConsolePanel({
           </button>
         ))}
       </div>
+
+      {/* Whose move it is (ADR 0031, amended): the interface says it once, above
+          the composer, instead of the GM restating the table in prose. */}
+      {signedIn && awaitingMove && (
+        <p data-testid="awaiting-move" className="px-3 pt-1.5 font-pixel text-[10px] uppercase text-primary">
+          awaiting your move…
+        </p>
+      )}
 
       {signedIn ? (
         <form
