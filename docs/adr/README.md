@@ -50,3 +50,5 @@ an accident.
 | [0024](./0024-narrative-combat.md) | Combat is narration, a DC, and an engine-clamped consequence | Accepted | game mechanics / AI |
 | [0025](./0025-new-game-reset.md) | "Start New Campaign" is a new game: HP and packs reset too | Accepted | content / game flow |
 | [0026](./0026-reset-clears-roll-log.md) | The new-game reset clears the roll log too | Accepted | content / game flow |
+| [0027](./0027-shared-gm-thread.md) | One shared GM thread per campaign | Accepted | AI / realtime |
+| [0028](./0028-one-dc-per-action.md) | One DC per action, and only the requested roll counts | Accepted | game mechanics / AI |

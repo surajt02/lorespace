@@ -468,3 +468,31 @@ not advance while the enemy stood.
 **Still open:** `P6.*` (gates, e2e, deploy); the deployed app needs a deploy
 before its `campaigns` table gains `sceneIndex` (additive, automatic at room
 init).
+
+### Revision 2 — 2026-11-19/20 (shared thread, per-action DC, voice)
+
+- **Shared thread** (ADR 0027, `P5.21`/`P5.22`): `gm-messages` collection
+  (`viewer` read, member read-only, Worker writes), `POST /api/gm/chat` streams
+  one turn with history from the thread, user row before the stream, assistant row
+  on end/abort, owner billing, tools as the caller. The panel renders the thread
+  itself in the signed-out preview style — no `ChatPanel` — with a one-line
+  composer, a `MODEL` picker in the header, and both synthetic beats persisted
+  under `characterName: '__beat__'` and filtered from the view. Signed-out windows
+  read the same thread.
+- **Gate moved** (amends ADR 0022): `GM_CHAT_PATH` is `/api/gm/chat`, so GM writes
+  are refused on `/api/ai/chat` — the route `/assistant` shares — and on MCP.
+  `/assistant` is now a private generic assistant, unlinked.
+- **One DC per action** (ADR 0028, `P5.19`): `request_check` writes
+  `pendingCharacterId`/`pendingStat`/`pendingDc`, `rollSkillCheck` uses that DC and
+  refuses anything else with `roll_not_requested` before the die; cleared by the
+  roll, an advance or a reset. The sheet greys every other stat, the banner shows
+  the pending DC and pulses (`P5.23`/`P5.24`).
+- **Voice** (`P5.20`): the brief bans mechanics talk and recaps, forbids
+  enumerating options, addresses one named character per turn and sets a DC per
+  action through `request_check`.
+- **Fixed during integration:** the route loaded the thread after writing the
+  user row and then appended the same turn again — the model saw every message
+  twice. History now loads before the write.
+- **Regression to fix in Phase 6:** stat cards are inert until a check is
+  requested, so `presence.spec.ts`'s bare `stat-card-*` click no longer rolls
+  (noted on `P6.2`).

@@ -32,12 +32,13 @@ describe('registered collection schemas', () => {
    * `ai-chat` collections are here deliberately (`P5.1`) — registering them is
    * what turns `/api/ai/chat` on.
    */
-  it('registers exactly the eight collections, with no messaging drop-ins', () => {
+  it('registers exactly the nine collections, with no messaging drop-ins', () => {
     expect(schemas.map((schema) => schema.name).sort()).toEqual([
       'ai-chats',
       'ai-messages',
       'campaigns',
       'characters',
+      'gm-messages',
       'inventory',
       'roll-logs',
       'settings',
@@ -77,14 +78,80 @@ describe('data-model contracts later phases depend on', () => {
     return schema
   }
 
-  it('keeps the campaign scene at nine columns, with the arc position a number', () => {
+  it('keeps the campaign scene at twelve columns, with the arc position a number', () => {
     const campaigns = schemaNamed('campaigns')
     const sceneIndex = campaigns.columns.find((column) => column.name === 'sceneIndex')
 
-    expect(campaigns.columns).toHaveLength(9)
+    expect(campaigns.columns).toHaveLength(12)
     expect(sceneIndex?.storage).toBe('number')
     expect(sceneIndex?.default).toBe(0)
     expect(sceneIndex?.required).toBeUndefined()
+  })
+
+  /**
+   * The pending check (`P5.19`): three additive columns on the campaign, and the
+   * "nothing pending" defaults a roll, an advance and a reset return them to.
+   * `pendingStat` selects over the real six abilities — `wis`, never the
+   * `wy` typo — because `rollSkillCheck` refuses anything not in this list.
+   */
+  it('keeps the pending check on the campaign, defaulting to nothing pending', () => {
+    const campaigns = schemaNamed('campaigns')
+    const column = (name: string) => campaigns.columns.find((entry) => entry.name === name)
+
+    expect(column('pendingCharacterId')?.storage).toBe('text')
+    expect(column('pendingCharacterId')?.default).toBe('')
+    expect(column('pendingStat')?.interpretation).toEqual({
+      kind: 'select',
+      options: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
+    })
+    expect(column('pendingStat')?.default).toBe('')
+    expect(column('pendingDc')?.storage).toBe('number')
+    expect(column('pendingDc')?.default).toBe(0)
+    // Additive: none of the three is required, so an existing row still reads.
+    for (const name of ['pendingCharacterId', 'pendingStat', 'pendingDc']) {
+      expect(column(name)?.required).toBeUndefined()
+    }
+  })
+
+  /**
+   * The shared GM thread must be readable by the signed-out window (ADR 0014)
+   * and writable by nobody but the Worker: every client role loses create,
+   * update and delete, so a message in the thread is a message the model got.
+   */
+  it('makes the GM thread readable by everyone and writable only by the server', () => {
+    const gmMessages = schemaNamed('gm-messages')
+    const column = (name: string) => gmMessages.columns.find((entry) => entry.name === name)
+
+    expect(gmMessages.columns).toHaveLength(5)
+    expect(column('campaignId')?.required).toBe(true)
+    expect(column('role')?.interpretation).toEqual({
+      kind: 'select',
+      options: ['user', 'assistant'],
+    })
+    expect(column('characterName')?.default).toBe('')
+    expect(column('content')?.required).toBe(true)
+    expect(column('parts')?.interpretation).toEqual({ kind: 'json' })
+    expect(gmMessages.ownerField).toBeUndefined()
+
+    expect(gmMessages.permissions.viewer).toEqual({
+      read: true,
+      create: false,
+      update: false,
+      delete: false,
+    })
+    expect(gmMessages.permissions.member).toEqual({
+      read: true,
+      create: false,
+      update: false,
+      delete: false,
+    })
+    expect(gmMessages.permissions['*']?.read).toBe(true)
+    expect(gmMessages.permissions.admin).toEqual({
+      read: true,
+      create: true,
+      update: true,
+      delete: true,
+    })
   })
 
   it('keeps one character row per user per campaign, owned via userId', () => {

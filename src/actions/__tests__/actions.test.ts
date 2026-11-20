@@ -1314,16 +1314,52 @@ describe('applyGmMutation scene advance (ADR 0023)', () => {
       },
       limit: 500,
     })
-    expect(tools.update).toHaveBeenCalledWith(
-      'campaigns',
-      DEFAULT_CAMPAIGN_ID,
-      sceneColumns(1),
-    )
+    expect(tools.update).toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, {
+      ...sceneColumns(1),
+      // An accepted advance drops the previous scene's pending check (P5.19).
+      pendingCharacterId: '',
+      pendingStat: '',
+      pendingDc: 0,
+    })
     const marker = tools.create.mock.calls.find((call) => call[0] === 'roll-logs')
     expect(marker?.[1]).toMatchObject({
       entryType: 'gm_event',
       summary: `The scene advances to ${progressLabel(1)} — The Rune-Ward`,
     })
+  })
+
+  it('clears the pending check on an accepted advance', async () => {
+    const tools = createFakeTools({
+      get: campaignGet({
+        sceneIndex: 0,
+        pendingCharacterId: 'char-kaelen',
+        pendingStat: 'dex',
+        pendingDc: 12,
+      }),
+      query: ok({
+        records: [
+          {
+            recordId: 'roll-1',
+            data: {
+              campaignId: DEFAULT_CAMPAIGN_ID,
+              entryType: 'roll',
+              targetDc: 12,
+              outcome: 'success',
+            },
+          },
+        ],
+        count: 1,
+      }),
+    })
+
+    const result = await applyGmMutation(
+      context(tools, { mutation: { kind: 'update_scene', scene: { sceneIndex: 1 } } }),
+    )
+
+    expect(result).toMatchObject({ success: true, data: { scene: { sceneIndex: 1 } } })
+    // The request belonged to the scene the table just closed (P5.19).
+    const scene = tools.update.mock.calls.find((call) => call[0] === 'campaigns')?.[2]
+    expect(scene).toMatchObject({ pendingCharacterId: '', pendingStat: '', pendingDc: 0 })
   })
 
   it('lets the model override the new scene columns without changing the position', async () => {
@@ -1358,6 +1394,9 @@ describe('applyGmMutation scene advance (ADR 0023)', () => {
       ...sceneColumns(1),
       activeThreatDc: 16,
       sceneSummary: 'The ward burns.',
+      pendingCharacterId: '',
+      pendingStat: '',
+      pendingDc: 0,
     })
   })
 
@@ -1439,11 +1478,12 @@ describe('applyGmMutation scene advance (ADR 0023)', () => {
     )
 
     if (!result.success) throw new Error(`expected success, got ${result.code}`)
-    expect(tools.update).toHaveBeenCalledWith(
-      'campaigns',
-      DEFAULT_CAMPAIGN_ID,
-      sceneColumns(3),
-    )
+    expect(tools.update).toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, {
+      ...sceneColumns(3),
+      pendingCharacterId: '',
+      pendingStat: '',
+      pendingDc: 0,
+    })
   })
 
   it('keeps the in-scene write ungated when no sceneIndex arrives', async () => {
@@ -1551,6 +1591,110 @@ describe('applyGmMutation enemy damage (ADR 0024)', () => {
 })
 
 /**
+ * One action, one number (`P5.19`): the GM records the check it is about to ask
+ * for, and the campaign carries it until a roll answers it. A request is not an
+ * outcome, so it writes no `roll-logs` row — the table learns of it from the
+ * live campaign row, not from the feed.
+ */
+describe('applyGmMutation request_check (P5.19)', () => {
+  it('writes the three pending columns and no roll-logs row', async () => {
+    const tools = createFakeTools({ get: characterGet(18, 24) })
+
+    const result = await applyGmMutation(
+      context(tools, {
+        mutation: { kind: 'request_check', characterId: 'char-kaelen', stat: 'dex', dc: 17 },
+      }),
+    )
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        kind: 'request_check',
+        pending: { characterId: 'char-kaelen', characterName: 'Kaelen', stat: 'dex', dc: 17 },
+        logged: false,
+      },
+    })
+    expect(tools.update).toHaveBeenCalledTimes(1)
+    expect(tools.update).toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, {
+      pendingCharacterId: 'char-kaelen',
+      pendingStat: 'dex',
+      pendingDc: 17,
+    })
+    // A request for a roll is not a roll: no evidence row, no character write.
+    expect(tools.create).not.toHaveBeenCalled()
+    expect(tools.update).not.toHaveBeenCalledWith('characters', expect.anything(), expect.anything())
+  })
+
+  it('refuses a character outside this campaign and writes nothing', async () => {
+    const tools = createFakeTools({ get: characterGet(18, 24, 'other-campaign') })
+
+    const result = await applyGmMutation(
+      context(tools, {
+        mutation: { kind: 'request_check', characterId: 'char-kaelen', stat: 'wis', dc: 12 },
+      }),
+    )
+
+    if (result.success) throw new Error('expected character_not_found, got success')
+    expect(result.code).toBe('character_not_found')
+    expect(tools.update).not.toHaveBeenCalled()
+  })
+
+  it('refuses a character that cannot be read', async () => {
+    const tools = createFakeTools()
+
+    const result = await applyGmMutation(
+      context(tools, {
+        mutation: { kind: 'request_check', characterId: 'char-missing', stat: 'int', dc: 10 },
+      }),
+    )
+
+    if (result.success) throw new Error('expected character_not_found, got success')
+    expect(result.code).toBe('character_not_found')
+    expect(tools.update).not.toHaveBeenCalled()
+  })
+
+  it('bounds the DC to 5..30 and the stat to the six abilities', async () => {
+    for (const mutation of [
+      { kind: 'request_check', characterId: 'char-kaelen', stat: 'dex', dc: 4 },
+      { kind: 'request_check', characterId: 'char-kaelen', stat: 'dex', dc: 31 },
+      { kind: 'request_check', characterId: 'char-kaelen', stat: 'dex', dc: 12.5 },
+      { kind: 'request_check', characterId: 'char-kaelen', stat: 'luck', dc: 12 },
+      { kind: 'request_check', characterId: '', stat: 'dex', dc: 12 },
+    ]) {
+      const tools = createFakeTools({ get: characterGet(18, 24) })
+
+      const result = await applyGmMutation(context(tools, { mutation }))
+
+      if (result.success) throw new Error(`expected invalid_params for ${JSON.stringify(mutation)}`)
+      expect(result.code).toBe('invalid_params')
+      expect(tools.get).not.toHaveBeenCalled()
+      expect(tools.update).not.toHaveBeenCalled()
+    }
+  })
+
+  it('reports write_failed when the campaign row cannot be updated', async () => {
+    const tools = createFakeTools({
+      get: characterGet(18, 24),
+      update: failed('schema_validation_failed', 'pendingStat is not a valid option'),
+    })
+
+    const result = await applyGmMutation(
+      context(tools, {
+        mutation: { kind: 'request_check', characterId: 'char-kaelen', stat: 'con', dc: 13 },
+      }),
+    )
+
+    expect(result).toEqual({
+      success: false,
+      code: 'write_failed',
+      error: 'pendingStat is not a valid option',
+      details: { stage: 'request_check', applied: [] },
+    })
+    expect(tools.create).not.toHaveBeenCalled()
+  })
+})
+
+/**
  * "Start New Campaign" is a new game at the same table (ADR 0025, 0026): the
  * scene, every pack and the roll log return to the start; characters keep their
  * identity and regain full HP. One `gm_event` row is written last, so a reset
@@ -1649,10 +1793,17 @@ describe('startCampaign', () => {
       100,
     )
 
-    // The scene is scene 0 of the arc, under the campaign's existing title.
+    // The scene is scene 0 of the arc, under the campaign's existing title, with
+    // nothing pending: a new game has not asked the table for a check yet (P5.19).
     expect(tools.create.mock.calls[0]).toEqual([
       'campaigns',
-      { title: DEFAULT_CAMPAIGN_SEED.title, ...sceneColumns(0) },
+      {
+        title: DEFAULT_CAMPAIGN_SEED.title,
+        ...sceneColumns(0),
+        pendingCharacterId: '',
+        pendingStat: '',
+        pendingDc: 0,
+      },
       DEFAULT_CAMPAIGN_ID,
     ])
 
@@ -1706,6 +1857,20 @@ describe('startCampaign', () => {
     await startCampaign(context(tools))
 
     expect(tools.create.mock.calls[0][1]).toMatchObject({ title: 'The Table of Ash' })
+  })
+
+  it('clears any pending check on the reset row', async () => {
+    // A reset is a new game: the previous run's request must not survive it and
+    // leave the table with one live stat (P5.19).
+    const tools = createFakeTools({ query: ok(ROSTER) })
+
+    await startCampaign(context(tools))
+
+    expect(tools.create.mock.calls[0][1]).toMatchObject({
+      pendingCharacterId: '',
+      pendingStat: '',
+      pendingDc: 0,
+    })
   })
 
   it('stops at a failed drain and reports the stages that landed', async () => {

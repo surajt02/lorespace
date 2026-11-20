@@ -21,6 +21,11 @@
  *   player would say — first person, naming the enemy, asking what to roll —
  *   instead of ordering an attack. The chat is the interface, so the chip is a
  *   writer of prose, not an action.
+ * - **Attribution is not in the text** (`P5.20`). The console sends the speaker's
+ *   name as its own field on `POST /api/gm/chat`; the route prefixes the model's
+ *   copy and the panel labels the row from `characterName`. So no builder here
+ *   writes `"Name: "` — a chip that did would reach the model as
+ *   `"Ash: Ash inspects the room"`.
  *
  * Pure: no React, no network, no clock.
  */
@@ -50,8 +55,6 @@ export const GM_CHIPS: readonly GmChip[] = [
 ]
 
 export interface QuickPromptContext {
-  /** The viewer's character name, when they have a sheet. */
-  characterName?: string | null
   /** The viewer's newest `roll-logs` roll row, when one exists. */
   latestRoll?: RollLogRow | null
   /** The campaign's current enemy (`campaigns.enemyName`), when one is on the table. */
@@ -73,14 +76,13 @@ function rollLine(row: RollLogRow): string {
 }
 
 /**
- * A chip, as the message the GM receives.
+ * A chip, as the message text the GM receives.
  *
- * The character name prefixes the line when the viewer has a sheet; without one
- * the line simply starts with the action, because a placeholder like
- * `undefined inspects the room` is worse than no attribution. `resolve` carries
- * the newest roll when there is one and says plainly that there is not when
- * there isn't — asking the GM to verify a roll it was never given is exactly the
- * fabrication ADR 0009 forbids.
+ * No speaker prefix: the panel sends the character name as its own field and the
+ * route adds the model-side prefix, so the chip says only what the character
+ * does. `resolve` carries the newest roll when there is one and says plainly
+ * that there is not when there isn't — asking the GM to verify a roll it was
+ * never given is exactly the fabrication ADR 0009 forbids.
  *
  * `attack` is narration, not an order (ADR 0024): the player says what they do
  * in the first person and asks what to roll, and the GM answers with a DC. There
@@ -89,10 +91,8 @@ function rollLine(row: RollLogRow): string {
  */
 export function buildQuickPrompt(
   kind: GmChipKind,
-  { characterName, latestRoll, enemyName }: QuickPromptContext = {},
+  { latestRoll, enemyName }: QuickPromptContext = {},
 ): string {
-  const name = characterName?.trim() ?? ''
-  const prefix = name.length > 0 ? `${name}: ` : ''
   const roll = latestRoll ?? null
   const rollSuffix = roll ? `\nMy latest roll: ${rollLine(roll)}.` : ''
   const noRollSuffix =
@@ -101,13 +101,13 @@ export function buildQuickPrompt(
 
   switch (kind) {
     case 'inspect':
-      return `${prefix}inspect the room — what is here, and what is watching?`
+      return 'Inspect the room — what is here, and what is watching?'
     case 'resolve':
-      return `${prefix}resolve my latest roll.${roll ? rollSuffix : noRollSuffix}`
+      return `Resolve my latest roll.${roll ? rollSuffix : noRollSuffix}`
     case 'attack':
-      return `${prefix}I move to strike ${enemy.length > 0 ? enemy : 'the enemy'} — set the stakes and tell me what to roll.`
+      return `I move to strike ${enemy.length > 0 ? enemy : 'the enemy'} — set the stakes and tell me what to roll.`
     case 'rest':
-      return `${prefix}take a short rest — what does the party recover, and what happens while we rest?`
+      return 'Take a short rest — what does the party recover, and what happens while we rest?'
   }
 }
 

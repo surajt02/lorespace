@@ -19,6 +19,7 @@ import { campaignsSchema } from './schemas/campaigns-schema'
 import { charactersSchema } from './schemas/characters-schema'
 import { inventorySchema } from './schemas/inventory-schema'
 import { rollLogsSchema } from './schemas/roll-logs-schema'
+import { gmMessagesSchema } from './schemas/gm-messages-schema'
 
 import { aiChatSchemas } from './schemas/ai-chat-schema'
 
@@ -30,4 +31,5 @@ export const schemas: CollectionSchema[] = [
   charactersSchema,
   inventorySchema,
   rollLogsSchema,
+  gmMessagesSchema,
 ]

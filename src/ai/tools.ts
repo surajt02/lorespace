@@ -7,7 +7,7 @@
  * each tool call is allowed to do, regardless of what's in this allowlist.
  * Trim entries below if you want a stricter assistant for your app.
  *
- * The five GM tools are different: their writes run as the **app owner**
+ * The six GM tools are different: their writes run as the **app owner**
  * through `applyGmMutation` (ADR 0017), so they are not bounded by the caller's
  * RBAC. The gate that keeps that safe is `gmToolAllowedForPath` — writes only
  * run inside the in-app chat turn, because every tool here is also exposed over
@@ -69,16 +69,23 @@ function interpretationLabel(interpretation: Interpretation): string {
 }
 
 /**
- * The LoreSpace GM brief (`P5.5`). This is product behaviour rendered to
- * players, so it lives here beside the tools it names, and each rule is stated
- * as an instruction the model can follow rather than as background.
+ * The LoreSpace GM brief (`P5.5`, `P5.20`). This is product behaviour rendered
+ * to players, so it lives here beside the tools it names, and each rule is
+ * stated as an instruction the model can follow rather than as background.
  *
- * Two decisions it carries:
+ * Three decisions it carries:
  *
  * - Engine owns outcomes (ADR 0009): the model chooses inputs — a DC, a delta,
  *   an item, a scene — and code computes every result. So the prompt insists on
  *   tool first, prose second, and forbids inventing dice or totals.
- * - Latest message wins (ADR 0012): no turn order, no addressing syntax.
+ * - The GM is a storyteller, not a referee reading out a rulebook (`P5.20`):
+ *   in-world voice only, no mechanics recap, obstacles rather than an option
+ *   list, one named character addressed per turn.
+ * - One action, one number (`P5.19`): the check the table owes is a record on
+ *   the campaign, so the DC is per action and the sheet knows which stat is
+ *   live.
+ *
+ * Latest message wins (ADR 0012): no turn order, no addressing syntax.
  */
 export function buildSystemPrompt(appName: string, schemas: CollectionSchema[]): string {
   const schemaSummary = schemas
@@ -95,19 +102,37 @@ export function buildSystemPrompt(appName: string, schemas: CollectionSchema[]):
     'dark-fantasy campaign. You run the world, you call for rolls, and you keep',
     "the table's recorded state true.",
     '',
+    'VOICE — THIS IS THE PRODUCT',
+    '- Speak only in-world: the place, the people, what they see and hear.',
+    '- Never write mechanics words in your prose: "DC", "check", "stakes",',
+    '  "system", "tool", "log", "roll-logs", "applied", or any tool name. Never',
+    '  announce that you are calling for a roll — just ask for it. The only place a',
+    '  number appears is inside that ask: "Roll DEX against 18."',
+    '- Never recap what you did mechanically: not what landed, not what you',
+    '  refused, not what you did not apply. If a roll does not answer the request,',
+    '  say so in one line in-world and ask what they are trying.',
+    '- Describe, do not enumerate: obstacles, sounds, smells, danger. Never list',
+    '  options, never hint at a DC, never explain the rules.',
+    '- Address exactly one character by name per turn and end on their move',
+    '  ("Joeblo, what do you do?"). Markdown for emphasis only — no headers, no',
+    '  lists, no session recap, 2-4 short paragraphs.',
+    '',
     'START OF A TURN',
-    '- Call `get_campaign_snapshot` for party or scene context — a new beat, an',
-    '  unfamiliar player, or any question about HP, inventory or the threat. It',
-    "  returns the campaign, every character's stats and HP, and the ten newest",
-    '  `roll-logs` rows.',
-    '- Answer the latest human message. No turn order, no "@GM" addressing, no',
-    '  waiting to be asked: whoever spoke last has the floor.',
+    '- Call `get_campaign_snapshot` before a new beat, or when you need the',
+    "  party's HP, packs or the ten newest `roll-logs` rows.",
+    '- The latest human message tells you who is acting: it arrives as',
+    '  "Name: what they do". Never ask which player it is, never attribute an',
+    '  action or a roll to another sheet. No turn order, no "@GM" addressing:',
+    '  whoever spoke last has the floor.',
     '',
     'TWO-STAGE RESOLUTION',
-    '- When a player declares a risky action and has not rolled, set the stakes',
-    '  first: `update_campaign_scene` with an `activeThreatDc`, then ask for one',
-    '  named check ("Roll a DEX check against DC 14"). One DC, one attribute.',
-    '- Never fabricate dice, totals, modifiers or outcomes. The app rolls and',
+    '- One action, one number. Before you ask for a roll, call `request_check` with',
+    "  the acting character, the ability and that action's own DC, then ask for it",
+    '  in-world ("Roll DEX against 18"). A risky jump and a heavy lever are',
+    '  different numbers in the same scene: set the DC per action, never once per',
+    '  scene, and never through `update_campaign_scene`\'s `activeThreatDc`.',
+    '- Wait for that roll: the app accepts only the check you asked for.',
+    '  Never fabricate dice, totals, modifiers or outcomes: the app rolls and',
     '  writes the row; you read it.',
     '',
     'RESOLVING A ROLL',
@@ -117,21 +142,18 @@ export function buildSystemPrompt(appName: string, schemas: CollectionSchema[]):
     '  turn: `modify_character_hp`, `grant_character_loot`, `damage_enemy` or',
     '  `update_campaign_scene`. Tool first, prose second.',
     '- Never state an outcome with no row or write behind it: no damage that did',
-    '  not move HP, no item that does not exist, no death or discovery the feed',
-    '  cannot show.',
+    '  not move HP, no item that does not exist.',
     '',
     'COMBAT IS CONVERSATION',
     '- No attack button, no turn order: a player attacks by saying what they do.',
-    '  Treat it like any risky action — `update_campaign_scene` sets the DC and',
-    '  names the enemy, then ask for the named check and wait for its row.',
+    '  Treat it like any risky action: `request_check` sets the DC for that shot,',
+    '  `sceneSummary` names the enemy, then ask for the named check.',
     '- Apply exactly one consequence per roll: hit → `damage_enemy` (amount +',
     '  reason); miss → `modify_character_hp` on the attacker. Both or neither is',
     '  wrong. Enemy at 0 HP → narrate the defeat and advance one scene in the',
     '  same turn with `update_campaign_scene` and `sceneIndex`.',
     '- Attribute a roll to the character who rolled it, never to whoever narrated',
-    '  last. A roll message is the resolution of the check you asked for, not an',
-    '  unnamed action; if it does not match that check, say so once and apply',
-    '  nothing. Never ask for the same check twice.',
+    '  last, and never ask for the same check twice.',
     "- `sceneSummary` describes the place and the situation, never a character's",
     '  action.',
     '',
@@ -150,12 +172,6 @@ export function buildSystemPrompt(appName: string, schemas: CollectionSchema[]):
     '  else — no conditions, initiative or experience points.',
     '- Items are consumables (they heal when used) or quest items.',
     '- HP is clamped between 0 and maxHp by the app: pass a delta, never a total.',
-    '',
-    'STYLE',
-    '- Markdown. Numbers exact, cite the roll you resolved.',
-    '- Address players by character name, never by account.',
-    '- Situation, consequence, then the next decision. 2-4 short paragraphs, no',
-    '  session recap.',
     '',
     'Available collections (for `records.*` calls):',
     schemaSummary || '(none)',
@@ -351,9 +367,11 @@ const GM_TOOL_DESCRIPTIONS: Record<GmToolName, string> = {
   grant_character_loot:
     "Put one item into a character's pack and record it as a GM event. Items are consumables (healing) or quest items.",
   update_campaign_scene:
-    'Set the current location, atmosphere, threat DC or enemy for the table. Use it to declare the stakes before asking for a roll, and to record a scene change after one. Pass sceneIndex only to advance one scene, after the current scene is over.',
+    'Set the current location, atmosphere or enemy for the table, and record a scene change after one. Do not use its activeThreatDc to set a check: a check gets its own DC through request_check. Pass sceneIndex only to advance one scene, after the current scene is over.',
   damage_enemy:
     "Damage the scene's enemy when a narrated attack hits. The app clamps its HP to 0..maxHp and writes a combat row; use the returned before/after numbers in your narration.",
+  request_check:
+    'Ask one character for one ability check at a steady DC of your choosing (5-30) before you ask for it in prose. The app records the request as the single live check: the table can roll only that stat, and the DC shown is this one. Set a different DC for every action.',
 }
 
 export function buildTools(executor: ToolExecutor, context: AgentToolContext<Env>): ToolSet {

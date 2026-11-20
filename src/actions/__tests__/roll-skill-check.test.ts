@@ -36,7 +36,7 @@ interface FakeToolsOptions {
 function createFakeTools(options: FakeToolsOptions = {}) {
   return {
     create: vi.fn().mockResolvedValue(options.create ?? ok({ recordId: 'log-1' })),
-    update: vi.fn(),
+    update: vi.fn().mockResolvedValue(ok({ recordId: DEFAULT_CAMPAIGN_ID })),
     remove: vi.fn(),
     deleteWhere: vi.fn(),
     get: vi
@@ -410,5 +410,193 @@ describe('rollSkillCheck write failure', () => {
       error: 'rolledAt is required',
       details: { stage: 'roll_log', applied: [] },
     })
+  })
+})
+
+/**
+ * One check is live at a time (`P5.19`). The GM's request lives on the campaign
+ * row, so the action — not the browser — decides whether a roll was asked for,
+ * which DC it is against, and when the request is spent.
+ */
+describe('rollSkillCheck pending check', () => {
+  /** A campaign with an unanswered request on Kaelen's DEX at DC 17. */
+  function pendingCampaign(overrides: Record<string, unknown> = {}) {
+    return campaignGet({
+      activeThreatDc: 12,
+      pendingCharacterId: 'char-kaelen',
+      pendingStat: 'dex',
+      pendingDc: 17,
+      ...overrides,
+    })
+  }
+
+  it('refuses a stat that was not requested, writing nothing', async () => {
+    const tools = createFakeTools({
+      get: getRouter({ characters: characterGet(), campaigns: pendingCampaign() }),
+    })
+
+    const result = await rollSkillCheck(
+      context(tools, { characterId: 'char-kaelen', statName: 'int' }),
+    )
+
+    expect(result).toEqual({
+      success: false,
+      code: 'roll_not_requested',
+      error: 'The table is waiting on a DEX check; INT was not requested',
+    })
+    // No die was spent: the refusal is before the draw and before the row.
+    expect(tools.create).not.toHaveBeenCalled()
+    expect(tools.update).not.toHaveBeenCalled()
+  })
+
+  it('refuses the requested stat from a different character, writing nothing', async () => {
+    const tools = createFakeTools({
+      get: getRouter({
+        // The caller owns this sheet, but the request named another character.
+        characters: characterGet({ userId: CALLER_ID }),
+        campaigns: pendingCampaign({ pendingCharacterId: 'char-borin' }),
+      }),
+    })
+
+    const result = await rollSkillCheck(
+      context(tools, { characterId: 'char-kaelen', statName: 'dex' }),
+    )
+
+    expect(result).toEqual({
+      success: false,
+      code: 'roll_not_requested',
+      error: 'The table is waiting on a DEX check from another character',
+    })
+    expect(tools.create).not.toHaveBeenCalled()
+  })
+
+  it('rolls against the pending DC, not the scene DC, and clears the request', async () => {
+    // DEX 12 → +1; face 13 → 14, which clears the scene's 12 but not the
+    // request's 17. The row must say 17 and failure.
+    stubSeed(13)
+    const tools = createFakeTools({
+      get: getRouter({ characters: characterGet(), campaigns: pendingCampaign() }),
+    })
+
+    const result = await rollSkillCheck(
+      context(tools, { characterId: 'char-kaelen', statName: 'dex' }),
+    )
+
+    expect(result).toEqual({
+      success: true,
+      data: {
+        rawRoll: 13,
+        modifier: 1,
+        total: 14,
+        targetDc: 17,
+        outcome: 'failure',
+        rollLogId: 'log-1',
+      },
+    })
+    const [, row] = tools.create.mock.calls[0] as [string, Record<string, unknown>]
+    expect(row).toMatchObject({ statName: 'dex', targetDc: 17, outcome: 'failure' })
+    expect(tools.update).toHaveBeenCalledWith('campaigns', DEFAULT_CAMPAIGN_ID, {
+      pendingCharacterId: '',
+      pendingStat: '',
+      pendingDc: 0,
+    })
+  })
+
+  it('accepts a roll the request left unnamed by character', async () => {
+    stubSeed(20)
+    const tools = createFakeTools({
+      get: getRouter({
+        characters: characterGet(),
+        campaigns: pendingCampaign({ pendingCharacterId: '' }),
+      }),
+    })
+
+    const result = await rollSkillCheck(
+      context(tools, { characterId: 'char-kaelen', statName: 'dex' }),
+    )
+
+    expect(result).toMatchObject({ success: true, data: { targetDc: 17 } })
+  })
+
+  it('falls back to the scene DC when nothing is pending', async () => {
+    stubSeed(13)
+    const tools = createFakeTools({
+      get: getRouter({
+        characters: characterGet(),
+        campaigns: campaignGet({
+          activeThreatDc: 12,
+          pendingCharacterId: '',
+          pendingStat: '',
+          pendingDc: 0,
+        }),
+      }),
+    })
+
+    const result = await rollSkillCheck(
+      context(tools, { characterId: 'char-kaelen', statName: 'dex' }),
+    )
+
+    expect(result).toMatchObject({ success: true, data: { targetDc: 12, outcome: 'success' } })
+    // Nothing was pending, so nothing is written back after the row.
+    expect(tools.update).not.toHaveBeenCalled()
+  })
+
+  it('ignores a half-written pending row rather than locking the table out', async () => {
+    // A `pendingStat` outside the six, or a DC of 0, is not a request. The
+    // scene DC governs, exactly as it did before P5.19.
+    for (const pending of [
+      { pendingCharacterId: 'char-kaelen', pendingStat: 'luck', pendingDc: 17 },
+      { pendingCharacterId: 'char-kaelen', pendingStat: 'dex', pendingDc: 0 },
+      { pendingCharacterId: 'char-kaelen', pendingStat: 'dex', pendingDc: '17' },
+    ]) {
+      stubSeed(13)
+      const tools = createFakeTools({
+        get: getRouter({
+          characters: characterGet(),
+          campaigns: campaignGet({ activeThreatDc: 12, ...pending }),
+        }),
+      })
+
+      const result = await rollSkillCheck(
+        context(tools, { characterId: 'char-kaelen', statName: 'int' }),
+      )
+
+      expect(result).toMatchObject({ success: true, data: { targetDc: 12 } })
+      expect(tools.update).not.toHaveBeenCalled()
+    }
+  })
+
+  it('keeps the roll a success when clearing the request fails', async () => {
+    stubSeed(18)
+    const tools = createFakeTools({
+      get: getRouter({ characters: characterGet(), campaigns: pendingCampaign() }),
+    })
+    tools.update.mockResolvedValue(failed('write_refused', 'update refused'))
+
+    const result = await rollSkillCheck(
+      context(tools, { characterId: 'char-kaelen', statName: 'dex' }),
+    )
+
+    // The row is evidence and it landed: a stale request is reported, not fatal.
+    expect(result).toMatchObject({
+      success: true,
+      data: { targetDc: 17, rollLogId: 'log-1', details: { pendingClearFailed: 'update refused' } },
+    })
+  })
+
+  it('does not clear the request when the roll itself could not be written', async () => {
+    stubSeed(18)
+    const tools = createFakeTools({
+      get: getRouter({ characters: characterGet(), campaigns: pendingCampaign() }),
+      create: failed('write_refused', 'roll-logs refused the row'),
+    })
+
+    const result = await rollSkillCheck(
+      context(tools, { characterId: 'char-kaelen', statName: 'dex' }),
+    )
+
+    expect(result).toMatchObject({ success: false, code: 'write_failed' })
+    // The table still owes the check: nothing answered it.
+    expect(tools.update).not.toHaveBeenCalled()
   })
 })

@@ -13,8 +13,8 @@ import type { Env } from '../../../worker.js'
  * and MCP, so this file pins three boundaries:
  *
  * - the allowlist (`P5.4`): no delete tool, ever;
- * - the chat-turn gate (ADR 0022): a write tool refuses anywhere but
- *   `POST /api/ai/chat`, without touching the record room;
+ * - the chat-turn gate (ADR 0022): a write tool refuses anywhere but the
+ *   shared table thread (`POST /api/gm/chat`), without touching the record room;
  * - the snapshot's projection: named columns only, far under the 30 KB tool cap.
  *
  * It also pins the GM brief's load-bearing sentences, because the prompt is
@@ -32,18 +32,21 @@ const ALLOWED_KEYS = [
   'user_current',
 ]
 
-/** The five GM tools `P5.3`/`P5.18` add. */
+/** The six GM tools `P5.3`/`P5.18`/`P5.19` add. */
 const GM_KEYS = [
   'get_campaign_snapshot',
   'modify_character_hp',
   'grant_character_loot',
   'update_campaign_scene',
   'damage_enemy',
+  'request_check',
 ]
 
 const OWNER_USER_ID = 'owner-user'
-const CHAT_URL = 'https://app.test/api/ai/chat'
+const CHAT_URL = 'https://app.test/api/gm/chat'
 const AGENT_URL = 'https://app.test/_deepspace/agent/tools'
+/** The SDK's per-player chat (`/assistant`), which is no longer a GM turn. */
+const ASSISTANT_URL = 'https://app.test/api/ai/chat'
 
 function fakeExecutor() {
   return vi.fn().mockResolvedValue({ success: true })
@@ -162,12 +165,12 @@ async function run(
 }
 
 describe('buildTools', () => {
-  it('builds the seven allowed built-ins plus the five GM tools', () => {
+  it('builds the seven allowed built-ins plus the six GM tools', () => {
     const { context } = fakeContext(CHAT_URL)
     const tools = buildTools(fakeExecutor(), context)
 
     expect(Object.keys(tools).sort()).toEqual([...ALLOWED_KEYS, ...GM_KEYS].sort())
-    expect(Object.keys(tools)).toHaveLength(12)
+    expect(Object.keys(tools)).toHaveLength(13)
   })
 
   it('never exposes a delete tool', () => {
@@ -400,6 +403,29 @@ describe('GM write tools outside the GM chat turn', () => {
       expect(executor).not.toHaveBeenCalled()
     },
   )
+
+  // `/assistant` shares `/api/ai/chat`; a member could otherwise drive the GM's
+  // owner-credentialed writes from that generic page (ADR 0022).
+  it.each(GM_KEYS.filter((key) => key !== 'get_campaign_snapshot'))(
+    '%s refuses on the per-player assistant route',
+    async (name) => {
+      const executor = fakeExecutor()
+      const { context, calls, roomGet } = fakeContext(ASSISTANT_URL)
+      const tools = buildTools(executor, context)
+
+      const result = await run(tools, name, {
+        characterId: 'char-1',
+        delta: -6,
+        itemName: 'Sunfire Vial',
+        locationName: 'The Drowned Stair',
+      })
+
+      expect(result).toEqual({ success: false, code: 'gm_tools_chat_only' })
+      expect(roomGet).not.toHaveBeenCalled()
+      expect(calls).toEqual([])
+      expect(executor).not.toHaveBeenCalled()
+    },
+  )
 })
 
 describe('GM write tools inside the GM chat turn', () => {
@@ -497,6 +523,37 @@ describe('GM write tools inside the GM chat turn', () => {
     expect(JSON.stringify(logWrite?.params.data)).toContain('The arrow finds the gap')
   })
 
+  it('runs a request_check as the owner and writes no roll-logs row', async () => {
+    const { context, calls } = fakeContext(CHAT_URL)
+    const tools = buildTools(fakeExecutor(), context)
+
+    const result = await run(tools, 'request_check', {
+      characterId: 'char-1',
+      stat: 'dex',
+      dc: 17,
+    })
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        kind: 'request_check',
+        pending: { characterId: 'char-1', characterName: 'Kaelen', stat: 'dex', dc: 17 },
+        logged: false,
+      },
+    })
+    const update = calls.find((call) => call.tool === 'records.update')
+    expect(update?.params).toMatchObject({
+      collection: 'campaigns',
+      recordId: DEFAULT_CAMPAIGN_ID,
+      data: { pendingCharacterId: 'char-1', pendingStat: 'dex', pendingDc: 17 },
+    })
+    // A request is not an outcome: nothing goes into the feed for it.
+    expect(calls.some((call) => call.params.collection === 'roll-logs')).toBe(false)
+    for (const call of calls) {
+      expect(call.headers.get('X-User-Id')).toBe(OWNER_USER_ID)
+    }
+  })
+
   it('refuses invalid input before building the owner action context', async () => {
     const { context, calls, roomGet } = fakeContext(CHAT_URL)
     const tools = buildTools(fakeExecutor(), context)
@@ -552,5 +609,32 @@ describe('buildSystemPrompt', () => {
     expect(prompt).not.toMatch(/assistant for the/i)
     expect(prompt.split(/\s+/).length).toBeLessThan(700)
     expect(prompt).toContain('Available collections')
+  })
+
+  /**
+   * The voice rules (`P5.20`) are the product: a GM that reads out a DC and
+   * recaps what it refused is a rules engine, not a storyteller. These are the
+   * phrases the live probe showed leaking into prose, so they are pinned absent.
+   */
+  it('forbids mechanics talk in the GM prose', () => {
+    expect(prompt).not.toContain('the stakes')
+    expect(prompt).not.toContain("I'll call for")
+    expect(prompt).toContain('VOICE — THIS IS THE PRODUCT')
+    expect(prompt).toContain('in-world')
+    expect(prompt).toContain('Never recap what you did mechanically')
+    expect(prompt).toContain('Never list')
+    expect(prompt).toContain('Roll DEX against 18')
+  })
+
+  it('tells the GM who is acting and to set a DC per action', () => {
+    // Attribution: the player's message carries their character's name, so the
+    // GM must never ask which player it is (P5.20).
+    expect(prompt).toContain('Name: what they do')
+    expect(prompt).toContain('Never ask which player it is')
+    expect(prompt).toContain('Address exactly one character by name per turn')
+    // Per-action DC: the request is a record, not the scene's single number.
+    expect(prompt).toContain('request_check')
+    expect(prompt).toContain('One action, one number')
+    expect(prompt).toContain('set the DC per action')
   })
 })

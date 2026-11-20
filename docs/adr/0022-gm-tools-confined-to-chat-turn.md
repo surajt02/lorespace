@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-11-19
 - **Area:** security
-- **Constraints:** `P5.3`, `P5.11`; complements
+- **Constraints:** `P5.3`, `P5.11`; the route named below is now
+  `/api/gm/chat` ([ADR 0027](./0027-shared-gm-thread.md)); complements
   [0012](./0012-gm-turn-policy.md), [0017](./0017-gm-owner-credential.md)
 
 ## Context
@@ -30,9 +31,9 @@ but "may this be asked of the GM at all, outside a GM turn".
 
 ## Decision
 
-**The three GM write tools execute only when the request they were built for is
-the in-app chat turn.** `buildTools` receives `AgentToolContext.request`; a write
-tool checks `new URL(context.request.url).pathname === '/api/ai/chat'` and
+**The five GM write tools execute only when the request they were built for is
+the shared table thread.** `buildTools` receives `AgentToolContext.request`; a
+write tool checks `new URL(context.request.url).pathname === '/api/gm/chat'` and
 otherwise returns a refusal object (`{ success: false, code:
 'gm_tools_chat_only' }`) without reading or writing a record. The read-only
 `get_campaign_snapshot` stays available on every surface, because a table read
@@ -52,10 +53,13 @@ Writes continue to run as the owner through a synthetic `ActionContext`
   not run the GM. Driving the GM means using the app's chat panel. If a
   headless GM demo is ever wanted, that is a new decision with its own
   authorization story, not a path check to relax.
-- **Follow-up:** the path check is a string comparison against an SDK-owned
-  route. If the SDK renames `/api/ai/chat`, the tools fail closed (every write
-  refuses) rather than open — the safe direction, and the tool test pins the
-  path.
+- **Follow-up:** the gate moved off the SDK's `/api/ai/chat` when the console
+  gained its own route (`/api/gm/chat`, the shared table thread):
+  `/api/ai/chat` is still served for `/assistant`, so leaving the gate there let
+  a member drive the GM's owner-credentialed writes from a generic assistant
+  page. The path check is now against an app-owned route and fails closed —
+  every write refuses rather than opens — and the tool tests pin it on
+  `/api/gm/chat`, `/api/ai/chat` and the agent surface.
 
 ## Alternatives considered
 

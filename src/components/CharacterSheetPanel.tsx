@@ -38,8 +38,10 @@ import {
   type ArchetypeName,
   type RollOutcome,
 } from '@/lib/d20'
+import { pendingLabel, statCardState, type PendingCheck } from '@/lib/pending-check'
 import type { AbilityScoreKey } from '@/lib/party-presence'
 import type { CharacterRow, InventoryRow } from '@/lib/preview-data'
+import { cn } from '@/lib/utils'
 
 export type SheetMode = 'preview' | 'live'
 export type QueryStatus = 'loading' | 'ready' | 'error'
@@ -97,11 +99,18 @@ export function CharacterSheetPanel({
   status,
   character,
   items,
+  pending = null,
 }: {
   mode: SheetMode
   status: QueryStatus
   character: RecordData<CharacterRow> | null
   items: RecordData<InventoryRow>[]
+  /**
+   * The check the GM has asked for, when one is pending (`P5.19`). The server
+   * refuses any other stat (`roll_not_requested`), so the sheet only makes the
+   * requested card clickable — one check is live at a time.
+   */
+  pending?: PendingCheck | null
 }) {
   // Hooks run in every branch, so they live above the dispatch. `preview` simply
   // never renders the surfaces that use them. No mutation hook: this panel reads
@@ -216,7 +225,9 @@ export function CharacterSheetPanel({
   return (
     <SheetBody
       character={character.data}
+      characterId={character.recordId}
       carried={items.length}
+      pending={pending}
       // Preview mode is read-only: no bearer token, so no roll (ADR 0005).
       onRoll={
         live
@@ -294,18 +305,32 @@ function SheetSkeleton() {
  *  stay display-only (signed-out preview, or a sheet that is not the viewer's). */
 function SheetBody({
   character,
+  characterId,
   carried,
+  pending,
   onRoll,
   rollingStat,
 }: {
   character: CharacterRow
+  characterId: string
   carried: number
+  pending: PendingCheck | null
   onRoll?: (statName: AbilityScoreKey) => void
   rollingStat?: AbilityScoreKey | null
 }) {
   const maxHp = character.maxHp
   const hp = clamp(character.hp, 0, maxHp)
   const ratio = maxHp > 0 ? hp / maxHp : 0
+
+  // One line about the live check: the viewer's own card reads as an
+  // instruction ("Roll DEX against 14"); someone else's names them, because
+  // this panel only holds the viewer's row and cannot resolve another sheet.
+  const checkIsMine = pending !== null && (pending.characterId === '' || pending.characterId === characterId)
+  const label = checkIsMine
+    ? pendingLabel(pending)
+    : pending
+      ? pendingLabel(pending, 'Another adventurer')
+      : pendingLabel(null)
 
   return (
     <section data-testid="character-sheet" className="pixel-frame bg-card p-3">
@@ -315,6 +340,14 @@ function SheetBody({
           <Badge variant="secondary" className="mt-1 font-pixel text-[10px] uppercase">
             {character.archetype}
           </Badge>
+          {pending !== null && (
+            <p
+              data-testid="pending-header"
+              className="mt-1 font-pixel text-[10px] uppercase text-primary"
+            >
+              {label}
+            </p>
+          )}
         </div>
         <div className="text-right">
           <span className="block font-pixel text-[10px] uppercase text-muted-foreground">AC</span>
@@ -351,11 +384,11 @@ function SheetBody({
           preview cannot pretend it can roll. Scores and modifiers share
           `pixel-numeral` with every other number in the shell (ADR 0013). */}
       <ul className="grid grid-cols-3 gap-2">
-        {ABILITY_SCORES.map(({ key, label }) => {
+        {ABILITY_SCORES.map(({ key, label: statLabel }) => {
           const card = (
             <>
               <span className="block font-pixel text-[10px] uppercase text-muted-foreground">
-                {label}
+                {statLabel}
               </span>
               <span className="pixel-numeral block text-sm text-foreground">{character[key]}</span>
               <span className="pixel-numeral block text-[10px] text-primary">
@@ -363,6 +396,9 @@ function SheetBody({
               </span>
             </>
           )
+
+          const state = statCardState({ pending, characterId, stat: key })
+          const rollable = state === 'rollable'
 
           if (!onRoll) {
             return (
@@ -378,11 +414,23 @@ function SheetBody({
                 variant="outline"
                 size="sm"
                 data-testid={`stat-card-${key}`}
-                aria-label={`Roll a ${label} check`}
+                // What the sheet can do is decided by `pending-check.ts`, the
+                // same rule the server enforces: only the requested stat of the
+                // requested character is clickable (`P5.20`).
+                data-pending={rollable ? 'true' : undefined}
+                aria-label={
+                  rollable ? `Roll a ${statLabel} check` : `${statLabel} check not requested`
+                }
+                aria-disabled={!rollable || undefined}
                 // One roll in flight: a second click cannot start another.
-                disabled={Boolean(rollingStat)}
+                disabled={Boolean(rollingStat) || !rollable}
                 loading={rollingStat === key}
-                className="h-auto w-full flex-col items-stretch gap-0 whitespace-normal px-2 py-1.5 text-center"
+                className={cn(
+                  'h-auto w-full flex-col items-stretch gap-0 whitespace-normal px-2 py-1.5 text-center',
+                  rollable
+                    ? 'border-primary ring-2 ring-primary'
+                    : 'pointer-events-none opacity-40',
+                )}
                 onClick={() => {
                   onRoll(key)
                 }}
@@ -393,6 +441,15 @@ function SheetBody({
           )
         })}
       </ul>
+
+      {pending !== null && (
+        <p
+          data-testid="pending-label"
+          className="mt-2 font-pixel text-[10px] uppercase text-primary"
+        >
+          {label}
+        </p>
+      )}
 
       <p className="mt-3 font-pixel text-[10px] uppercase text-muted-foreground">
         {carried} carried

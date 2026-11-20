@@ -60,10 +60,15 @@ interface RollTarget extends CharacterTarget {
   cha: number
 }
 
-/** The one `campaigns` column a roll reads: the scene's DC. */
+/** The one `campaigns` row a roll reads: the scene's DC and any pending check. */
 interface RollCampaignTarget {
   [key: string]: unknown
   activeThreatDc: number
+  // The check the GM asked for (`P5.19`). `pendingStat: ''` is "nothing
+  // pending", so an older or hand-seeded row reads as no request at all.
+  pendingCharacterId?: string
+  pendingStat?: string
+  pendingDc?: number
 }
 
 /**
@@ -92,6 +97,26 @@ interface ResetCharacterRow {
 
 /** `inventory.category`'s select options, in schema order (ADR 0016: no `relic`). */
 const ITEM_CATEGORIES = ['weapon', 'armor', 'consumable', 'quest'] as const
+
+/**
+ * The six ability keys, in schema order — the same list `rollSkillCheck`'s own
+ * params schema accepts and `campaigns.pendingStat` selects over.
+ */
+const ABILITY_KEYS = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const
+
+type AbilityKey = (typeof ABILITY_KEYS)[number]
+
+/**
+ * The three `campaigns` columns a pending check occupies, in the "nothing
+ * pending" state. One constant so a roll, an accepted scene advance and a reset
+ * clear them the same way.
+ */
+const NO_PENDING_CHECK = { pendingCharacterId: '', pendingStat: '', pendingDc: 0 } as const
+
+/** Whether a `campaigns.pendingStat` value names one of the six abilities. */
+function isAbilityKey(value: unknown): value is AbilityKey {
+  return typeof value === 'string' && (ABILITY_KEYS as readonly string[]).includes(value)
+}
 
 /** Scene columns `update_scene` may write, in write order. */
 const SCENE_COLUMNS = [
@@ -162,6 +187,15 @@ const gmMutationSchema = z.discriminatedUnion('kind', [
     amount: z.number().int().min(1).max(50),
     reason: z.string().trim().max(200).optional(),
   }),
+  // `P5.19`: the GM asks for one named check at its own DC, so the sheet can
+  // light up the stat, the panel can pulse the DC, and `rollSkillCheck` can
+  // refuse every other stat. A request is not an outcome: no `roll-logs` row.
+  z.object({
+    kind: z.literal('request_check'),
+    characterId: z.string().min(1),
+    stat: z.enum(ABILITY_KEYS),
+    dc: z.number().int().min(5).max(30),
+  }),
 ])
 
 const applyGmMutationParamsSchema = z.object({ mutation: gmMutationSchema })
@@ -179,6 +213,10 @@ export interface EnsureDefaultCampaignData {
  * is reported **on a successful mutation**, with `details.applied` naming the
  * record that was written and `logError` naming the failed evidence write — never
  * a failure that would imply the HP/loot/scene change did not land.
+ *
+ * `request_check` is the one kind that reports `logged: false` **by design**: a
+ * request for a roll is not an outcome, so it writes no evidence row and the
+ * table learns of it from the live campaign columns.
  */
 export interface GmMutationLogReport {
   logged: boolean
@@ -201,6 +239,10 @@ export type GmMutationData = GmMutationLogReport &
     | {
         kind: 'enemy_damage'
         enemy: { name: string; before: number; after: number; maxHp: number; applied: number }
+      }
+    | {
+        kind: 'request_check'
+        pending: { characterId: string; characterName: string; stat: AbilityKey; dc: number }
       }
   )
 
@@ -418,7 +460,10 @@ async function logGmEvidence(
  * Two kinds move the campaign row rather than a character: `update_scene` (and,
  * with `sceneIndex`, an engine-gated advance that only moves the table when the
  * current scene's exit is recorded) and `enemy_damage` (clamped to
- * `0..enemyMaxHp`, so a fight's every number is the engine's).
+ * `0..enemyMaxHp`, so a fight's every number is the engine's). A third,
+ * `request_check` (`P5.19`), names the one check the table owes — its character,
+ * its ability and its own DC — so a roll can be gated on it and the panel can
+ * show the number the table is rolling against.
  *
  * Ordered best-effort, not atomic: with no transactions, each kind performs one
  * mutation and, after it succeeds, one `roll-logs` evidence row (`P5.10`,
@@ -483,7 +528,12 @@ export async function applyGmMutation(
 
       // A new scene's own columns, with the model's whitelisted scene fields on
       // top: the GM names the place; the engine names the position and the arc.
-      const write: Record<string, string | number> = { ...sceneColumns(next) }
+      // An accepted advance also drops any pending check: it belonged to the
+      // scene the table just closed.
+      const write: Record<string, string | number> = {
+        ...sceneColumns(next),
+        ...NO_PENDING_CHECK,
+      }
       for (const column of SCENE_COLUMNS) {
         const value = mutation.scene[column]
         if (value !== undefined) write[column] = value
@@ -596,6 +646,35 @@ export async function applyGmMutation(
       success: false,
       code: 'character_not_found',
       error: `Character ${JSON.stringify(mutation.characterId)} is not in campaign ${JSON.stringify(DEFAULT_CAMPAIGN_ID)}`,
+    }
+  }
+
+  // A request for a roll, not a result (`P5.19`): the campaign row carries the
+  // one check the table owes, so the sheet can light the stat, the panel can
+  // pulse the DC and `rollSkillCheck` can refuse everything else. No evidence
+  // row — nothing happened yet, and a row would claim a roll that was not made.
+  if (mutation.kind === 'request_check') {
+    const { name } = target.data.record.data
+    const requested = await tools.update('campaigns', DEFAULT_CAMPAIGN_ID, {
+      pendingCharacterId: mutation.characterId,
+      pendingStat: mutation.stat,
+      pendingDc: mutation.dc,
+    })
+    if (!requested.success) {
+      return writeFailed('request_check', requested.error, [])
+    }
+    return {
+      success: true,
+      data: {
+        kind: 'request_check',
+        pending: {
+          characterId: mutation.characterId,
+          characterName: name,
+          stat: mutation.stat,
+          dc: mutation.dc,
+        },
+        logged: false,
+      },
     }
   }
 
@@ -953,6 +1032,58 @@ export interface RollSkillCheckData {
   targetDc: number
   outcome: RollOutcome
   rollLogId: string
+  /**
+   * Set when the roll landed but the campaign's pending check could not be
+   * cleared (`P5.19`). The roll is still a success: it is written evidence, and
+   * losing it would be worse than a pending check that lingers.
+   */
+  details?: { pendingClearFailed: string }
+}
+
+/** The one check the GM has asked for and the table has not rolled yet. */
+interface PendingCheck {
+  /** `''` when the request does not name a character; any caller may then roll it. */
+  characterId: string
+  stat: AbilityKey
+  dc: number
+}
+
+/**
+ * The campaign row's pending check, or `null` when nothing is pending.
+ *
+ * A row whose `pendingStat` is not one of the six abilities, or whose
+ * `pendingDc` is not a positive number, has no request to honour — a
+ * hand-edited or half-written row must not become an unsatisfiable gate, so the
+ * scene DC applies exactly as it did before `P5.19`.
+ */
+function pendingCheckOf(row: RollCampaignTarget): PendingCheck | null {
+  if (!isAbilityKey(row.pendingStat)) return null
+  const dc = row.pendingDc
+  if (typeof dc !== 'number' || !Number.isFinite(dc) || dc < 1) return null
+  return {
+    characterId: typeof row.pendingCharacterId === 'string' ? row.pendingCharacterId : '',
+    stat: row.pendingStat,
+    dc,
+  }
+}
+
+/**
+ * Clears the pending check a roll just answered (`P5.19`).
+ *
+ * The `roll-logs` row has already landed, so this never fails the action: a
+ * failed or thrown clear comes back as the reason it did not land, and the
+ * caller reports it in `details` rather than retracting a roll that happened.
+ */
+async function clearPendingCheck(
+  tools: ActionContext<Env>['tools'],
+): Promise<{ pendingClearFailed: string } | undefined> {
+  try {
+    const cleared = await tools.update('campaigns', DEFAULT_CAMPAIGN_ID, { ...NO_PENDING_CHECK })
+    if (cleared && cleared.success) return undefined
+    return { pendingClearFailed: cleared?.error ?? 'the campaign row was not updated' }
+  } catch (error) {
+    return { pendingClearFailed: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 /**
@@ -977,6 +1108,12 @@ export interface RollSkillCheckData {
  * job), then `campaign_not_found`. A campaign row whose `activeThreatDc` is not
  * a number is a failed action, never a DC of 0 — a roll against 0 would always
  * succeed and log as if it had meant something.
+ *
+ * One check is live at a time (`P5.19`). When the campaign carries a pending
+ * check, the roll must be that stat (and, when it names one, that character) or
+ * it is refused with `roll_not_requested` **before a die is spent**, and its DC
+ * is the request's own — per-action, not the scene's. With nothing pending the
+ * scene's `activeThreatDc` still governs, so every existing caller is unchanged.
  */
 export async function rollSkillCheck(
   ctx: ActionContext<Env>,
@@ -1017,7 +1154,28 @@ export async function rollSkillCheck(
   if (!campaign.success) {
     return { success: false, code: 'campaign_not_found', error: campaign.error }
   }
-  const targetDc = campaign.data.record.data.activeThreatDc
+  const state = campaign.data.record.data
+  const pending = pendingCheckOf(state)
+
+  // The request is the only legal roll while it stands. Refused here, before the
+  // die is drawn: the table must not be able to bank a roll the GM did not call
+  // for, and the GM must never have to reject a row that already exists.
+  if (pending && (pending.stat !== statName || (pending.characterId !== '' && pending.characterId !== characterId))) {
+    const requested = pending.stat.toUpperCase()
+    return {
+      success: false,
+      code: 'roll_not_requested',
+      error:
+        pending.stat !== statName
+          ? `The table is waiting on a ${requested} check; ${statName.toUpperCase()} was not requested`
+          : `The table is waiting on a ${requested} check from another character`,
+    }
+  }
+
+  // A pending request carries its own DC — that is what makes a jump (17) and a
+  // lever (12) different numbers in the same scene. Nothing pending falls back to
+  // the scene's threat DC, exactly as before.
+  const targetDc = pending ? pending.dc : state.activeThreatDc
   if (typeof targetDc !== 'number' || !Number.isFinite(targetDc)) {
     return {
       success: false,
@@ -1065,9 +1223,21 @@ export async function rollSkillCheck(
   })
   if (!created.success) return writeFailed('roll_log', created.error, [])
 
+  // The request is answered. Cleared after the row is durable, and never at the
+  // cost of the roll: see `clearPendingCheck`.
+  const clearing = pending ? await clearPendingCheck(tools) : undefined
+
   return {
     success: true,
-    data: { rawRoll, modifier, total, targetDc, outcome, rollLogId: created.data.recordId },
+    data: {
+      rawRoll,
+      modifier,
+      total,
+      targetDc,
+      outcome,
+      rollLogId: created.data.recordId,
+      ...(clearing === undefined ? {} : { details: clearing }),
+    },
   }
 }
 
@@ -1281,7 +1451,9 @@ export async function startCampaign(
     typeof existingTitle === 'string' && existingTitle !== ''
       ? existingTitle
       : DEFAULT_CAMPAIGN_SEED.title
-  const opening = sceneColumns(0)
+  // A reset is a new game, so nothing is pending: the opening scene has not
+  // asked the table for anything yet.
+  const opening = { ...sceneColumns(0), ...NO_PENDING_CHECK }
   const scene = await tools.create(
     'campaigns',
     { title, ...opening },

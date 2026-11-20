@@ -1,37 +1,35 @@
 /**
- * Game Master console — the center column's narrative stream (`P5.7`).
+ * Game Master console — the table's shared narrative thread (`P5.7`, `P5.20`).
  *
- * Signed in, the frame embeds the installed SDK `ChatPanel` and the GM is live:
- * four quick chips send a prompt built by `src/lib/gm-prompts.ts`, a resolved
- * `roll-logs` row fires exactly one automatic turn (ADR 0012), and the
- * composer's emptiness is reported upward so the roster can show typing presence
- * (`P5.9`). Billing is the app owner's (ADR 0004) and everything the model can
- * write leaves a feed row (ADR 0009, `P5.10`).
+ * The conversation belongs to the **table**, not to the viewer: rows come from
+ * `gm-messages`, which the Worker writes and every player (and the signed-out
+ * window) reads. Two players watching one thread see one story; the GM's
+ * narration is not two private paraphrases of the same roll.
  *
- * The GM also opens the story (`P5.17`): `openBeatId` is the page's "a new game
- * just started" signal, and it queues one opening turn built from the engine's
- * act/scene label (ADR 0023). Three moments of GM initiative and no more — a
- * click that starts the game, a scene advance, and a resolved roll — each
- * attributable to a record, never to a clock.
+ * The panel therefore renders its own thread instead of embedding the SDK's
+ * `ChatPanel`: the assistant's bubbles, history rail and per-user scoping are
+ * the wrong shape for a table record. The register is the signed-out preview's
+ * (square frames, Silkscreen micro-labels, an amber left rule on GM prose, one
+ * full-width composer with a send arrow) because that is the console's own
+ * style, not the assistant's.
  *
- * Signed out it is the preview it has always been: the `PREVIEW_GM_MESSAGES`
- * list in the same frame, the same disabled input that says what it is, no
- * socket and no network — a live-looking box that swallows keystrokes reads as a
- * broken feature.
+ * What is hidden: rows persisted under `characterName === '__beat__'` are engine
+ * beats — the opening instruction, the turn after a resolved roll — that the GM
+ * must receive and the table must not read (seeing the setup ruins the scene).
+ * The same rule makes the thread's mechanics invisible: tool rows are not
+ * rendered, because the feed is where mechanics live.
  *
- * Layout note: `ChatPanel` owns its composer. The hooks it takes are additive —
- * `queuedPrompt` / `onDraftChange` for the automatic turn and typing presence,
- * plus `emptyState`, `placeholder` and `roleLabels` for the console's voice and
- * its pixel register — and there is still no slot between the message list and
- * the input. The chip bar therefore sits directly under the composer, inside the
- * same pinned footer region, rather than forking the panel.
+ * Only an engine beat or the player's own words reach the model through
+ * `useGmStream` (`src/lib/gm-stream.ts`); this file owns when a turn is due, not
+ * how it travels. Three moments of GM initiative and no more (ADR 0023): a click
+ * that starts the game, a resolved roll, and typing at the table.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { listDeepSpaceAgentModels, type RecordData } from 'deepspace'
-import { Send } from 'lucide-react'
-import { ChatPanel, type ModelOption } from '@/components/ChatPanel'
-import { Badge } from '@/components/ui'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { listDeepSpaceAgentModels, useQuery, type RecordData } from 'deepspace'
+import { ArrowUp, Check, Square } from 'lucide-react'
+import { Badge, Popover, PopoverContent, PopoverTrigger } from '@/components/ui'
+import { DEFAULT_CAMPAIGN_ID } from '@/constants'
 import {
   GM_CHIPS,
   buildOpeningPrompt,
@@ -40,10 +38,21 @@ import {
   unresolvedRolls,
   type GmChipKind,
 } from '@/lib/gm-prompts'
+import { useGmStream } from '@/lib/gm-stream'
 import { newestFirst } from '@/lib/roll-announcements'
 import type { RollLogRow } from '@/lib/preview-data'
 import { cn } from '@/lib/utils'
 
+/** One row of `gm-messages` as the record room returns it. */
+export interface GmMessageRow {
+  campaignId: string
+  role: string
+  characterName: string
+  content: string
+  parts?: unknown
+}
+
+/** The signed-out script's shape (the fixture, not a record row). */
 export interface GmMessage {
   id: string
   role: 'gm' | 'player'
@@ -51,21 +60,27 @@ export interface GmMessage {
 }
 
 /**
- * The console's default model (`P5.13`): the cheapest one the free plan
- * actually answers. `claude-opus-5-5` leads the SDK catalog and returns 402
- * Payment Required, so a first turn on a fresh console failed until the player
- * opened the picker.
+ * The `characterName` an engine beat is persisted under (`gm-routes.ts`). A row
+ * carrying it was never said by a person and is never rendered.
  */
+const BEAT_SENTINEL = '__beat__'
+
+const MODEL_STORAGE_KEY = 'deepspace-ai-model'
+
+/** The cheapest model the free plan answers (`P5.13`): Opus 402s on a fresh console. */
 const CONSOLE_DEFAULT_MODEL_ID = 'claude-haiku-5-5'
 
+interface ConsoleModel {
+  id: string
+  label: string
+  provider: string
+}
+
 /**
- * The SDK catalog with the default moved to the front — a reorder, not an
- * allowlist: the `ai-chat` feature warns against a second allowlist, and every
- * model must stay selectable. Built exactly as `ChatPanel`'s `DEFAULT_MODELS`
- * is (id, label, provider label), so the picker's grouping is unchanged and
- * only the order differs. `/assistant` keeps the catalog order of its own.
+ * The SDK catalog with the default first — an order, not an allowlist: every
+ * model stays selectable, `/assistant` keeps the catalog's own order.
  */
-const CONSOLE_MODELS: ModelOption[] = reorderDefault(
+const CONSOLE_MODELS: ConsoleModel[] = reorderDefault(
   listDeepSpaceAgentModels('application').map((model) => ({
     id: model.id,
     label: model.label,
@@ -74,7 +89,7 @@ const CONSOLE_MODELS: ModelOption[] = reorderDefault(
   CONSOLE_DEFAULT_MODEL_ID,
 )
 
-function reorderDefault(models: ModelOption[], defaultId: string): ModelOption[] {
+function reorderDefault(models: ConsoleModel[], defaultId: string): ConsoleModel[] {
   const index = models.findIndex((model) => model.id === defaultId)
   if (index <= 0) return models
   const [pinned] = models.splice(index, 1)
@@ -82,21 +97,45 @@ function reorderDefault(models: ModelOption[], defaultId: string): ModelOption[]
   return models
 }
 
+/** The stored selection when it names a model this build offers, else the default. */
+function initialModelId(): string {
+  let saved: string | null = null
+  try {
+    saved = typeof window === 'undefined' ? null : window.localStorage.getItem(MODEL_STORAGE_KEY)
+  } catch {
+    // Storage can be unavailable in privacy modes; the default still works.
+  }
+  const known = CONSOLE_MODELS.some((model) => model.id === saved)
+  return known && saved ? saved : (CONSOLE_MODELS[0]?.id ?? CONSOLE_DEFAULT_MODEL_ID)
+}
+
+/** One turn waiting for the stream to be free: a chip, or an engine beat. */
+interface QueuedTurn {
+  id: number
+  content: string
+  synthetic: boolean
+}
+
+/** A rendered turn, live or preview, in one shape so the markup has one branch. */
+interface Turn {
+  id: string
+  role: 'gm' | 'player'
+  speaker: string
+  text: string
+}
+
 export interface GmConsolePanelProps {
-  /** Signed in, the panel is live; signed out it is the fixture list. */
+  /** Signed in, the console can speak; signed out it is a read-only window. */
   signedIn: boolean
-  /** The viewer, used to scope the panel's own `ai-messages` read. */
-  userId?: string
-  /** The viewer's character, when they have one: names the chip prompts. */
+  /** The viewer's character, when they have one: names and attributes their lines. */
   character?: { name: string; recordId: string } | null
   /** Live `roll-logs` rows; the automatic turn watches them (ADR 0012). */
   rolls: RecordData<RollLogRow>[]
-  /** The signed-out script. */
+  /** The signed-out script, rendered only while the live thread is empty. */
   preview: GmMessage[]
   /**
    * "A new game just started" (ADR 0023): a non-null value that changes queues
-   * one opening turn. The page mints it on a successful reset, so the narration
-   * is a consequence of the click and never of a mount or a timer.
+   * one opening turn, sent as a synthetic beat so it never renders.
    */
   openBeatId?: string | null
   /** The engine's act/scene label (`progressLabel`), used by the opening turn. */
@@ -107,9 +146,11 @@ export interface GmConsolePanelProps {
   onDraftChange?: (hasText: boolean) => void
 }
 
+/**
+ * `RecordData<RollLogRow>`, spelled locally to keep the import list short.
+ */
 export function GmConsolePanel({
   signedIn,
-  userId,
   character,
   rolls,
   preview,
@@ -118,20 +159,114 @@ export function GmConsolePanel({
   enemyName,
   onDraftChange,
 }: GmConsolePanelProps) {
-  // One queued prompt at a time: a chip, or the automatic roll turn. `ChatPanel`
-  // sends it once and the id is what makes it once.
-  const [queuedPrompt, setQueuedPrompt] = useState<{ id: string; content: string } | null>(null)
+  const [input, setInput] = useState('')
+  const [queue, setQueue] = useState<QueuedTurn[]>([])
+  const [modelId, setModelId] = useState<string>(initialModelId)
+  const { send, stop, isLoading, error, streamedText, reset } = useGmStream()
+
   const seq = useRef(0)
   // Roll ids this mount has already handled. The first non-empty snapshot is the
-  // baseline — history is never replayed, the same rule the roll banner uses
-  // (ADR 0021) — and a burst of rolls collapses to one turn.
+  // baseline — history is never replayed (ADR 0021) — and a burst of rolls
+  // collapses to one turn.
   const announced = useRef<Set<string>>(new Set())
   const baselined = useRef(false)
-  // The opening beat already queued. The id is the guard, the same shape as the
-  // roll turn: a re-render with the same `openBeatId`, or a `progress` change
-  // arriving with it, never re-sends the opening narration.
+  // The opening beat already queued, keyed by the page's one-shot id.
   const openedBeat = useRef<string | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
+  const { records } = useQuery<GmMessageRow>('gm-messages', {
+    where: { campaignId: DEFAULT_CAMPAIGN_ID },
+  })
+
+  /**
+   * The thread, oldest first, by the envelope's `createdAt` — the same ordering
+   * rule the Worker uses when it hands the history to the model. Beats are
+   * dropped here, so the setup text never reaches the player's view.
+   */
+  const threadRows = useMemo(
+    () =>
+      records
+        .filter((record) => {
+          const data = record.data
+          return (
+            data.characterName !== BEAT_SENTINEL &&
+            typeof data.content === 'string' &&
+            data.content.trim() !== ''
+          )
+        })
+        .sort(
+          (a, b) =>
+            (Date.parse(a.createdAt ?? '') || 0) - (Date.parse(b.createdAt ?? '') || 0),
+        ),
+    [records],
+  )
+
+  const characterName = character?.name ?? ''
+
+  /**
+   * What to draw. Signed in, the live thread. Signed out with an empty thread,
+   * the fixture — so the demo still has a table — in the same markup as a live
+   * one, because a preview that renders differently from the real thing is a
+   * promise the console cannot keep.
+   */
+  const turns = useMemo<Turn[]>(() => {
+    if (!signedIn && threadRows.length === 0) return previewTurns(preview)
+    return threadRows.map((record) => ({
+      id: record.recordId,
+      role: record.data.role === 'assistant' ? 'gm' : 'player',
+      speaker:
+        record.data.role === 'assistant'
+          ? 'Game Master'
+          : (record.data.characterName.trim() || 'Someone at the table'),
+      text: record.data.content,
+    }))
+  }, [signedIn, threadRows, preview])
+
+  // The overlay is redundant once the persisted row carrying the same text
+  // lands: clear it then, so the turn never flashes out and back in.
+  useEffect(() => {
+    if (streamedText.trim() === '') return
+    const persisted = threadRows.some(
+      (record) =>
+        record.data.role === 'assistant' &&
+        record.data.content.trim() === streamedText.trim(),
+    )
+    if (persisted) reset()
+  }, [threadRows, streamedText, reset])
+
+  useEffect(() => {
+    const element = scrollRef.current
+    if (!element) return
+    element.scrollTop = element.scrollHeight
+  }, [turns.length, streamedText, isLoading])
+
+  const enqueue = (content: string, synthetic = false) => {
+    const trimmed = content.trim()
+    if (trimmed === '') return
+    seq.current += 1
+    setQueue((pending) => [...pending, { id: seq.current, content: trimmed, synthetic }])
+  }
+
+  // One turn at a time: a chip, an opening beat and a resolved roll can all be
+  // queued in one window, and the stream answers them in order.
+  useEffect(() => {
+    if (!signedIn || isLoading || queue.length === 0) return
+    const [next, ...rest] = queue
+    setQueue(rest)
+    void send({
+      content: next.content,
+      // Attribution is a field: the route prefixes the model's copy and the
+      // thread labels the row from `characterName`.
+      characterName: next.synthetic ? '' : characterName,
+      ...(next.synthetic || !character?.recordId ? {} : { characterId: character.recordId }),
+      synthetic: next.synthetic,
+      modelId,
+    })
+  }, [queue, signedIn, isLoading, send, characterName, character?.recordId, modelId])
+
+  // A resolved roll fires exactly one automatic turn (ADR 0012). The first
+  // non-empty snapshot is the baseline; every unseen id is marked, and the
+  // newest drives the turn, so a burst is one turn and no row fires twice.
   useEffect(() => {
     if (!signedIn) return
     if (!baselined.current) {
@@ -142,12 +277,23 @@ export function GmConsolePanel({
     }
     const pending = unresolvedRolls(rolls, announced.current)
     if (pending.length === 0) return
-    // Newest unseen row drives the turn; every unseen id is marked, so a burst
-    // is one turn and no row can fire twice.
     for (const row of pending) announced.current.add(row.recordId)
     const newest = pending[0]
-    setQueuedPrompt({ id: `roll-${newest.recordId}`, content: buildRollPrompt(newest) })
+    // `enqueue` is stable in behaviour (it only appends to state); it is not a
+    // dependency because re-running on it would re-queue the same turn.
+    enqueue(buildRollPrompt(newest), true)
   }, [rolls, signedIn])
+
+  // "Start campaign" opens the story (ADR 0023): queued once per id, sent as an
+  // engine beat so the instruction never renders.
+  useEffect(() => {
+    if (!signedIn) return
+    if (!openBeatId) return
+    if (openedBeat.current === openBeatId) return
+    openedBeat.current = openBeatId
+    enqueue(buildOpeningPrompt(progress ?? ''), true)
+    // `enqueue` is stable in behaviour; see the roll effect above.
+  }, [openBeatId, progress, signedIn])
 
   // The chip prompts cite the viewer's newest roll when there is one.
   const latestRoll = useMemo(() => {
@@ -158,150 +304,229 @@ export function GmConsolePanel({
     return (mine ?? rollsOnly[0])?.data ?? null
   }, [rolls, character])
 
-  // "Start campaign" opens the story (ADR 0023, `P5.17`). Queued once per id;
-  // the progress label is read at send time so the opening names the scene the
-  // row says the table is in.
-  useEffect(() => {
-    if (!signedIn) return
-    if (!openBeatId) return
-    if (openedBeat.current === openBeatId) return
-    openedBeat.current = openBeatId
-    setQueuedPrompt({
-      id: `opening-${openBeatId}`,
-      content: buildOpeningPrompt(progress ?? ''),
-    })
-  }, [openBeatId, progress, signedIn])
-
   function sendChip(kind: GmChipKind) {
-    seq.current += 1
-    setQueuedPrompt({
-      id: `chip-${kind}-${String(seq.current)}`,
-      content: buildQuickPrompt(kind, {
-        characterName: character?.name ?? null,
-        latestRoll,
-        enemyName,
-      }),
-    })
+    onDraftChange?.(false)
+    enqueue(buildQuickPrompt(kind, { latestRoll, enemyName }))
   }
 
-  const header = (
-    <header className="flex shrink-0 items-center justify-between border-b border-border px-3 py-1.5">
-      <h2 className="font-pixel text-[10px] uppercase text-muted-foreground">Game Master</h2>
-      <Badge variant="outline" className="font-pixel text-[10px] uppercase">
-        MODEL
-      </Badge>
-    </header>
-  )
-
-  if (!signedIn) {
-    return (
-      <section
-        data-testid="gm-stream"
-        className="pixel-frame flex min-h-0 flex-1 flex-col bg-card"
-      >
-        {header}
-
-        {/* Scrolls when the panel is given the leftover column height (the feed
-            minimised, `P4.19`); at its natural height this is just the list. */}
-        <ol
-          data-testid="gm-preview"
-          className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-3"
-        >
-          {preview.map((message) => (
-            <li
-              key={message.id}
-              className={cn(
-                'border-l-2 pl-2 text-xs',
-                message.role === 'gm'
-                  ? 'border-primary text-foreground'
-                  : 'border-border text-muted-foreground',
-              )}
-            >
-              <span className="mb-0.5 block font-pixel text-[10px] uppercase text-muted-foreground">
-                {message.role === 'gm' ? 'Game Master' : 'You'}
-              </span>
-              {message.text}
-            </li>
-          ))}
-        </ol>
-
-        <div className="mt-auto flex shrink-0 items-center gap-2 border-t border-border px-3 py-2">
-          <input
-            type="text"
-            disabled
-            placeholder="Speak to the Game Master"
-            aria-label="Speak to the Game Master"
-            className="min-w-0 flex-1 border border-border bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground disabled:cursor-not-allowed"
-          />
-          <button
-            type="button"
-            disabled
-            aria-label="Send"
-            className="inline-flex size-7 items-center justify-center border border-border text-muted-foreground disabled:cursor-not-allowed"
-          >
-            <Send className="size-3.5" aria-hidden />
-          </button>
-        </div>
-      </section>
-    )
+  function selectModel(id: string) {
+    setModelId(id)
+    try {
+      window.localStorage.setItem(MODEL_STORAGE_KEY, id)
+    } catch {
+      // Storage can be unavailable in privacy modes; the selection still applies.
+    }
   }
+
+  const canSend = signedIn && input.trim().length > 0 && !isLoading
+
+  function submit() {
+    if (!canSend) return
+    const content = input.trim()
+    setInput('')
+    // Sending empties the composer, so the typing flag clears with it.
+    onDraftChange?.(false)
+    enqueue(content)
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    // Enter commits an active IME composition; it must not also send it.
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      submit()
+    }
+  }
+
+  const streaming = streamedText.trim() !== ''
 
   return (
     <section
       data-testid="gm-stream"
       className="pixel-frame flex min-h-0 flex-1 flex-col overflow-hidden bg-card"
     >
-      {header}
+      <header className="flex shrink-0 items-center justify-between border-b border-border px-3 py-1.5">
+        <h2 className="font-pixel text-[10px] uppercase text-muted-foreground">Game Master</h2>
+        {signedIn ? (
+          <ModelMenu modelId={modelId} onSelect={selectModel} />
+        ) : (
+          <Badge variant="outline" className="font-pixel text-[10px] uppercase">
+            MODEL
+          </Badge>
+        )}
+      </header>
 
-      {/* The panel fills the frame and its message list scrolls inside it; the
-          chip bar and the composer stay pinned at the bottom.
-          `ChatPanel`'s own root is `h-full`, so it needs a sized box of its own:
-          given the whole `gm-live` column it would take 100% of it and paint its
-          composer over the chip row below (the chips then look present and
-          swallow every click). The wrapper is the flex item that actually owns
-          the leftover height. */}
-      <div data-testid="gm-live" className="flex min-h-0 flex-1 flex-col">
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <ChatPanel
-            chatId={null}
-            userId={userId ?? ''}
-            compact
-            className="h-full"
-            models={CONSOLE_MODELS}
-            emptyState={<GmEmptyState />}
-            placeholder="Speak to the Game Master"
-            roleLabels={{ user: 'You', assistant: 'Game Master' }}
-            queuedPrompt={queuedPrompt}
-            onDraftChange={onDraftChange}
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-live="polite"
+        aria-label="Table conversation"
+        data-testid="gm-thread"
+        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3"
+      >
+        {turns.map((turn) => (
+          <TurnBlock key={turn.id} turn={turn} />
+        ))}
+
+        {streaming && (
+          <TurnBlock
+            turn={{
+              id: 'gm-streaming',
+              role: 'gm',
+              speaker: 'Game Master',
+              text: streamedText,
+            }}
+            streaming
           />
-        </div>
+        )}
 
-        <div className="flex shrink-0 flex-wrap gap-1 border-t border-border px-3 py-1.5">
-          {GM_CHIPS.map((chip) => (
-            <button
-              key={chip.kind}
-              type="button"
-              data-testid="gm-chip"
-              onClick={() => {
-                sendChip(chip.kind)
-              }}
-              className="border border-border bg-background px-2 py-1 font-pixel text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
-            >
-              {chip.label}
-            </button>
-          ))}
-        </div>
+        {isLoading && !streaming && (
+          <p
+            data-testid="gm-thinking"
+            className="font-pixel text-[10px] uppercase text-muted-foreground"
+          >
+            The Game Master is thinking…
+          </p>
+        )}
+
+        {turns.length === 0 && !isLoading && signedIn && <QuietTable />}
       </div>
+
+      {error && (
+        <div role="alert" className="shrink-0 border-t border-destructive/40 px-3 py-2">
+          <p className="text-[12px] leading-relaxed text-destructive">{error.message}</p>
+        </div>
+      )}
+
+      <div className="flex shrink-0 flex-wrap gap-1 border-t border-border px-3 py-1.5">
+        {GM_CHIPS.map((chip) => (
+          <button
+            key={chip.kind}
+            type="button"
+            data-testid="gm-chip"
+            disabled={!signedIn || isLoading}
+            onClick={() => {
+              sendChip(chip.kind)
+            }}
+            className="border border-border bg-background px-2 py-1 font-pixel text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {chip.label}
+          </button>
+        ))}
+      </div>
+
+      {signedIn ? (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            submit()
+          }}
+          className="shrink-0 border-t border-border px-3 py-2"
+        >
+          <div className="flex items-end gap-1.5 border border-border bg-background py-1 pl-2 pr-1 transition-colors focus-within:border-primary">
+            {characterName !== '' && (
+              <span className="shrink-0 pb-1 font-pixel text-[10px] uppercase text-muted-foreground">
+                {characterName}
+              </span>
+            )}
+            <textarea
+              data-testid="gm-input"
+              aria-label="Speak to the Game Master"
+              rows={1}
+              value={input}
+              placeholder="Speak to the Game Master…"
+              onChange={(event) => {
+                setInput(event.target.value)
+                onDraftChange?.(event.target.value.trim().length > 0)
+              }}
+              onKeyDown={handleKeyDown}
+              className="block min-w-0 flex-1 resize-none bg-transparent py-1 text-[13px] leading-[1.4] text-foreground placeholder:text-muted-foreground/60 outline-none"
+            />
+            {isLoading ? (
+              <button
+                type="button"
+                data-testid="gm-stop"
+                onClick={stop}
+                aria-label="Stop the Game Master"
+                className="inline-flex size-7 shrink-0 items-center justify-center border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+              >
+                <Square className="h-3 w-3 fill-current" aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                data-testid="gm-send"
+                disabled={!canSend}
+                aria-label="Send"
+                className="inline-flex size-7 shrink-0 items-center justify-center border border-primary bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:border-border disabled:bg-transparent disabled:text-muted-foreground/60"
+              >
+                <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            )}
+          </div>
+        </form>
+      ) : (
+        <p
+          data-testid="gm-signin"
+          className="shrink-0 border-t border-border px-3 py-2 font-pixel text-[10px] uppercase text-muted-foreground"
+        >
+          Sign in to speak at this table
+        </p>
+      )}
     </section>
   )
 }
 
+/** One turn: GM prose on an amber rule, a player's line in a framed block. */
+function TurnBlock({ turn, streaming = false }: { turn: Turn; streaming?: boolean }) {
+  if (turn.role === 'gm') {
+    return (
+      <article
+        data-testid="gm-turn"
+        data-role="gm"
+        data-streaming={streaming ? 'true' : undefined}
+        className="border-l-2 border-primary pl-3"
+      >
+        <span className="mb-1 block font-pixel text-[10px] uppercase text-muted-foreground">
+          {turn.speaker}
+        </span>
+        <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-foreground">
+          {turn.text}
+        </p>
+      </article>
+    )
+  }
+
+  return (
+    <article
+      data-testid="gm-turn"
+      data-role="player"
+      className="border border-border bg-shell-panel px-3 py-2"
+    >
+      <span className="mb-1 block font-pixel text-[10px] uppercase text-muted-foreground">
+        {turn.speaker}
+      </span>
+      <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-foreground">{turn.text}</p>
+    </article>
+  )
+}
+
+/** The signed-out script in the live thread's shape. `You` is the reader. */
+function previewTurns(preview: GmMessage[]): Turn[] {
+  return preview.map((message) => ({
+    id: message.id,
+    role: message.role === 'gm' ? 'gm' : 'player',
+    speaker: message.role === 'gm' ? 'Game Master' : 'You',
+    text: message.text,
+  }))
+}
+
 /**
- * The console's empty state (`P5.7`): the table's voice, not a product's. No
- * prompt buttons — the chip row directly below the composer is the only
- * affordance, and printing the same four prompts twice reads as a bug.
+ * Signed in, nothing said yet: the table's voice, not a product's. The chips
+ * directly below are the only affordance, so the same four prompts are not
+ * printed twice.
  */
-function GmEmptyState() {
+function QuietTable() {
   return (
     <div className="flex h-full flex-col justify-center gap-2 px-1 py-4">
       <p className="font-pixel text-[10px] uppercase text-muted-foreground">The table is quiet</p>
@@ -310,5 +535,52 @@ function GmEmptyState() {
         before it answers.
       </p>
     </div>
+  )
+}
+
+/** The `MODEL` control: the picker lives in the header so the composer is one row. */
+function ModelMenu({ modelId, onSelect }: { modelId: string; onSelect: (id: string) => void }) {
+  const selected = CONSOLE_MODELS.find((model) => model.id === modelId)
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        data-testid="gm-model"
+        aria-label="Choose the model"
+        className="inline-flex items-center gap-1.5 border border-border bg-background px-2 py-1 font-pixel text-[10px] uppercase text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+      >
+        MODEL
+        <span className="max-w-[10rem] truncate normal-case text-foreground">
+          {selected?.label ?? 'Default'}
+        </span>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64 rounded-none border-border bg-card p-1">
+        <ul className="flex max-h-72 flex-col overflow-y-auto">
+          {CONSOLE_MODELS.map((model) => (
+            <li key={model.id}>
+              <button
+                type="button"
+                data-testid={`gm-model-${model.id}`}
+                onClick={() => {
+                  onSelect(model.id)
+                }}
+                className={cn(
+                  'flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-xs transition-colors hover:bg-secondary',
+                  model.id === modelId ? 'text-foreground' : 'text-muted-foreground',
+                )}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate">{model.label}</span>
+                  <span className="block truncate font-pixel text-[10px] uppercase text-muted-foreground">
+                    {model.provider}
+                  </span>
+                </span>
+                {model.id === modelId && <Check className="size-3.5 shrink-0" aria-hidden />}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
   )
 }

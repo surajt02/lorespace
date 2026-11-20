@@ -23,13 +23,15 @@
  * one derivation picks the preview character so the sheet, the pack and the
  * roster cannot show two different parties — the anonymous viewer reads the same
  * collections, so an empty one just means nobody has seeded yet. The GM console
- * is live when signed in (`P5.7`): it embeds the SDK chat panel, sends quick
- * chips, opens the story when a game starts (`P5.17`) and fires one automatic
- * turn per resolved `roll-logs` roll — the console is no longer a fixture in any
- * signed-in state. Signed out it keeps its preview script, and that preview is
- * the last fixture on the page. The GM composer's emptiness is owned here too
- * (`P5.9`), because the roster's typing marker is a presence payload read by
- * another window.
+ * is the table's shared thread (`P5.7`, `P5.20`): it reads `gm-messages`, sends
+ * quick chips through `POST /api/gm/chat`, opens the story when a game starts
+ * (`P5.17`, hidden as an engine beat) and fires one automatic turn per resolved
+ * `roll-logs` roll — the console is no longer a fixture in any signed-in state.
+ * Signed out it reads the same thread, and shows its preview script only while
+ * the table is empty. The GM composer's emptiness is owned here too (`P5.9`),
+ * because the roster's typing marker is a presence payload read by another
+ * window, and the pending check (`P5.19`) is derived here once so the banner's
+ * DC block and the sheet's roll gate cannot disagree.
  *
  * Two writes belong to this page itself: the seed (ADR 0007, `P2.5`) and the
  * new-game reset (ADR 0026, `P5.16`). Signed in on an empty `campaigns`
@@ -60,6 +62,7 @@ import { DEFAULT_CAMPAIGN_ID } from '@/constants'
 import { callAction, ActionCallError } from '@/lib/actions'
 import { progressLabel } from '@/lib/campaign-arc'
 import { DEFAULT_CAMPAIGN_SEED, type CampaignRow } from '@/lib/campaign-seed'
+import { dcDisplay, pendingOf } from '@/lib/pending-check'
 import type { AbilityScoreKey } from '@/lib/party-presence'
 import {
   PREVIEW_CAMPAIGN,
@@ -195,6 +198,10 @@ export default function HomePage() {
   // seed carries it too, so neither branch can render an empty label.
   const sceneIndex = campaign.sceneIndex ?? 0
   const progress = progressLabel(sceneIndex)
+  // The one check the GM has asked for (`P5.19`), read from the campaign row: the
+  // sheet highlights exactly that stat, the banner shows its DC, and an empty
+  // `pendingStat` means nothing is owed.
+  const pending = pendingOf(campaign)
   // Anything the player has done counts as a game under way. A scene past the
   // first is proof the engine advanced; a non-empty feed is proof the table has
   // been played at all — including the one row a reset leaves behind ("A new
@@ -319,6 +326,8 @@ export default function HomePage() {
               progress={progress}
               startLabel={startLabel}
               starting={starting}
+              activeDc={dcDisplay(pending, campaign.activeThreatDc)}
+              dcPending={pending !== null}
               // Signed out there is no control: the reset is a member-at-the-table
               // action (ADR 0025), and a dead button is worse than no button.
               {...(isSignedIn ? { onStartCampaign: () => setStartOpen(true) } : {})}
@@ -418,7 +427,6 @@ export default function HomePage() {
               <div className="flex min-h-0 flex-col lg:min-h-[15rem] lg:flex-1 lg:overflow-hidden">
                 <GmConsolePanel
                   signedIn={isSignedIn}
-                  userId={userId ?? undefined}
                   character={
                     myCharacter
                       ? { name: myCharacter.data.name, recordId: myCharacter.recordId }
@@ -440,6 +448,7 @@ export default function HomePage() {
                 status={isSignedIn ? charactersStatus : 'ready'}
                 character={myCharacter}
                 items={myItems}
+                pending={pending}
               />
               <InventoryPanel mode={sheetMode} status={inventoryPanelStatus} items={myItems} />
             </aside>

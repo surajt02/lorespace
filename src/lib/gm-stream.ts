@@ -1,0 +1,192 @@
+/**
+ * Client half of the shared table thread: one streamed GM turn (`P5.20`).
+ *
+ * Transport only. The thread itself lives in `gm-messages` and is read with
+ * `useQuery` by the console, so this hook owns exactly three things:
+ *
+ * - **The POST.** `send` calls `POST /api/gm/chat` with the caller's bearer
+ *   token, the speaker's `characterName`, and `synthetic` for an engine beat
+ *   (the opening, a resolved roll). The Worker writes both sides of the thread;
+ *   the browser never persists a GM message (`gm-messages-schema.ts`).
+ * - **The decode.** The body is the AI SDK's SSE stream; the wire decoding is
+ *   the SDK's (`parseSseLine` + `decodeAiStreamChunk`), and this file keeps only
+ *   the text deltas. Reasoning chunks decode to `null` and are dropped, so a
+ *   thinking model cannot leave a spinner stuck on nothing.
+ * - **The abort.** `stop` cancels the request; the route's `onAbort` then saves
+ *   the steps that completed, which is why an abort is not an error here.
+ *
+ * `streamedText` is the in-flight overlay. The caller decides when it is
+ * redundant — the console clears it once the persisted assistant row carrying
+ * the same text arrives, so the turn never flashes out and back in.
+ *
+ * Mirrors `ChatPanel.stream.ts` deliberately: same decoder, same reader loop,
+ * same "a local abort does not deliver an SSE event" handling.
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { decodeAiStreamChunk, getAuthToken, parseSseLine } from 'deepspace'
+
+export interface GmTurnRequest {
+  content: string
+  /** The speaker, persisted on the user row and sent to the model as a prefix. */
+  characterName?: string
+  /** The speaker's `characters` record id, when they have a sheet. */
+  characterId?: string
+  /**
+   * An engine beat rather than a player's line: the opening narration or the
+   * turn after a resolved roll. The row is persisted hidden and the model gets
+   * it without a speaker prefix.
+   */
+  synthetic?: boolean
+  /** The selected model id (`localStorage['deepspace-ai-model']`). */
+  modelId?: string
+}
+
+export interface GmStream {
+  send: (turn: GmTurnRequest) => Promise<void>
+  /** Abort the in-flight turn. The route persists what completed. */
+  stop: () => void
+  isLoading: boolean
+  error: Error | null
+  /** The visible text of the turn that is streaming now. */
+  streamedText: string
+  /** Drop the overlay; the caller calls this once the row is persisted. */
+  reset: () => void
+}
+
+export interface UseGmStreamOptions {
+  /** Fired when a turn settles (completed, failed or aborted), never per delta. */
+  onTurnEnd?: () => void
+}
+
+export function useGmStream({ onTurnEnd }: UseGmStreamOptions = {}): GmStream {
+  const [streamedText, setStreamedText] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+
+  // A ref, not state: two sends in one tick must not both start.
+  const loadingRef = useRef(false)
+  const abortRef = useRef<AbortController | null>(null)
+  // The callback is read, never a dependency — `send` must keep its identity so
+  // the console's queue effect does not re-fire on every render.
+  const onTurnEndRef = useRef(onTurnEnd)
+
+  useEffect(() => {
+    onTurnEndRef.current = onTurnEnd
+  }, [onTurnEnd])
+
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  const reset = useCallback(() => {
+    setStreamedText('')
+  }, [])
+
+  const send = useCallback(async (turn: GmTurnRequest) => {
+    if (loadingRef.current) return
+    loadingRef.current = true
+    setIsLoading(true)
+    setError(null)
+    setStreamedText('')
+
+    const controller = new AbortController()
+    abortRef.current = controller
+    try {
+      const token = await getAuthToken()
+      if (!token) {
+        throw new Error('You are signed out, so the Game Master cannot answer.')
+      }
+
+      const response = await fetch('/api/gm/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          content: turn.content,
+          characterName: turn.characterName ?? '',
+          ...(turn.characterId ? { characterId: turn.characterId } : {}),
+          ...(turn.synthetic ? { synthetic: true } : {}),
+          ...(turn.modelId ? { modelId: turn.modelId } : {}),
+        }),
+        signal: controller.signal,
+      })
+      if (!response.ok || !response.body) {
+        const detail = response.body ? await response.text().catch(() => '') : ''
+        throw new Error(detail || `Request failed: ${String(response.status)}`)
+      }
+
+      await consumeStream(response.body, setStreamedText, setError)
+    } catch (cause) {
+      const streamError = cause instanceof Error ? cause : new Error(String(cause))
+      // An abort is the player stopping the turn, not a failure: the partial
+      // text stays and the route saves it.
+      if (streamError.name !== 'AbortError') {
+        console.error('[gm] STREAM error', streamError.message)
+        setError(streamError)
+      }
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null
+      loadingRef.current = false
+      setIsLoading(false)
+      onTurnEndRef.current?.()
+    }
+  }, [])
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort()
+  }, [])
+
+  return { send, stop, isLoading, error, streamedText, reset }
+}
+
+async function consumeStream(
+  body: ReadableStream<Uint8Array>,
+  setStreamedText: (update: (previous: string) => string) => void,
+  setError: (error: Error) => void,
+) {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      applySseLine(line, setStreamedText, setError)
+    }
+  }
+
+  buffer += decoder.decode()
+  if (buffer.length > 0) applySseLine(buffer, setStreamedText, setError)
+}
+
+function applySseLine(
+  line: string,
+  setStreamedText: (update: (previous: string) => string) => void,
+  setError: (error: Error) => void,
+) {
+  const chunk = parseSseLine(line)
+  if (!chunk) return
+  const action = decodeAiStreamChunk(chunk)
+  // `null` is every chunk this surface does not render: lifecycle markers and
+  // reasoning. Dropping them is what keeps `streamedText` prose only.
+  if (!action) return
+
+  switch (action.type) {
+    case 'append-text':
+      setStreamedText((previous) => previous + action.delta)
+      return
+    case 'stream-error':
+      console.error('[gm] STREAM error', action.errorText)
+      setError(new Error(action.errorText))
+      return
+    // Tool calls are mechanics, and the thread is narration: the console does
+    // not render a tool row, so neither does this hook surface one.
+    default:
+      return
+  }
+}

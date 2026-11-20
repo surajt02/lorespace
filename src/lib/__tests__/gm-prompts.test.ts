@@ -66,15 +66,17 @@ describe('GM_CHIPS', () => {
 describe('buildQuickPrompt', () => {
   const kinds = GM_CHIPS.map((chip) => chip.kind) as GmChipKind[]
 
-  it('names the character when one is known', () => {
+  it('never writes the speaker prefix itself (attribution is a route field)', () => {
+    // The console sends `characterName` beside the content and the route adds
+    // the model-side prefix, so a chip that also prefixed would reach the model
+    // as "Ash: Ash inspects the room".
     for (const kind of kinds) {
-      expect(buildQuickPrompt(kind, { characterName: 'Vesper' })).toContain('Vesper')
+      expect(buildQuickPrompt(kind, { latestRoll: KAELEN_DOOR.data })).not.toMatch(/^\w+: /)
     }
   })
 
   it('carries the latest roll numbers for resolve', () => {
     const prompt = buildQuickPrompt('resolve', {
-      characterName: 'Kaelen',
       latestRoll: KAELEN_DOOR.data,
     })
     expect(prompt).toContain('d20(14)')
@@ -86,10 +88,8 @@ describe('buildQuickPrompt', () => {
 
   it('narrates an attack in the first person instead of ordering one (ADR 0024)', () => {
     const prompt = buildQuickPrompt('attack', {
-      characterName: 'Kaelen',
       enemyName: 'Runebound Sentinel',
     })
-    expect(prompt).toContain('Kaelen')
     expect(prompt).toContain('I move to strike Runebound Sentinel')
     expect(prompt).toMatch(/tell me what to roll/)
     // Narration, not a menu: no verb-first order, and no dice line before the
@@ -100,25 +100,25 @@ describe('buildQuickPrompt', () => {
 
   it('names a generic enemy when the scene has none, and never a placeholder', () => {
     for (const enemyName of [undefined, null, '', '   ']) {
-      const prompt = buildQuickPrompt('attack', { characterName: 'Kaelen', enemyName })
+      const prompt = buildQuickPrompt('attack', { enemyName })
       expect(prompt).toContain('I move to strike the enemy')
       expect(prompt).not.toContain('undefined')
       expect(prompt).not.toContain('null')
     }
-    // Readable without a character either: the sentence still stands alone.
+    // Readable on its own: the sentence still stands without any context.
     const anonymous = buildQuickPrompt('attack', { enemyName: 'Runebound Sentinel' })
     expect(anonymous.startsWith('I move to strike Runebound Sentinel')).toBe(true)
   })
 
   it('asks for a check instead of referencing a roll it does not have', () => {
-    const prompt = buildQuickPrompt('resolve', { characterName: 'Kaelen' })
+    const prompt = buildQuickPrompt('resolve')
     expect(prompt).toContain('roll-logs')
     expect(prompt).not.toMatch(/d20\(/)
   })
 
-  it('never emits a placeholder for a missing name or roll', () => {
+  it('never emits a placeholder for a missing roll', () => {
     for (const kind of kinds) {
-      for (const ctx of [{}, { characterName: null }, { latestRoll: null }]) {
+      for (const ctx of [{}, { latestRoll: null }]) {
         const prompt = buildQuickPrompt(kind, ctx)
         expect(prompt).not.toContain('undefined')
         expect(prompt).not.toContain('null')
@@ -128,9 +128,9 @@ describe('buildQuickPrompt', () => {
   })
 
   it('says the same thing for every kind with no context at all', () => {
-    // An unknown name must not change the action the chip performs.
-    expect(buildQuickPrompt('rest')).toContain('short rest')
-    expect(buildQuickPrompt('inspect')).toContain('inspect the room')
+    // A missing roll or enemy must not change the action the chip performs.
+    expect(buildQuickPrompt('rest')).toContain('rest')
+    expect(buildQuickPrompt('inspect')).toMatch(/inspect the room/i)
   })
 })
 

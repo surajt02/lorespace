@@ -1,5 +1,5 @@
 /**
- * The AI GM's five tools as pure data: names, the chat-turn gate and the input
+ * The AI GM's six tools as pure data: names, the chat-turn gate and the input
  * validators that map a model's arguments onto `applyGmMutation`'s wire shape.
  *
  * Nothing here touches the worker, a record or the AI SDK, so the gate and the
@@ -8,10 +8,10 @@
  * Two rules this file exists to keep:
  *
  * 1. **Writes only inside the GM turn.** Every tool in the `ToolSet` is also
- *    auto-exposed over HTTP and MCP. The four write tools therefore refuse
- *    unless the request they were built for is the in-app chat turn; the
- *    read-only snapshot stays available everywhere, because the table is
- *    already readable by link (ADR 0014).
+ *    auto-exposed over HTTP and MCP. The five write tools therefore refuse
+ *    unless the request they were built for is the shared table thread
+ *    (`POST /api/gm/chat`); the read-only snapshot stays available everywhere,
+ *    because the table is already readable by link (ADR 0014).
  * 2. **Never pass a raw model object through.** Every write tool validates its
  *    input with a zod object, which strips unknown keys, and then rebuilds the
  *    mutation field by field. A model cannot reach a column this file does not
@@ -29,6 +29,7 @@ export const GM_WRITE_TOOLS = [
   'grant_character_loot',
   'update_campaign_scene',
   'damage_enemy',
+  'request_check',
 ] as const
 
 export const GM_TOOL_NAMES = [...GM_READ_TOOLS, ...GM_WRITE_TOOLS] as const
@@ -37,14 +38,23 @@ export type GmReadToolName = (typeof GM_READ_TOOLS)[number]
 export type GmWriteToolName = (typeof GM_WRITE_TOOLS)[number]
 export type GmToolName = (typeof GM_TOOL_NAMES)[number]
 
-/** The one route whose request may run a GM write tool (ADR 0022). */
-export const GM_CHAT_PATH = '/api/ai/chat'
+/**
+ * The one route whose request may run a GM write tool (ADR 0022).
+ *
+ * It is the shared table thread, not the SDK's `/api/ai/chat`: that route is
+ * still served for `/assistant`, where a signed-in member could otherwise drive
+ * the GM's owner-credentialed writes from a generic assistant page.
+ */
+export const GM_CHAT_PATH = '/api/gm/chat'
 
 /** `campaigns.atmosphereTag` options, in schema order. */
 export const ATMOSPHERE_TAGS = ['exploration', 'combat', 'tavern', 'dungeon', 'boss'] as const
 
 /** `inventory.category` options, in schema order (ADR 0016: no `relic`). */
 export const ITEM_CATEGORIES = ['weapon', 'armor', 'consumable', 'quest'] as const
+
+/** The six ability keys, in schema order — `campaigns.pendingStat`'s options. */
+export const ABILITY_KEYS = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const
 
 // ============================================================================
 // Input schemas
@@ -94,12 +104,24 @@ export const damageEnemyInputSchema = z.object({
   reason: z.string().max(200).optional(),
 })
 
+/**
+ * `request_check` — the one check the table owes (`P5.19`): who rolls, which
+ * ability, and that action's own DC. The DC is bounded to a d20's reachable
+ * range, so a model cannot ask for an impossible or trivial number.
+ */
+export const requestCheckInputSchema = z.object({
+  characterId: z.string().min(1),
+  stat: z.enum(ABILITY_KEYS),
+  dc: z.number().int().min(5).max(30),
+})
+
 /** Model-facing input schema per write tool, for `tool({ inputSchema })`. */
 export const gmWriteInputSchemas = {
   modify_character_hp: modifyCharacterHpInputSchema,
   grant_character_loot: grantCharacterLootInputSchema,
   update_campaign_scene: updateCampaignSceneInputSchema,
   damage_enemy: damageEnemyInputSchema,
+  request_check: requestCheckInputSchema,
 } satisfies Record<GmWriteToolName, z.ZodType>
 
 // ============================================================================
@@ -109,7 +131,7 @@ export const gmWriteInputSchemas = {
 /**
  * Whether `toolName` may run for a request whose path is `pathname`.
  *
- * Writes are allowed only on the in-app GM chat turn. An unknown name is
+ * Writes are allowed only on the shared table thread. An unknown name is
  * refused, and the read-only snapshot is always allowed — a rename or a new
  * surface fails closed for writes, never open.
  */
@@ -150,6 +172,7 @@ export type GmMutation =
       }
     }
   | { kind: 'enemy_damage'; amount: number; reason?: string }
+  | { kind: 'request_check'; characterId: string; stat: (typeof ABILITY_KEYS)[number]; dc: number }
 
 /**
  * Maps a model's tool call onto the action's mutation shape, or `null` when the
@@ -217,6 +240,12 @@ export function toGmMutation(toolName: string, args: unknown): GmMutation | null
       return reason === undefined
         ? { kind: 'enemy_damage', amount }
         : { kind: 'enemy_damage', amount, reason }
+    }
+    case 'request_check': {
+      const parsed = requestCheckInputSchema.safeParse(input)
+      if (!parsed.success) return null
+      const { characterId, stat, dc } = parsed.data
+      return { kind: 'request_check', characterId, stat, dc }
     }
     default:
       return null

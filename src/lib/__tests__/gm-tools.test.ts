@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  GM_CHAT_PATH,
   GM_READ_TOOLS,
   GM_TOOL_NAMES,
   GM_WRITE_TOOLS,
@@ -12,29 +13,35 @@ import {
  *
  * Two claims are pinned here:
  *
- * - a write tool may run **only** on the in-app chat turn, and an unknown tool
- *   name is refused;
+ * - a write tool may run **only** on the shared table thread
+ *   (`POST /api/gm/chat`), and an unknown tool name is refused;
  * - a model's arguments become an `applyGmMutation` mutation by explicit field
  *   mapping, never by passing the raw object through — unknown keys are
  *   stripped and invalid enums/lengths are refused.
  */
 
 describe('GM tool names', () => {
-  it('names one read tool and four write tools', () => {
+  it('names one read tool and five write tools', () => {
     expect(GM_READ_TOOLS).toEqual(['get_campaign_snapshot'])
     expect(GM_WRITE_TOOLS).toEqual([
       'modify_character_hp',
       'grant_character_loot',
       'update_campaign_scene',
       'damage_enemy',
+      'request_check',
     ])
-    expect(GM_TOOL_NAMES).toHaveLength(5)
+    expect(GM_TOOL_NAMES).toHaveLength(6)
   })
 })
 
 describe('gmToolAllowedForPath', () => {
+  it('names the shared table thread as the one GM turn', () => {
+    expect(GM_CHAT_PATH).toBe('/api/gm/chat')
+  })
+
   it('allows the read tool on every path', () => {
     for (const path of [
+      GM_CHAT_PATH,
       '/api/ai/chat',
       '/_deepspace/agent/tools',
       '/api/actions/applyGmMutation',
@@ -44,10 +51,12 @@ describe('gmToolAllowedForPath', () => {
     }
   })
 
-  it('allows each write tool only on /api/ai/chat', () => {
+  it('allows each write tool only on the shared table thread', () => {
     for (const tool of GM_WRITE_TOOLS) {
-      expect(gmToolAllowedForPath(tool, '/api/ai/chat')).toBe(true)
+      expect(gmToolAllowedForPath(tool, GM_CHAT_PATH)).toBe(true)
       expect(gmToolAllowedForPath(tool, '/_deepspace/agent/tools')).toBe(false)
+      // The SDK's per-player chat, still served for `/assistant`.
+      expect(gmToolAllowedForPath(tool, '/api/ai/chat')).toBe(false)
       expect(gmToolAllowedForPath(tool, '/api/ai/chats')).toBe(false)
       expect(gmToolAllowedForPath(tool, '/api/actions/applyGmMutation')).toBe(false)
       expect(gmToolAllowedForPath(tool, '')).toBe(false)
@@ -55,8 +64,8 @@ describe('gmToolAllowedForPath', () => {
   })
 
   it('refuses an unknown tool name', () => {
-    expect(gmToolAllowedForPath('records_delete', '/api/ai/chat')).toBe(false)
-    expect(gmToolAllowedForPath('', '/api/ai/chat')).toBe(false)
+    expect(gmToolAllowedForPath('records_delete', GM_CHAT_PATH)).toBe(false)
+    expect(gmToolAllowedForPath('', GM_CHAT_PATH)).toBe(false)
   })
 })
 
@@ -154,6 +163,36 @@ describe('toGmMutation', () => {
     expect(toGmMutation('damage_enemy', { amount: 2.5 })).toBeNull()
     expect(toGmMutation('damage_enemy', { amount: 3, reason: 'x'.repeat(201) })).toBeNull()
     expect(toGmMutation('damage_enemy', {})).toBeNull()
+  })
+
+  it('maps request_check to a request_check mutation', () => {
+    expect(
+      toGmMutation('request_check', { characterId: 'char-1', stat: 'dex', dc: 17 }),
+    ).toEqual({ kind: 'request_check', characterId: 'char-1', stat: 'dex', dc: 17 })
+  })
+
+  it('keeps a request_check DC inside 5..30 and the stat inside the six abilities', () => {
+    expect(toGmMutation('request_check', { characterId: 'c', stat: 'dex', dc: 4 })).toBeNull()
+    expect(toGmMutation('request_check', { characterId: 'c', stat: 'dex', dc: 31 })).toBeNull()
+    expect(toGmMutation('request_check', { characterId: 'c', stat: 'dex', dc: 12.5 })).toBeNull()
+    expect(toGmMutation('request_check', { characterId: 'c', stat: 'luck', dc: 12 })).toBeNull()
+    expect(toGmMutation('request_check', { characterId: '', stat: 'dex', dc: 12 })).toBeNull()
+    expect(toGmMutation('request_check', { stat: 'dex', dc: 12 })).toBeNull()
+    // The bounds themselves are allowed.
+    expect(toGmMutation('request_check', { characterId: 'c', stat: 'wis', dc: 5 })).not.toBeNull()
+    expect(toGmMutation('request_check', { characterId: 'c', stat: 'wis', dc: 30 })).not.toBeNull()
+  })
+
+  it('strips unknown keys from a request_check instead of forwarding them', () => {
+    expect(
+      toGmMutation('request_check', {
+        characterId: 'char-1',
+        stat: 'int',
+        dc: 13,
+        pendingCharacterId: 'someone-else',
+        campaignId: 'other-campaign',
+      }),
+    ).toEqual({ kind: 'request_check', characterId: 'char-1', stat: 'int', dc: 13 })
   })
 
   it('carries sceneIndex on an update_campaign_scene advance only when given', () => {

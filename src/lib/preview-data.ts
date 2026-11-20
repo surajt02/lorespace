@@ -264,7 +264,7 @@ export const PREVIEW_ROLLS: RecordData<RollLogRow>[] = [
 
 /**
  * Static GM stream for the preview table. `GmConsolePanel` renders these in
- * order; Phase 5 replaces the list with the real `/api/ai/chat` stream, so the
+ * order; the GM console replaces the list with the real `/api/gm/chat` stream, so the
  * shape is the component's `GmMessage`, not a record row.
  */
 export const PREVIEW_GM_MESSAGES: GmMessage[] = [

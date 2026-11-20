@@ -77,7 +77,12 @@ engine decides when a scene is over. Rolls are server-computed; combat is
 narration → GM-set DC → check → engine-clamped consequence, with every change
 leaving a `combat` or `gm_event` row. Presence is membership-gated and carries a
 typing flag. The console defaults to Claude Haiku 5.5 (Opus is plan-blocked).
-Remaining: Phase 6's gates, e2e and deploy.
+The GM console now renders the **shared table thread** (`gm-messages`, readable
+signed out) rather than a private per-player chat, the scene banner carries the
+pending check's DC (pulsing) in place of a scene-global one, and stat cards are
+inert until the GM requests a specific roll. Remaining: Phase 6's gates, e2e
+(including the `presence` spec's bare stat-card click, which the roll gate now
+blocks) and deploy.
 
 | Thing | State |
 | --- | --- |
@@ -947,12 +952,45 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       verified consequence, never a fabricated roll); `enemyHp === 0` satisfies
       the scene's `defeat` exit. No attack button, no `enemyAc`/`enemyDamage`.
 
+- [x] `P5.19` One DC per action, and only the requested roll counts
+      ([ADR 0028](./adr/0028-one-dc-per-action.md)): `request_check` tool writes
+      `pendingCharacterId`/`pendingStat`/`pendingDc` (no feed row),
+      `rollSkillCheck` refuses anything else with `roll_not_requested` before the
+      die and uses the pending DC, and a roll/advance/reset clears the trio.
+      — 2026-11-19 revision (265 unit tests)
+- [x] `P5.20` GM voice: the brief forbids mechanics talk ("DC", "the stakes",
+      "I'll call for", tool names), forbids recapping what it did, tells the GM
+      to describe obstacles rather than enumerate options, to address one named
+      character per turn and end on their move, and to set a DC per action with
+      `request_check`. — 2026-11-19 revision (690-word brief)
+- [x] `P5.21` Shared table thread, server side
+      ([ADR 0027](./adr/0027-shared-gm-thread.md)): `gm-messages` collection
+      (viewer read, member read-only), `POST /api/gm/chat` streaming one turn with
+      history from the thread, the user row persisted before the stream and the
+      assistant row on end/abort, owner billing, tools as the caller, and
+      `GM_CHAT_PATH` moved off `/api/ai/chat` so `/assistant` and MCP cannot
+      reach GM writes. — 2026-11-19 revision (live 200 SSE + both rows persisted)
+- [x] `P5.22` Shared thread panel: the GM console renders `gm-messages` itself in — done: thread rendered from `gm-messages` in the preview style, `MODEL` picker in the header, one-line composer, synthetic beats hidden, signed-out windows read the thread (live probe: two signed-in windows + one anonymous)
+      the signed-out preview style (no `ChatPanel`), one-line composer, `MODEL`
+      button in the header opening the picker, chips and roll auto-resolve through
+      the thread, synthetic beats persisted hidden, signed-out windows read the
+      same thread.
+- [x] `P5.23` Banner `Active DC`: a large number block on the right of the scene — done: `ACTIVE DC` block right of the prose, `pixel-numeral text-5xl`, pulses while a check is pending and falls back to the scene DC after the roll
+      description, showing the pending check's DC and pulsing while a roll is
+      owed, falling back to the scene DC otherwise.
+- [x] `P5.24` Roll gating in the sheet: the requested stat is outlined and — done: requested stat outlined + clickable, other five disabled, label names who owes the roll; wrong-stat clicks write nothing (server also refuses `roll_not_requested`)
+      clickable, every other stat is disabled, with a label naming who owes the
+      roll.
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.
 - [ ] `P6.2` `collab.spec.ts` rewritten for campaigns/characters/roster/roll
       feed (current file tests `/api-status` identity — keep or replace
-      deliberately). The two accounts come from `P0.1` and the file should have
+      deliberately). **Note (2026-11-19): stat cards are now inert until the GM
+      requests a check (`P5.24`, ADR 0028), so `presence.spec.ts`'s bare
+      `stat-card-dex` click no longer rolls — the spec needs a requested check
+      first (or the free-roll path restored) before it can be green. The two accounts come from `P0.1` and the file should have
       been green since `P0.2`; if it is skipping here, the local registry was
       lost (`npx deepspace test accounts recover --all`).
 - [ ] `P6.3` Add `/home` H1 + preview-table assertions to `smoke.spec.ts`
