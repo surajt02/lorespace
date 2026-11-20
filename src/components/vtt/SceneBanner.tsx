@@ -21,6 +21,18 @@
  * without them (`P1.11`'s preview, any test) is unchanged. `progress` is passed
  * through verbatim — `progressLabel()` in `campaign-arc.ts` is the only thing
  * that knows the arc's wording, and the uppercase is CSS.
+ *
+ * It scales down rather than being fixed (`P5.14`, iPad mini): on a narrow or
+ * short window the strip would otherwise take a third of the table's height for
+ * information read once. The compact density is one arbitrary media variant —
+ * width under 1024px (portrait tablet) *or* height under 900px (landscape
+ * tablet), spelled `[@media(max-width:1023px),(max-height:899px)]:` — applied
+ * per utility with Tailwind only, so the markup stays one composition with two
+ * densities. It is written literally on every class, never concatenated:
+ * Tailwind scans source text, so only a literal class name is generated. What
+ * must not shrink below legibility is the `ACTIVE DC` number; the prose is
+ * clamped to two lines but never removed, and the progress, the start button and
+ * the enemy tracker stay at every size.
  */
 
 import { Badge, Button } from '@/components/ui'
@@ -67,13 +79,28 @@ export function SceneBanner({
   return (
     <section
       data-testid="scene-banner"
-      className="pixel-frame pixel-dither relative overflow-hidden p-4"
+      className={cn(
+        'pixel-frame pixel-dither relative overflow-hidden p-4',
+        '[@media(max-width:1023px),(max-height:899px)]:p-2.5',
+      )}
     >
       <div aria-hidden="true" className="pixel-strip absolute inset-0" />
 
-      <div className="relative flex flex-wrap items-end justify-between gap-3">
+      <div
+        className={cn(
+          'relative flex flex-wrap items-end justify-between gap-3',
+          '[@media(max-width:1023px),(max-height:899px)]:gap-2',
+        )}
+      >
         <div className="min-w-0">
-          <h1 className="truncate text-xl font-semibold text-foreground">{campaign.title}</h1>
+          <h1
+            className={cn(
+              'truncate text-xl font-semibold text-foreground',
+              '[@media(max-width:1023px),(max-height:899px)]:text-lg',
+            )}
+          >
+            {campaign.title}
+          </h1>
           <p className="mt-1 text-xs text-muted-foreground">{campaign.locationName}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -95,7 +122,11 @@ export function SceneBanner({
               size="sm"
               loading={starting}
               onClick={onStartCampaign}
-              className="rounded-none border-border bg-background font-pixel text-[10px] uppercase"
+              className={cn(
+                'rounded-none border-border bg-background font-pixel text-[10px] uppercase',
+                '[@media(max-width:1023px),(max-height:899px)]:h-6',
+                '[@media(max-width:1023px),(max-height:899px)]:px-2',
+              )}
             >
               {startLabel}
             </Button>
@@ -103,18 +134,40 @@ export function SceneBanner({
         </div>
       </div>
 
-      <div className="pixel-rule relative my-3" />
+      <div
+        className={cn('pixel-rule relative my-3', '[@media(max-width:1023px),(max-height:899px)]:my-2')}
+      />
 
       {/* Prose left, the DC right (`P5.20`): the number the table must beat is
           the one thing on this strip that has to be readable from across the
           room, so it is a large block rather than a badge in the meta row. */}
-      <div className="relative grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-        <p className="max-w-3xl text-sm text-muted-foreground">{campaign.sceneSummary}</p>
+      <div
+        className={cn(
+          'relative grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center',
+          '[@media(max-width:1023px),(max-height:899px)]:gap-2',
+        )}
+      >
+        <p
+          data-testid="scene-description"
+          className={cn(
+            'max-w-3xl text-sm text-muted-foreground',
+            '[@media(max-width:1023px),(max-height:899px)]:text-xs',
+            // Two lines is the compact density's whole point: the prose stays,
+            // the strip does not grow with it. Never removed (`P5.14`).
+            '[@media(max-width:1023px),(max-height:899px)]:line-clamp-2',
+          )}
+        >
+          {campaign.sceneSummary}
+        </p>
         <div
           data-testid="active-dc"
           data-pending={dcPending ? 'true' : 'false'}
           className={cn(
             'flex min-h-[6rem] min-w-[9rem] flex-col justify-center border px-4 py-3 md:items-end',
+            '[@media(max-width:1023px),(max-height:899px)]:min-h-[3.5rem]',
+            '[@media(max-width:1023px),(max-height:899px)]:min-w-[5.5rem]',
+            '[@media(max-width:1023px),(max-height:899px)]:px-2.5',
+            '[@media(max-width:1023px),(max-height:899px)]:py-1.5',
             dcPending
               ? 'animate-pulse border-primary bg-primary/5'
               : 'border-border bg-background',
@@ -126,6 +179,7 @@ export function SceneBanner({
           <span
             className={cn(
               'pixel-numeral text-5xl leading-none',
+              '[@media(max-width:1023px),(max-height:899px)]:text-3xl',
               dcPending ? 'text-primary' : 'text-foreground',
             )}
           >
@@ -135,17 +189,32 @@ export function SceneBanner({
       </div>
 
       {maxHp > 0 && (
-        <div className="relative mt-3 flex flex-wrap items-center gap-3">
-          <span className="font-pixel text-[10px] uppercase text-muted-foreground">
+        <div
+          className={cn(
+            'relative mt-3 flex flex-wrap items-center gap-3',
+            '[@media(max-width:1023px),(max-height:899px)]:mt-2',
+            '[@media(max-width:1023px),(max-height:899px)]:gap-2',
+          )}
+        >
+          <span
+            className={cn(
+              'font-pixel text-[10px] uppercase text-muted-foreground',
+              '[@media(max-width:1023px),(max-height:899px)]:text-[9px]',
+            )}
+          >
             {campaign.enemyName || 'Enemy'}
           </span>
           <div className="flex flex-1 items-center gap-px" aria-hidden="true">
             {Array.from({ length: SEGMENTS }, (_, index) => (
               <span
                 key={index}
-                className={
-                  index < filled ? 'hp-segment h-2 flex-1 bg-destructive' : 'hp-segment h-2 flex-1 bg-muted'
-                }
+                className={cn(
+                  'hp-segment h-2 flex-1',
+                  // A thinner bar on a tablet: the tracker still reads, the
+                  // strip stays short.
+                  '[@media(max-width:1023px),(max-height:899px)]:h-1.5',
+                  index < filled ? 'bg-destructive' : 'bg-muted',
+                )}
               />
             ))}
           </div>

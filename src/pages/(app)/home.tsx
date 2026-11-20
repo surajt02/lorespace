@@ -24,11 +24,11 @@
  * roster cannot show two different parties — the anonymous viewer reads the same
  * collections, so an empty one just means nobody has seeded yet. The GM console
  * is the table's shared thread (`P5.7`, `P5.20`): it reads `gm-messages`, sends
- * quick chips through `POST /api/gm/chat`, opens the story when a game starts
- * (`P5.17`, hidden as an engine beat) and fires one automatic turn per resolved
- * `roll-logs` roll — the console is no longer a fixture in any signed-in state.
- * Signed out it reads the same thread, and shows its preview script only while
- * the table is empty. The GM composer's emptiness is owned here too (`P5.9`),
+ * the player's line through `POST /api/gm/chat`, opens the story when a game
+ * starts (`P5.17`, hidden as an engine beat) and fires one automatic turn per
+ * resolved `roll-logs` roll — the console is no longer a fixture in any signed-in
+ * state. Signed out it reads the same thread, and shows its preview script only
+ * while the table is empty. The GM composer's emptiness is owned here too (`P5.9`),
  * because the roster's typing marker is a presence payload read by another
  * window, and the pending check (`P5.19`) is derived here once so the banner's
  * DC block and the sheet's roll gate cannot disagree.
@@ -476,10 +476,10 @@ export default function HomePage() {
               {/* Fills whatever the feed leaves: `flex-1` grows into empty
                   space, and `lg:min-h-[15rem]` is the floor — the feed's cap
                   above is this number plus the gap, so together they fill the
-                  column. The floor keeps the header, the message list, the
-                  composer and all four chips on screen at 1024x768, where the
-                  chips wrap to two rows and the message list keeps ~82px — two
-                  lines (`P5.14`). */}
+                  column. The floor keeps the header, the message list and the
+                  composer on screen at 1024x768 (`P5.14`); with the quick-prompt
+                  chips gone the floor is headroom for the thread rather than a
+                  fit for a wrapping chip row. */}
               <div className="flex min-h-0 flex-col lg:min-h-[15rem] lg:flex-1 lg:overflow-hidden">
                 <GmConsolePanel
                   signedIn={isSignedIn}
@@ -492,7 +492,6 @@ export default function HomePage() {
                   preview={PREVIEW_GM_MESSAGES}
                   openBeatId={openBeatId}
                   progress={progress}
-                  enemyName={campaign.enemyName}
                   onDraftChange={setGmComposing}
                   pendingCheck={anyPendingCheck}
                   onlineCharacterNames={onlineCharacterNames}

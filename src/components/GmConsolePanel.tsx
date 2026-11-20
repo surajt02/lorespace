@@ -31,16 +31,12 @@ import { ArrowUp, Check, Square } from 'lucide-react'
 import { Badge, Popover, PopoverContent, PopoverTrigger } from '@/components/ui'
 import { DEFAULT_CAMPAIGN_ID } from '@/constants'
 import {
-  GM_CHIPS,
   buildOpeningPrompt,
-  buildQuickPrompt,
   buildRollPrompt,
   unresolvedRolls,
-  type GmChipKind,
 } from '@/lib/gm-prompts'
 import { useGmStream } from '@/lib/gm-stream'
 import { buildCheckFixPrompt, requestsRoll, statNamedInText } from '@/lib/gm-prompts'
-import { newestFirst } from '@/lib/roll-announcements'
 import type { RollLogRow } from '@/lib/preview-data'
 import { cn } from '@/lib/utils'
 
@@ -113,7 +109,7 @@ function initialModelId(): string {
   return known && saved ? saved : (CONSOLE_MODELS[0]?.id ?? CONSOLE_DEFAULT_MODEL_ID)
 }
 
-/** One turn waiting for the stream to be free: a chip, or an engine beat. */
+/** One turn waiting for the stream to be free: a player's line, or an engine beat. */
 interface QueuedTurn {
   id: number
   content: string
@@ -146,8 +142,6 @@ export interface GmConsolePanelProps {
   openBeatId?: string | null
   /** The engine's act/scene label (`progressLabel`), used by the opening turn. */
   progress?: string
-  /** The campaign's current enemy, so the `attack` chip can name it (ADR 0024). */
-  enemyName?: string
   /** The composer went between empty and non-empty (typing presence). */
   onDraftChange?: (hasText: boolean) => void
   /**
@@ -178,7 +172,6 @@ export function GmConsolePanel({
   preview,
   openBeatId = null,
   progress,
-  enemyName,
   onDraftChange,
   pendingCheck = false,
   onlineCharacterNames = [],
@@ -275,8 +268,8 @@ export function GmConsolePanel({
     setQueue((pending) => [...pending, { id: seq.current, content: trimmed, synthetic, transient }])
   }
 
-  // One turn at a time: a chip, an opening beat and a resolved roll can all be
-  // queued in one window, and the stream answers them in order.
+  // One turn at a time: an opening beat and a resolved roll can both be queued
+  // in one window, and the stream answers them in order.
   useEffect(() => {
     if (!signedIn || isLoading || queue.length === 0) return
     const [next, ...rest] = queue
@@ -372,20 +365,6 @@ export function GmConsolePanel({
     // `enqueue` is stable in behaviour; see the roll effect above.
   }, [openBeatId, progress, signedIn, threadRows])
 
-  // The chip prompts cite the viewer's newest roll when there is one.
-  const latestRoll = useMemo(() => {
-    const rollsOnly = newestFirst(rolls).filter((row) => row.data.entryType === 'roll')
-    const mine = character
-      ? rollsOnly.find((row) => row.data.characterName === character.name)
-      : undefined
-    return (mine ?? rollsOnly[0])?.data ?? null
-  }, [rolls, character])
-
-  function sendChip(kind: GmChipKind) {
-    onDraftChange?.(false)
-    enqueue(buildQuickPrompt(kind, { latestRoll, enemyName }))
-  }
-
   function selectModel(id: string) {
     setModelId(id)
     try {
@@ -474,23 +453,6 @@ export function GmConsolePanel({
           <p className="text-[12px] leading-relaxed text-destructive">{error.message}</p>
         </div>
       )}
-
-      <div className="flex shrink-0 flex-wrap gap-1 border-t border-border px-3 py-1.5">
-        {GM_CHIPS.map((chip) => (
-          <button
-            key={chip.kind}
-            type="button"
-            data-testid="gm-chip"
-            disabled={!signedIn || isLoading}
-            onClick={() => {
-              sendChip(chip.kind)
-            }}
-            className="border border-border bg-background px-2 py-1 font-pixel text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {chip.label}
-          </button>
-        ))}
-      </div>
 
       {/* Whose move it is (ADR 0031, amended): the interface says it once, above
           the composer, instead of the GM restating the table in prose. */}
@@ -607,9 +569,8 @@ function previewTurns(preview: GmMessage[]): Turn[] {
 }
 
 /**
- * Signed in, nothing said yet: the table's voice, not a product's. The chips
- * directly below are the only affordance, so the same four prompts are not
- * printed twice.
+ * Signed in, nothing said yet: the table's voice, not a product's. The composer
+ * is the only affordance, so this is an invitation rather than a menu.
  */
 function QuietTable() {
   return (

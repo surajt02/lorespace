@@ -1,6 +1,5 @@
 /**
- * GM prompts — the four quick chips and the automatic turn a resolved roll
- * fires (`P5.7`).
+ * GM prompts — the automatic turn a resolved roll fires (`P5.7`).
  *
  * Everything the GM receives as a *user* message is built here, so the strings
  * are testable without a socket and the panel stays a container. Two rules ride
@@ -17,14 +16,13 @@
  *   message, and the only one that is not a reply: it names the act and scene so
  *   the opening narration is attributable to "Start campaign" rather than a
  *   mount timer.
- * - **Combat is narration** (ADR 0024). The `attack` chip writes the sentence a
- *   player would say — first person, naming the enemy, asking what to roll —
- *   instead of ordering an attack. The chat is the interface, so the chip is a
- *   writer of prose, not an action.
+ * - **Combat is narration** (ADR 0024). There is no attack affordance: the
+ *   player types what they do and asks what to roll. The chat is the interface,
+ *   so an action is prose, never a one-click button.
  * - **Attribution is not in the text** (`P5.20`). The console sends the speaker's
  *   name as its own field on `POST /api/gm/chat`; the route prefixes the model's
  *   copy and the panel labels the row from `characterName`. So no builder here
- *   writes `"Name: "` — a chip that did would reach the model as
+ *   writes `"Name: "` — a prompt that did would reach the model as
  *   `"Ash: Ash inspects the room"`.
  *
  * Pure: no React, no network, no clock.
@@ -36,80 +34,18 @@ import { formatModifier } from '@/lib/d20'
 import type { RollLogRow } from '@/lib/preview-data'
 import { newestFirst } from '@/lib/roll-announcements'
 
-/** The four chips, in reading order. */
-export type GmChipKind = 'inspect' | 'resolve' | 'attack' | 'rest'
-
-export interface GmChip {
-  kind: GmChipKind
-  label: string
-}
-
-/**
- * Chip labels double as the panel's empty-state prompts, so they stay in the
- * table's voice: an action the player takes, not a feature name.
- */
-export const GM_CHIPS: readonly GmChip[] = [
-  { kind: 'inspect', label: 'Inspect the room' },
-  { kind: 'resolve', label: 'Resolve my latest roll' },
-  { kind: 'attack', label: 'Attack the active enemy' },
-  { kind: 'rest', label: 'Take a short rest' },
-]
-
-export interface QuickPromptContext {
-  /** The viewer's newest `roll-logs` roll row, when one exists. */
-  latestRoll?: RollLogRow | null
-  /** The campaign's current enemy (`campaigns.enemyName`), when one is on the table. */
-  enemyName?: string | null
-}
-
 /** `critical_failure` → `critical failure`. The row's own word, unembellished. */
 function outcomeWords(outcome: string): string {
   return outcome.replace(/_/g, ' ')
 }
 
 /**
- * `d20(14) + 3 = 17 vs DC 12 — success`. The one roll sentence both the chip
- * and the automatic turn carry, so the GM reads the same shape either way.
+ * `d20(14) + 3 = 17 vs DC 12 — success`. The one roll sentence the builders
+ * carry, so the GM reads the same shape wherever a roll is reported.
  */
 function rollLine(row: RollLogRow): string {
   const stat = row.statName ? row.statName.toUpperCase() : 'check'
   return `${stat} d20(${row.rawRoll}) ${formatModifier(row.modifier)} = ${row.total} vs DC ${row.targetDc} — ${outcomeWords(row.outcome)}`
-}
-
-/**
- * A chip, as the message text the GM receives.
- *
- * No speaker prefix: the panel sends the character name as its own field and the
- * route adds the model-side prefix, so the chip says only what the character
- * does. `resolve` carries the newest roll when there is one and says plainly
- * that there is not when there isn't — asking the GM to verify a roll it was
- * never given is exactly the fabrication ADR 0009 forbids.
- *
- * `attack` is narration, not an order (ADR 0024): the player says what they do
- * in the first person and asks what to roll, and the GM answers with a DC. There
- * is deliberately no dice line — the check has not been called yet, and the
- * resolved roll arrives as its own automatic turn.
- */
-export function buildQuickPrompt(
-  kind: GmChipKind,
-  { latestRoll, enemyName }: QuickPromptContext = {},
-): string {
-  const roll = latestRoll ?? null
-  const rollSuffix = roll ? `\nMy latest roll: ${rollLine(roll)}.` : ''
-  const noRollSuffix =
-    '\nNo roll of mine is on the log yet — call for the check first, then verify it in roll-logs.'
-  const enemy = enemyName?.trim() ?? ''
-
-  switch (kind) {
-    case 'inspect':
-      return 'Inspect the room — what is here, and what is watching?'
-    case 'resolve':
-      return `Resolve my latest roll.${roll ? rollSuffix : noRollSuffix}`
-    case 'attack':
-      return `I move to strike ${enemy.length > 0 ? enemy : 'the enemy'} — set the stakes and tell me what to roll.`
-    case 'rest':
-      return 'Take a short rest — what does the party recover, and what happens while we rest?'
-  }
 }
 
 /**

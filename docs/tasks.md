@@ -1088,6 +1088,20 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       their own check; the composer stays open either way. — 2026-11-20 (15 new
       tests, 5 server / 10 client)
 
+- [x] `P5.37` Quick-prompt chips removed from the GM console: the four buttons, the
+      `sendChip` path, `latestRoll`, the `enemyName` prop and the `GM_CHIPS` /
+      `buildQuickPrompt` / `QuickPromptContext` exports (plus nine chip tests) are
+      gone. Composer, send/stop, awaiting line, thread, model picker, roll
+      auto-turn, opening beat and correction are untouched; attacking is typed
+      narration (ADR 0024). — 2026-11-20 (banner probe asserts `gm-chip` count 0)
+- [x] `P5.38` Scene header scales with the viewport: one compact media query
+      (`max-width:1023px` or `max-height:899px`) tightens padding, title, progress,
+      button, enemy block and HP bar, clamps the description to two lines and drops
+      the `ACTIVE DC` numeral to 30px while keeping it right of the prose; desktop is
+      unchanged. — 2026-11-20 (measured: 206px/23% desktop, 149px/19% at 1024×768,
+      149px/15% at 768×1024; numeral 48px → 30px; Start button and DC visible at
+      every size)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.

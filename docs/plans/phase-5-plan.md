@@ -558,3 +558,14 @@ init).
   with `check_owed_by_other` before the die (fails closed on a roster read error),
   and the sheet shows `<Name> must roll <STAT>` with every card inert. Two
   characters may still be asked at once; the composer always stays open.
+
+### Revision 10 — 2026-11-20 (readable panel, adaptive header)
+
+- `P5.37`: the quick-prompt chips are gone from the console — they wrapped to two
+  rows on a tablet and stole reading space from the thread. `GM_CHIPS`,
+  `buildQuickPrompt`, `sendChip` and the console's `enemyName` prop went with them;
+  the composer, thread, model picker and every automatic turn remain.
+- `P5.38`: the scene header shrinks below 1024px wide or 899px tall — description
+  clamped to two lines, title/progress/button/enemy block compact, `ACTIVE DC`
+  numeral 48px → 30px and still to the right of the prose. Measured 206px (23%) on
+  desktop, 149px (19%) at 1024×768 and 149px (15%) at 768×1024.
