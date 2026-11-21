@@ -1348,3 +1348,18 @@ bottom as `D<n>` with the ADR that settles them.
 - [x] `D13` Read policy: **public-read table by link**, live rows with a fixture
       fallback when unsigned-out; `inventory` delete asymmetry accepted →
       [ADR 0014](./adr/0014-public-read-table.md). — 2026-11-18 grill
+
+---
+
+## Backlog after phase 6
+
+- [ ] `B1` GM prose tuning (owner, 2026-11-21): the mechanics and pacing are done;
+      what is left is *story quality* — richer descriptions, better pacing of
+      escalations, fewer stock phrases. Do this after `P6.6` so it tunes the
+      deployed build rather than mid-gate.
+- [ ] `B2` Decide `/assistant` (installed by the ai-chat feature, deliberately
+      unlinked, ADR 0008): keep as a private generic assistant, or delete the page
+      and the `ChatPanel` modules with it. Not part of the demo either way.
+- [ ] `B3` `P5.29` decision — a check owed by a player who disconnects holds the
+      table (and now also holds roll batching). Options: auto-clear on presence
+      loss, allow any online member to take it over, or have the GM re-ask.
