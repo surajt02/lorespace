@@ -1192,6 +1192,14 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       no check was owed on their row before this." and "The snapshot shows…". If
       nothing narrative survives, nothing is persisted. — 2026-11-21 (6 tests)
 
+- [x] `P5.49` The sender no longer sees a turn twice: the live streaming overlay was
+      cleared by comparing its text to the persisted row, and the server now strips
+      machinery sentences before writing, so the two never matched — the sender kept
+      the overlay and then gained the row, while every other window saw only the
+      row. The overlay now clears when an assistant row created after the turn
+      started lands, whatever its final text. — 2026-11-21 (verified from the data:
+      one assistant row, two visible messages on the sender only)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.

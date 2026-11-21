@@ -209,6 +209,9 @@ export function GmConsolePanel({
   // correction per GM turn, so a model that keeps forgetting cannot loop.
   const corrected = useRef<Set<string>>(new Set())
   const scrollRef = useRef<HTMLDivElement>(null)
+  // When the in-flight turn was sent: a persisted assistant row newer than this is
+  // this turn landing, whatever text it ended up with (`P5.49`).
+  const turnStartedAt = useRef(0)
 
   const { records } = useQuery<GmMessageRow>('gm-messages', {
     where: { campaignId: DEFAULT_CAMPAIGN_ID },
@@ -258,17 +261,21 @@ export function GmConsolePanel({
     }))
   }, [signedIn, threadRows, preview])
 
-  // The overlay is redundant once the persisted row carrying the same text
-  // lands: clear it then, so the turn never flashes out and back in.
+  // The overlay is redundant once the turn is persisted — but the stored text is
+  // NOT the streamed text: the server strips machinery sentences (`P5.48`) before
+  // writing, so an equality check never matches and the sender sees the turn twice
+  // (the overlay plus the row) while everyone else sees it once (`P5.49`). What
+  // marks the landing is an assistant row created after this turn started.
   useEffect(() => {
-    if (streamedText.trim() === '') return
-    const persisted = threadRows.some(
+    if (streamedText.trim() === '' || isLoading) return
+    const startedAt = turnStartedAt.current
+    if (startedAt === 0) return
+    const landed = threadRows.some(
       (record) =>
-        record.data.role === 'assistant' &&
-        record.data.content.trim() === streamedText.trim(),
+        record.data.role === 'assistant' && recordTime(record.createdAt) >= startedAt,
     )
-    if (persisted) reset()
-  }, [threadRows, streamedText, reset])
+    if (landed) reset()
+  }, [threadRows, streamedText, isLoading, reset])
 
   useEffect(() => {
     const element = scrollRef.current
@@ -305,6 +312,7 @@ export function GmConsolePanel({
     if (!signedIn || isLoading || queue.length === 0) return
     const [next, ...rest] = queue
     setQueue(rest)
+    turnStartedAt.current = Date.now()
     void send({
       content: next.content,
       // Attribution is a field: the route prefixes the model's copy and the
