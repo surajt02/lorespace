@@ -28,6 +28,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { decodeAiStreamChunk, getAuthToken, parseSseLine } from 'deepspace'
 
+/** A roll turn retries once: the server hands an un-narrated batch back. */
+const ROLL_TURN_ATTEMPTS = 2
+const ROLL_TURN_RETRY_MS = 1_500
+
 export interface GmTurnRequest {
   content: string
   /** The speaker, persisted on the user row and sent to the model as a prefix. */
@@ -110,7 +114,8 @@ export function useGmStream({ onTurnEnd }: UseGmStreamOptions = {}): GmStream {
 
     const controller = new AbortController()
     abortRef.current = controller
-    try {
+
+    const attemptOnce = async (): Promise<void> => {
       const token = await getAuthToken()
       if (!token) {
         throw new Error('You are signed out, so the Game Master cannot answer.')
@@ -150,6 +155,30 @@ export function useGmStream({ onTurnEnd }: UseGmStreamOptions = {}): GmStream {
       }
 
       await consumeStream(response.body, setStreamedText, setError)
+    }
+
+    try {
+      // A roll turn is idempotent on the server (the cursor claim is handed back
+      // when a turn produces nothing, `P5.40`), so a transient provider failure
+      // can simply be retried: the retry re-claims the same batch and narrates it.
+      // A player turn is not retried — a second message would double the table's
+      // action.
+      const attempts = turn.rollTurn ? ROLL_TURN_ATTEMPTS : 1
+      let failure: unknown = null
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        if (attempt > 0) {
+          await new Promise((resolve) => setTimeout(resolve, ROLL_TURN_RETRY_MS))
+        }
+        try {
+          await attemptOnce()
+          failure = null
+          break
+        } catch (error) {
+          failure = error
+          if (error instanceof Error && error.name === 'AbortError') break
+        }
+      }
+      if (failure !== null) throw failure
     } catch (cause) {
       const streamError = cause instanceof Error ? cause : new Error(String(cause))
       // An abort is the player stopping the turn, not a failure: the partial

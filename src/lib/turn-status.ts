@@ -90,3 +90,26 @@ export function awaitingMyMove({
 export function waitingLabel(): string {
   return 'awaiting your move…'
 }
+
+/**
+ * Which window asks for the roll turn? (`P5.40`)
+ *
+ * Every open window sees every new `roll-logs` row, so both used to fire the same
+ * request — two model calls for one batch, and the claim race. The roller's own
+ * window is the one that asks: it is the window that pressed the button, so it is
+ * open by definition. A viewer with no character (or a row with no speaker) still
+ * asks, so an unattributed roll can never go unnarrated.
+ */
+export function ownsRollTurn({
+  newestRollName,
+  myName,
+}: {
+  newestRollName: string | undefined
+  myName: string | undefined
+}): boolean {
+  const roller = newestRollName?.trim() ?? ''
+  const me = myName?.trim() ?? ''
+  if (roller === '') return true
+  if (me === '') return true
+  return roller === me
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { awaitingMyMove, waitingLabel } from '@/lib/turn-status'
+import { awaitingMyMove, ownsRollTurn, waitingLabel } from '@/lib/turn-status'
 
 /**
  * `P5.34`/`P5.37`: the line means "the table is waiting on you", not "you are
@@ -69,5 +69,21 @@ describe('awaitingMyMove', () => {
 
   it('keeps the label lowercase for CSS to uppercase', () => {
     expect(waitingLabel()).toBe('awaiting your move…')
+  })
+})
+
+describe('ownsRollTurn', () => {
+  it('only the roller window asks', () => {
+    expect(ownsRollTurn({ newestRollName: 'Vesper', myName: 'Vesper' })).toBe(true)
+    expect(ownsRollTurn({ newestRollName: 'Vesper', myName: 'Kaelen' })).toBe(false)
+  })
+
+  it('lets an unattributed roll or a viewer without a character ask', () => {
+    expect(ownsRollTurn({ newestRollName: '', myName: 'Kaelen' })).toBe(true)
+    expect(ownsRollTurn({ newestRollName: 'Vesper', myName: undefined })).toBe(true)
+  })
+
+  it('ignores whitespace', () => {
+    expect(ownsRollTurn({ newestRollName: ' Vesper ', myName: 'Vesper' })).toBe(true)
   })
 })

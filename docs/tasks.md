@@ -1132,6 +1132,15 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       beat within 10s) is refused, which is the claim race seen live at 21:51:11.
       — 2026-11-20 (assistantProse + isDuplicateRollBatch helpers, 341 tests)
 
+- [x] `P5.42` The provider can fail and the table must recover: a roll turn is now
+      asked by **the roller's window only** (`ownsRollTurn`), so one batch is one
+      model call instead of one per open window, and a failed roll turn retries once
+      after 1.5s — idempotent because the server hands an un-narrated batch back.
+      Observed live: `internal error; reference = …` from the AI proxy killed a roll
+      narration that two windows had requested at the same millisecond; the guard
+      logged `prose-free turn` and restored the claim, but nothing retried.
+      — 2026-11-21 (three `ownsRollTurn` tests, 347 total)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.

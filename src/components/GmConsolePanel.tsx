@@ -38,6 +38,7 @@ import {
   unresolvedRolls,
 } from '@/lib/gm-prompts'
 import { useGmStream } from '@/lib/gm-stream'
+import { ownsRollTurn } from '@/lib/turn-status'
 import type { RollLogRow } from '@/lib/preview-data'
 import { cn } from '@/lib/utils'
 
@@ -328,10 +329,16 @@ export function GmConsolePanel({
     const pending = unresolvedRolls(rolls, announced.current)
     if (pending.length === 0) return
     for (const row of pending) announced.current.add(row.recordId)
+    // Only the roller's window asks (`P5.40`): every window sees the row, and two
+    // simultaneous requests are what produced two model calls and the claim race.
+    // The roller's window is open by definition, so the turn still happens.
+    if (!ownsRollTurn({ newestRollName: pending[0]?.data.characterName, myName: characterName })) {
+      return
+    }
     // `enqueue` is stable in behaviour (it only appends to state); it is not a
     // dependency because re-running on it would re-queue the same turn.
     enqueue(ROLL_TURN_PLACEHOLDER, true, false, true)
-  }, [rolls, signedIn])
+  }, [rolls, signedIn, characterName])
 
   // A narrated roll with no request behind it is a dead end: the gate refuses
   // every unrequested stat, so the table can neither roll nor continue. Send one
