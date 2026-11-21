@@ -17,6 +17,7 @@
  */
 
 import type { RecordData } from 'deepspace'
+import { recordTime } from '@/lib/record-time'
 import type { RollLogRow } from '@/lib/preview-data'
 
 /** One roll as the banner renders it: a `roll-logs` row, narrowed. */
@@ -76,8 +77,8 @@ export function newestFirst(
   entries: RecordData<RollLogRow>[],
 ): RecordData<RollLogRow>[] {
   return [...entries].sort((a, b) => {
-    const at = Date.parse(a.createdAt ?? '') || 0
-    const bt = Date.parse(b.createdAt ?? '') || 0
+    const at = recordTime(a.createdAt)
+    const bt = recordTime(b.createdAt)
     if (at !== bt) return bt - at
     if (a.recordId === b.recordId) return 0
     return a.recordId < b.recordId ? 1 : -1

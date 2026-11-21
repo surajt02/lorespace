@@ -64,6 +64,7 @@ import { progressLabel } from '@/lib/campaign-arc'
 import { DEFAULT_CAMPAIGN_SEED, type CampaignRow } from '@/lib/campaign-seed'
 import { dcDisplay, owedElsewhere, pendingOf } from '@/lib/pending-check'
 import { requestsRoll, statNamedInText } from '@/lib/gm-prompts'
+import { recordTime } from '@/lib/record-time'
 import { moveDue } from '@/lib/turn-status'
 import { useCompactViewport } from '@/lib/use-compact-viewport'
 import type { AbilityScoreKey } from '@/lib/party-presence'
@@ -266,12 +267,12 @@ export default function HomePage() {
           record.data.role === 'assistant' && record.data.content.trim() !== '',
       )
       .sort(
-        (a, b) => (Date.parse(a.createdAt ?? '') || 0) - (Date.parse(b.createdAt ?? '') || 0),
+        (a, b) => recordTime(a.createdAt) - recordTime(b.createdAt),
       )
     const latest = answers[answers.length - 1]
     if (!latest) return null
-    const askedAt = Date.parse(latest.createdAt ?? '') || 0
-    const answered = liveRolls.some((row) => (Date.parse(row.createdAt ?? '') || 0) > askedAt)
+    const askedAt = recordTime(latest.createdAt)
+    const answered = liveRolls.some((row) => recordTime(row.createdAt) > askedAt)
     if (answered) return null
     return requestsRoll(latest.data.content) ? statNamedInText(latest.data.content) : null
   }, [pending, gmRecords, liveRolls])

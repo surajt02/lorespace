@@ -63,3 +63,16 @@ describe('moveDue', () => {
   })
 })
 
+
+describe('moveDue with numeric timestamps', () => {
+  // The live bug (`P5.46`): rows arrive with epoch-ms createdAt, and a
+  // string-only parse read them all as 0, so the line never cleared.
+  const at = (iso: string) => Date.parse(iso)
+  it('hides after the viewer moves, with numbers instead of ISO text', () => {
+    const events = [
+      { role: 'assistant', characterName: 'Game Master', createdAt: at('2026-01-01T00:00:00Z') },
+      { role: 'user', characterName: 'Vesper', createdAt: at('2026-01-01T00:00:05Z') },
+    ]
+    expect(moveDue({ events, myName: 'Vesper' })).toBe(false)
+  })
+})

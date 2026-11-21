@@ -56,6 +56,7 @@ import type { ActionResult, ActionTools, QueryActionData, VerifyResult } from 'd
 import { buildSystemPrompt, buildTools } from '../ai/tools.js'
 import { DEFAULT_CAMPAIGN_ID } from '../constants.js'
 import { assistantProse } from '../lib/assistant-prose.js'
+import { recordTime } from '../lib/record-time.js'
 import { buildRollBatchPrompt, isDuplicateRollBatch, type RollBatchRow } from '../lib/gm-prompts.js'
 import { pendingOf } from '../lib/pending-check.js'
 import { recordRoundTurn, shouldStreamGmTurn } from '../lib/round-pacing.js'
@@ -147,7 +148,7 @@ async function loadThread(ownerTools: ActionTools): Promise<ThreadHistory> {
     createdAt: record.createdAt,
     data: record.data ?? {},
   }))
-  rows.sort((a, b) => (Date.parse(a.createdAt ?? '') || 0) - (Date.parse(b.createdAt ?? '') || 0))
+  rows.sort((a, b) => recordTime(a.createdAt) - recordTime(b.createdAt))
 
   const messages: ModelMessage[] = []
   const speakers: string[] = []
@@ -260,7 +261,7 @@ async function claimRollBatch(ownerTools: ActionTools): Promise<RollBatchResult>
   // any cursor — an unattributable row never becomes "new".
   const fresh = rolls.data.records
     .map((record) => ({
-      at: Date.parse(record.createdAt ?? '') || 0,
+      at: recordTime(record.createdAt),
       row: { recordId: record.recordId, data: record.data ?? {} } as RollBatchRow,
     }))
     .filter((entry) => entry.at > cursor)
@@ -281,7 +282,7 @@ async function claimRollBatch(ownerTools: ActionTools): Promise<RollBatchResult>
       const newestRow = latest.data.records
         .map((record) => ({
           content: typeof record.data?.content === 'string' ? record.data.content : null,
-          at: Date.parse(record.createdAt ?? '') || 0,
+          at: recordTime(record.createdAt),
         }))
         .sort((a, b) => b.at - a.at)[0]
       if (

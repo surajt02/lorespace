@@ -22,6 +22,8 @@
  * Pure: no React, no SDK, no network, no server import.
  */
 
+import { recordTime } from '@/lib/record-time'
+
 /** The one shape this reads out of a `gm-messages` row. */
 export interface TurnEvent {
   role?: unknown
@@ -33,7 +35,7 @@ export interface TurnEvent {
 const BEAT_SENTINEL = '__beat__'
 
 function at(event: TurnEvent): number {
-  return typeof event.createdAt === 'string' ? Date.parse(event.createdAt) || 0 : 0
+  return recordTime(event.createdAt)
 }
 
 function speaker(event: TurnEvent): string {

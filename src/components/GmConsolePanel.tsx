@@ -39,6 +39,7 @@ import {
   unresolvedRolls,
 } from '@/lib/gm-prompts'
 import { useGmStream } from '@/lib/gm-stream'
+import { recordTime } from '@/lib/record-time'
 import { moveDue, ownsRollTurn } from '@/lib/turn-status'
 import type { RollLogRow } from '@/lib/preview-data'
 import { cn } from '@/lib/utils'
@@ -231,7 +232,7 @@ export function GmConsolePanel({
         })
         .sort(
           (a, b) =>
-            (Date.parse(a.createdAt ?? '') || 0) - (Date.parse(b.createdAt ?? '') || 0),
+            recordTime(a.createdAt) - recordTime(b.createdAt),
         ),
     [records],
   )
@@ -364,12 +365,12 @@ export function GmConsolePanel({
     if (corrected.current.has(lastAnswer.recordId)) return
     // Only a live mistake: a reload must not re-spend a turn correcting a turn
     // that ended minutes (or a session) ago.
-    const answeredAt = Date.parse(lastAnswer.createdAt ?? '') || 0
+    const answeredAt = recordTime(lastAnswer.createdAt)
     if (answeredAt !== 0 && Date.now() - answeredAt > CHECK_FIX_WINDOW_MS) return
     // An ask the dice already answered needs no correction: a resolved roll
     // after that message means the gate was satisfied, not forgotten.
     const newestRollAt = rolls.reduce(
-      (newest, row) => Math.max(newest, Date.parse(row.createdAt ?? '') || 0),
+      (newest, row) => Math.max(newest, recordTime(row.createdAt)),
       0,
     )
     if (newestRollAt > answeredAt) return
@@ -395,7 +396,7 @@ export function GmConsolePanel({
     const alreadyOpened = threadRows.some(
       (row) =>
         row.data.role === 'assistant' &&
-        (Date.parse(row.createdAt ?? '') || 0) > openedAt,
+        recordTime(row.createdAt) > openedAt,
     )
     if (alreadyOpened) {
       openedBeat.current = openBeatId

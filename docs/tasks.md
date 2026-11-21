@@ -1168,6 +1168,16 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       when you owed a move; the round-counter reading re-lit it permanently. —
       2026-11-21 (screenshot: line visible on the waiting window only)
 
+- [x] `P5.46` Record timestamps are read by shape, not by assumption: `recordTime`
+      accepts ISO text, epoch ms, epoch s and `Date`, and every comparison now uses
+      it (awaiting line, correction window, opening-beat guard, thread ordering,
+      fallback-stat window, server history sort and roll-batch selection). The bug:
+      `c_roll_logs` carries epoch numbers while `c_gm_messages` carries ISO text, so
+      `Date.parse(number)` → `NaN` → `0` made every timestamp equal — the awaiting
+      line read "the GM spoke after your move" for a player who had just sent.
+      — 2026-11-21 (6 `recordTime` tests + a numeric-timestamp `moveDue` case, 349
+      total)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.
