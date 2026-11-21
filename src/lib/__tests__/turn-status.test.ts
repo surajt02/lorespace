@@ -76,3 +76,17 @@ describe('moveDue with numeric timestamps', () => {
     expect(moveDue({ events, myName: 'Vesper' })).toBe(false)
   })
 })
+
+describe('moveDue with record envelopes', () => {
+  it('reads role and speaker from data (the shape the page actually passes)', () => {
+    const at = (iso: string) => ({ createdAt: Date.parse(iso) })
+    const events = [
+      { data: { role: 'assistant', characterName: 'Game Master' }, ...at('2026-01-01T00:00:00Z') },
+      { data: { role: 'user', characterName: 'Vesper' }, ...at('2026-01-01T00:00:05Z') },
+    ]
+    // Vesper moved after the GM: nothing is due. Reading only flattened fields
+    // made every event invisible and answered `true` forever (P5.47).
+    expect(moveDue({ events, myName: 'Vesper' })).toBe(false)
+    expect(moveDue({ events, myName: 'Kaelen' })).toBe(true)
+  })
+})

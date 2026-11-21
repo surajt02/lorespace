@@ -1178,6 +1178,20 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       — 2026-11-21 (6 `recordTime` tests + a numeric-timestamp `moveDue` case, 349
       total)
 
+- [x] `P5.47` The awaiting line reads the shape the page actually passes: `/home`
+      handed raw record envelopes (`{ data: { role, characterName } }`) to a helper
+      that expected flattened fields, so every event was invisible and "a move is
+      due" answered `true` forever. `moveDue` now accepts both shapes (and the call
+      site maps explicitly). — 2026-11-21 (envelope test; live probe: line hides for
+      the sender, stays on the waiting player)
+- [x] `P5.48` The GM never shows the machinery: the finished turn is split into
+      sentences (abbreviation-aware, so "Mr. Peanut" stays one), and every sentence
+      that mentions the engine — snapshot, request_check, roll-logs, pending*,
+      actedRound, roundNumber, "I armed…", a bare `DC 13` — is dropped before
+      persisting. Observed leaks: "I armed the WIS check for Mr. Peanut at DC 13;
+      no check was owed on their row before this." and "The snapshot shows…". If
+      nothing narrative survives, nothing is persisted. — 2026-11-21 (6 tests)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.

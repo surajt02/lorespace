@@ -56,6 +56,7 @@ import type { ActionResult, ActionTools, QueryActionData, VerifyResult } from 'd
 import { buildSystemPrompt, buildTools } from '../ai/tools.js'
 import { DEFAULT_CAMPAIGN_ID } from '../constants.js'
 import { assistantProse } from '../lib/assistant-prose.js'
+import { stripMechanicsTalk } from '../lib/mechanics-talk.js'
 import { recordTime } from '../lib/record-time.js'
 import { buildRollBatchPrompt, isDuplicateRollBatch, type RollBatchRow } from '../lib/gm-prompts.js'
 import { pendingOf } from '../lib/pending-check.js'
@@ -599,7 +600,12 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
       // tool can end on an empty step. Recover the turn's prose from every step
       // (`P5.41`) — and never write an empty `content`, which the record layer
       // rejects as a missing required field, leaving the player with no reply.
-      const prose = assistantProse(text, responseMessages)
+      const rawProse = assistantProse(text, responseMessages)
+      // The player never sees the engine's side of the screen (`P5.48`).
+      const { text: prose, removed } = stripMechanicsTalk(rawProse)
+      if (removed > 0) {
+        console.warn(`[gm-chat] stripped ${String(removed)} machinery sentence(s) from the turn`)
+      }
       if (prose === '' && parts.length === 0) {
         console.warn('[gm-chat] FINISH empty turn, skipping persist')
         await restoreRollClaim()

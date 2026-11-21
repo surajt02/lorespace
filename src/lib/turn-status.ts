@@ -29,6 +29,13 @@ export interface TurnEvent {
   role?: unknown
   characterName?: unknown
   createdAt?: unknown
+  /**
+   * A raw record envelope (`RecordData<GmMessageRow>`) carries the same fields
+   * under `data`. Both shapes are accepted: passing an envelope to a reader that
+   * expected flattened fields made every event invisible, so "is a move due"
+   * answered `true` forever (`P5.47`).
+   */
+  data?: { role?: unknown; characterName?: unknown } | null
 }
 
 /** The speaker an engine beat is stored under; a beat is not a move. */
@@ -38,8 +45,16 @@ function at(event: TurnEvent): number {
   return recordTime(event.createdAt)
 }
 
+function roleOf(event: TurnEvent): string {
+  if (typeof event.role === 'string') return event.role
+  const nested = event.data?.role
+  return typeof nested === 'string' ? nested : ''
+}
+
 function speaker(event: TurnEvent): string {
-  return typeof event.characterName === 'string' ? event.characterName.trim() : ''
+  const direct = typeof event.characterName === 'string' ? event.characterName : ''
+  const nested = typeof event.data?.characterName === 'string' ? event.data.characterName : ''
+  return (direct || nested).trim()
 }
 
 /**
@@ -71,11 +86,11 @@ export function moveDue({
   for (const event of events) {
     const when = at(event)
     if (when === 0) continue
-    if (event.role === 'assistant') {
+    if (roleOf(event) === 'assistant') {
       if (when > lastGmAt) lastGmAt = when
       continue
     }
-    if (event.role !== 'user') continue
+    if (roleOf(event) !== 'user') continue
     const who = speaker(event)
     // A beat is the engine talking to itself, never a player's move.
     if (who === '' || who === BEAT_SENTINEL) continue

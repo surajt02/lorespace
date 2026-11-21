@@ -250,7 +250,14 @@ export default function HomePage() {
   // GM has spoken since your last move (`moveDue`), so the line clears the moment
   // you send and returns when the GM answers — including on a solo table.
   const awaitingMove = isSignedIn
-    ? moveDue({ events: gmRecords, myName: myCharacter?.data.name })
+    ? moveDue({
+        events: gmRecords.map((record) => ({
+          role: record.data.role,
+          characterName: record.data.characterName,
+          createdAt: record.createdAt,
+        })),
+        myName: myCharacter?.data.name,
+      })
     : false
   // Whether anybody at the table owes a check. The console's corrective beat for
   // a narrated-but-unregistered roll is suppressed while one exists, so it cannot
