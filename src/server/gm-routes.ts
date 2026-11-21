@@ -348,6 +348,7 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
         synthetic?: unknown
         transient?: unknown
         rollTurn?: unknown
+        opening?: unknown
         onlineCharacterNames?: unknown
       }>()
       .catch(
@@ -359,6 +360,7 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
             synthetic?: unknown
             transient?: unknown
             rollTurn?: unknown
+            opening?: unknown
             onlineCharacterNames?: unknown
           }),
       )
@@ -392,6 +394,9 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
     // and a standing "answer with a tool call and nothing else" in the thread
     // silences every later turn (the failure this flag exists to prevent).
     const transient = body.transient === true
+    // The opening beat sets the scene and nothing else (`P5.44`): the collect is
+    // read-only, so a check cannot be requested and no record can move.
+    const opening = body.opening === true
 
     // A caller that names no model gets the console's default, not the catalog's:
     // the catalog default (Opus) is refused on this app's plan, which turned a
@@ -564,12 +569,18 @@ export function registerGmRoutes(app: Hono<AppContext>, resolveAuth: ResolveAuth
         202,
       )
     }
-    const tools = buildTools(
+    const allTools = buildTools(
       createUserToolExecutor(c.env, auth.userId, c.req.raw.signal, {
         room: `app:${c.env.DEEPSPACE_APP_ID}`,
       }),
       { env: c.env, userId: auth.userId, request: c.req.raw, presentCharacterNames },
     )
+    // The opening turn gets the read tool alone: the scene is set before anyone
+    // touches it, so `request_check` and every write are absent, not merely
+    // discouraged by the prompt.
+    const tools = opening
+      ? { get_campaign_snapshot: allTools.get_campaign_snapshot }
+      : allTools
 
     // Allocated before streaming so the client can tag its in-flight overlay
     // with the same id the persisted row will carry.

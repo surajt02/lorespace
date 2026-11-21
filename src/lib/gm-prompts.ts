@@ -61,10 +61,12 @@ export function buildOpeningPrompt(progress: string, sceneTitle?: string): strin
   return [
     `Begin the campaign at ${where}${named}.`,
     'Read the campaigns row and the party before you speak: the location, the atmosphere, the scene summary, the active DC and the character sheets.',
-    'Narrate where the party is, what they can see and what is at stake in three or four sentences, then stop and say what the first decision or check is.',
-    'Do not roll for anyone and do not state a dice result — the players roll, and you verify it in roll-logs.',
+    'This first turn sets the scene and nothing else: describe where the party is, what they can see, what they can hear and what waits for them, in three or four sentences.',
+    'Do not call request_check, do not ask anyone for a roll, do not resolve an action and do not write to any record - this turn is the world before the players touch it.',
+    'End by asking the party what they do.',
   ].join(' ')
 }
+
 
 /**
  * One roll as the route selects it out of `roll-logs`: the row id to verify

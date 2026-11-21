@@ -128,6 +128,8 @@ interface QueuedTurn {
   transient?: boolean
   /** A resolved-roll turn: the route owns its content and its claim. */
   rollTurn?: boolean
+  /** The campaign's opening beat: scene-setting, read-only tools (`P5.44`). */
+  opening?: boolean
 }
 
 /** A rendered turn, live or preview, in one shape so the markup has one branch. */
@@ -278,13 +280,21 @@ export function GmConsolePanel({
     synthetic = false,
     transient = false,
     rollTurn = false,
+    opening = false,
   ) => {
     const trimmed = content.trim()
     if (trimmed === '') return
     seq.current += 1
     setQueue((pending) => [
       ...pending,
-      { id: seq.current, content: trimmed, synthetic, transient, ...(rollTurn ? { rollTurn } : {}) },
+      {
+        id: seq.current,
+        content: trimmed,
+        synthetic,
+        transient,
+        ...(rollTurn ? { rollTurn } : {}),
+        ...(opening ? { opening } : {}),
+      },
     ])
   }
 
@@ -307,6 +317,7 @@ export function GmConsolePanel({
       synthetic: next.synthetic,
       ...(next.transient ? { transient: true } : {}),
       ...(next.rollTurn ? { rollTurn: true } : {}),
+      ...(next.opening ? { opening: true } : {}),
       modelId,
       onlineCharacterNames,
     })
@@ -391,7 +402,8 @@ export function GmConsolePanel({
       return
     }
     openedBeat.current = openBeatId
-    enqueue(buildOpeningPrompt(progress ?? ''), true)
+    // Opening: synthetic, and flagged so the route exposes read-only tools.
+    enqueue(buildOpeningPrompt(progress ?? ''), true, false, false, true)
     // `enqueue` is stable in behaviour; see the roll effect above.
   }, [openBeatId, progress, signedIn, threadRows])
 

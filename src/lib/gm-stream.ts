@@ -59,6 +59,11 @@ export interface GmTurnRequest {
   /** The selected model id (`localStorage['deepspace-ai-model']`). */
   modelId?: string
   /**
+   * The campaign's opening beat (`P5.44`): scene-setting only. The route exposes
+   * the read tool alone, so the turn cannot ask for a check or write anything.
+   */
+  opening?: boolean
+  /**
    * The characters playing right now (you plus present peers, `P5.28`). The
    * route filters the GM's snapshot to this set, so an offline character is a
    * name on the roster and nothing more.
@@ -134,6 +139,7 @@ export function useGmStream({ onTurnEnd }: UseGmStreamOptions = {}): GmStream {
           ...(turn.synthetic ? { synthetic: true } : {}),
           ...(turn.rollTurn ? { rollTurn: true } : {}),
           ...(turn.transient ? { transient: true } : {}),
+          ...(turn.opening ? { opening: true } : {}),
           ...(turn.modelId ? { modelId: turn.modelId } : {}),
           ...(turn.onlineCharacterNames && turn.onlineCharacterNames.length > 0
             ? { onlineCharacterNames: turn.onlineCharacterNames }

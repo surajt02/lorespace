@@ -111,37 +111,22 @@ describe('buildRollBatchPrompt', () => {
 })
 
 describe('buildOpeningPrompt', () => {
-  const prompt = buildOpeningPrompt('Act I · Scene 2 of 5')
-
-  it('opens at the act and scene the engine reports', () => {
+  it('sets the scene and stops, naming the act and scene', () => {
+    const prompt = buildOpeningPrompt('Act I · Scene 2 of 5', 'The Rune-Ward')
     expect(prompt).toContain('Act I · Scene 2 of 5')
-    expect(prompt).toMatch(/^Begin the campaign at /)
+    expect(prompt).toContain('The Rune-Ward')
+    expect(prompt).toMatch(/sets the scene/)
+    expect(prompt).toMatch(/asking the party what they do/)
   })
 
-  it('asks for the narration and then a decision or a check', () => {
-    expect(prompt).toMatch(/[Nn]arrate/)
-    expect(prompt).toMatch(/decision or check/)
-    expect(prompt).toContain('campaigns row')
+  it('forbids a check or a write on the opening turn', () => {
+    // P5.44: a fresh campaign opened with "roll WIS" before anyone had acted.
+    const prompt = buildOpeningPrompt('Act I · Scene 1 of 5')
+    expect(prompt).toContain('Do not call request_check')
+    expect(prompt).toMatch(/do not ask anyone for a roll/)
+    expect(prompt).toMatch(/this turn is the world before the players touch it/)
   })
 
-  it('never invents a roll', () => {
-    expect(prompt).not.toMatch(/d20/)
-    expect(prompt).not.toMatch(/\bDC \d+/)
-    expect(prompt).not.toMatch(/success|failure|critical/i)
-    expect(prompt).toMatch(/[Dd]o not roll/)
-  })
-
-  it('names the scene title when one is passed, and stays readable without it', () => {
-    expect(buildOpeningPrompt('Act II · Scene 3 of 5', 'The Sentinel')).toContain(
-      'Act II · Scene 3 of 5 (The Sentinel)',
-    )
-    // A blank label must not become an empty sentence or a placeholder.
-    for (const label of ['', '   ']) {
-      const blank = buildOpeningPrompt(label)
-      expect(blank).toContain('the opening scene')
-    }
-    expect(buildOpeningPrompt('Act I · Scene 1 of 5', '  ')).not.toContain('()')
-  })
 })
 
 describe('unresolvedRolls', () => {

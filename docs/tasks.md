@@ -1149,6 +1149,14 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       after the GM's last turn), and disabled while a turn streams. — 2026-11-21
       (5 `canContinue` tests, builder test, screenshots at 1440×900 and 768×1024)
 
+- [x] `P5.44` A new campaign opens on the scene, not on a check: the opening beat
+      is flagged `opening`, the route exposes the read tool **alone** for it (so
+      `request_check` and every write are absent, not merely discouraged), and
+      `buildOpeningPrompt` says this turn sets the scene and nothing else, ending
+      by asking the party what they do. Observed: a fresh campaign immediately
+      requested `wis` 12 on joeblo. — 2026-11-21 (rewritten opening tests, 351
+      total)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.
