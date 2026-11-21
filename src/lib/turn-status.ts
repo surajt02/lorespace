@@ -113,3 +113,40 @@ export function ownsRollTurn({
   if (me === '') return true
   return roller === me
 }
+
+/**
+ * May this viewer pass their turn with one click? (`P5.43`)
+ *
+ * Hidden once their move is already in for this round — "I hold back and watch"
+ * is a real action, and two of them would be two actions in one round. The rule
+ * mirrors `awaitingMyMove` from the other side: a move is outstanding when the GM
+ * has not spoken since the viewer last did.
+ */
+export function canContinue({
+  events,
+  myName,
+}: {
+  events: readonly TurnEvent[]
+  myName: string | undefined
+}): boolean {
+  const me = myName?.trim() ?? ''
+  if (me === '') return false
+
+  let lastGmAt = 0
+  let myLastMoveAt = 0
+  for (const event of events) {
+    const when = at(event)
+    if (when === 0) continue
+    if (event.role === 'assistant') {
+      if (when > lastGmAt) lastGmAt = when
+      continue
+    }
+    if (event.role !== 'user') continue
+    const who = speaker(event)
+    if (who === '' || who === BEAT_SENTINEL) continue
+    if (who === me && when > myLastMoveAt) myLastMoveAt = when
+  }
+
+  // A move is due unless the viewer has already taken one since the GM's word.
+  return myLastMoveAt === 0 || myLastMoveAt < lastGmAt
+}

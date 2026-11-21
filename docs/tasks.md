@@ -1141,6 +1141,14 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       logged `prose-free turn` and restored the claim, but nothing retried.
       — 2026-11-21 (three `ownsRollTurn` tests, 347 total)
 
+- [x] `P5.43` A `CONTINUE` button for a player with nothing to add: one click
+      sends a real player turn ("I hold back and watch what happens"), so the round
+      marks them and the GM answers the batch without anyone typing it. Chrome
+      micro-button above the composer (`gm-continue`); hidden once the viewer's move
+      is already in for the round (`canContinue`: a move is due unless they acted
+      after the GM's last turn), and disabled while a turn streams. — 2026-11-21
+      (5 `canContinue` tests, builder test, screenshots at 1440×900 and 768×1024)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.

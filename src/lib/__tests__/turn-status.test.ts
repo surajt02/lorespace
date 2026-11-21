@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { awaitingMyMove, ownsRollTurn, waitingLabel } from '@/lib/turn-status'
+import { awaitingMyMove, canContinue, ownsRollTurn, waitingLabel } from '@/lib/turn-status'
 
 /**
  * `P5.34`/`P5.37`: the line means "the table is waiting on you", not "you are
@@ -85,5 +85,38 @@ describe('ownsRollTurn', () => {
 
   it('ignores whitespace', () => {
     expect(ownsRollTurn({ newestRollName: ' Vesper ', myName: 'Vesper' })).toBe(true)
+  })
+})
+
+describe('canContinue', () => {
+  it('offers the pass while a move is outstanding', () => {
+    const events = [gm('2026-01-01T00:00:00Z')]
+    expect(canContinue({ events, myName: 'Vesper' })).toBe(true)
+  })
+
+  it('hides it once this player has moved since the GM spoke', () => {
+    const events = [gm('2026-01-01T00:00:00Z'), move('Vesper', '2026-01-01T00:00:05Z')]
+    expect(canContinue({ events, myName: 'Vesper' })).toBe(false)
+    // The other player still owes theirs.
+    expect(canContinue({ events, myName: 'Kaelen' })).toBe(true)
+  })
+
+  it('offers it again after the GM answers', () => {
+    const events = [
+      gm('2026-01-01T00:00:00Z'),
+      move('Vesper', '2026-01-01T00:00:05Z'),
+      gm('2026-01-01T00:00:10Z'),
+    ]
+    expect(canContinue({ events, myName: 'Vesper' })).toBe(true)
+  })
+
+  it('offers it before the story opens', () => {
+    expect(canContinue({ events: [], myName: 'Vesper' })).toBe(true)
+  })
+
+  it('ignores beats and needs a name', () => {
+    const events = [gm('2026-01-01T00:00:00Z'), beat('2026-01-01T00:00:05Z')]
+    expect(canContinue({ events, myName: 'Vesper' })).toBe(true)
+    expect(canContinue({ events, myName: undefined })).toBe(false)
   })
 })

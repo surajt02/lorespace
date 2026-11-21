@@ -230,3 +230,15 @@ export function isDuplicateRollBatch({
   if (previousAgeMs === null || !Number.isFinite(previousAgeMs)) return false
   return previousAgeMs >= 0 && previousAgeMs <= windowMs
 }
+
+/**
+ * The `CONTINUE` button's move (`P5.43`).
+ *
+ * A player who has nothing to add still has to act for the round to close. Rather
+ * than typing "I wait to see the result" every time, one click sends this — a real
+ * player turn, so it marks the round and the GM answers the batch. First person
+ * and in-world, like every other move; the route attributes it by field.
+ */
+export function buildContinuePrompt(): string {
+  return 'I hold back and watch what happens.'
+}

@@ -32,13 +32,14 @@ import { Badge, Popover, PopoverContent, PopoverTrigger } from '@/components/ui'
 import { DEFAULT_CAMPAIGN_ID } from '@/constants'
 import {
   buildCheckFixPrompt,
+  buildContinuePrompt,
   buildOpeningPrompt,
   requestsRoll,
   statNamedInText,
   unresolvedRolls,
 } from '@/lib/gm-prompts'
 import { useGmStream } from '@/lib/gm-stream'
-import { ownsRollTurn } from '@/lib/turn-status'
+import { canContinue, ownsRollTurn } from '@/lib/turn-status'
 import type { RollLogRow } from '@/lib/preview-data'
 import { cn } from '@/lib/utils'
 
@@ -405,6 +406,25 @@ export function GmConsolePanel({
 
   const canSend = signedIn && input.trim().length > 0 && !isLoading
 
+  // "I have nothing to add" (`P5.43`): one click instead of typing it every
+  // round. Hidden once this player's move is already in — passing twice would be
+  // two actions in one round.
+  const canPassTurn =
+    signedIn &&
+    canContinue({
+      events: threadRows.map((row) => ({
+        role: row.data.role,
+        characterName: row.data.characterName,
+        createdAt: row.createdAt,
+      })),
+      myName: characterName,
+    })
+
+  function passTurn() {
+    if (!canPassTurn || isLoading) return
+    enqueue(buildContinuePrompt())
+  }
+
   function submit() {
     if (!canSend) return
     const content = input.trim()
@@ -480,6 +500,22 @@ export function GmConsolePanel({
       {error && (
         <div role="alert" className="shrink-0 border-t border-destructive/40 px-3 py-2">
           <p className="text-[12px] leading-relaxed text-destructive">{error.message}</p>
+        </div>
+      )}
+
+      {/* One click for "I wait and watch" (`P5.43`): a real player turn, so the
+          round closes and the GM answers the batch without anyone typing it. */}
+      {canPassTurn && (
+        <div className="shrink-0 px-3 pt-1.5">
+          <button
+            type="button"
+            data-testid="gm-continue"
+            onClick={passTurn}
+            disabled={isLoading}
+            className="border border-border px-2 py-1 font-pixel text-[10px] uppercase tracking-wide text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:pointer-events-none disabled:opacity-40"
+          >
+            continue
+          </button>
         </div>
       )}
 

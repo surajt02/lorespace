@@ -4,6 +4,7 @@ import {
   buildCheckFixPrompt,
   buildOpeningPrompt,
   buildRollBatchPrompt,
+  buildContinuePrompt,
   isDuplicateRollBatch,
   requestsRoll,
   statNamedInText,
@@ -246,5 +247,14 @@ describe('isDuplicateRollBatch', () => {
   it('allows when there is no previous row or no readable age', () => {
     expect(isDuplicateRollBatch({ prompt, previousContent: null, previousAgeMs: 10 })).toBe(false)
     expect(isDuplicateRollBatch({ prompt, previousContent: prompt, previousAgeMs: null })).toBe(false)
+  })
+})
+
+describe('buildContinuePrompt', () => {
+  it('is a first-person move, not an instruction to the GM', () => {
+    const prompt = buildContinuePrompt()
+    expect(prompt).toMatch(/^I /)
+    // Attribution is a field on the request; the text never carries a name.
+    expect(prompt).not.toContain(':')
   })
 })
