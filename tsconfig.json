@@ -10,11 +10,21 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["@cloudflare/workers-types", "vite/client"],
+    "types": [
+      "@cloudflare/workers-types",
+      "vite/client",
+      "node"
+    ],
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": [
+        "./src/*"
+      ]
     }
   },
-  "include": ["src", "worker.ts"]
+  "include": [
+    "src",
+    "worker.ts",
+    "tests"
+  ]
 }

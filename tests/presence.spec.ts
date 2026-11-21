@@ -20,6 +20,7 @@
 import { test, expect, loadAllTestAccounts } from 'deepspace/testing'
 import type { Page } from '@playwright/test'
 import { captureConsoleErrors } from './helpers/errors'
+import { requestCheck } from './helpers/check-gate'
 
 // Same skip as `collab.spec.ts`: a machine with no account pool is a normal
 // fresh checkout, and `users()` throws there — turning "you have no pool yet"
@@ -48,7 +49,11 @@ function normalise(text: string): string {
  * character skips straight to the sheet, so wait for either surface and only
  * fill the form when it is the one that rendered.
  */
-async function ensureCharacter(page: Page, name: string, preset: 'vanguard' | 'shadowblade') {
+async function ensureCharacter(
+  page: Page,
+  name: string,
+  preset: 'vanguard' | 'shadowblade',
+): Promise<{ characterId: string | null }> {
   const forge = page.getByTestId('character-forge')
   const sheet = page.getByTestId('character-sheet')
   await expect(forge.or(sheet)).toBeVisible({ timeout: 20_000 })
@@ -61,6 +66,7 @@ async function ensureCharacter(page: Page, name: string, preset: 'vanguard' | 's
   // Forged through the server action and rendered from the record it returns,
   // so this is also the wait for the row to be readable by the other window.
   await expect(sheet).toBeVisible({ timeout: 20_000 })
+  return { characterId: await sheet.getAttribute('data-character-id') }
 }
 
 /** The account this browser is signed in as: the nav chip shows `name ||
@@ -81,12 +87,10 @@ async function sheetName(page: Page): Promise<string> {
   return (await heading.innerText()).trim()
 }
 
-/** The roster row that is not this window's own (`roster-self` marks self).
- *  Split out because the count alone proves nothing: a peer with no readable
- *  character row still renders, as `No adventurer`, and would satisfy a count
- *  of two. */
-function peerRow(page: Page) {
-  return page.getByTestId('roster-member').filter({ hasNot: page.getByTestId('roster-self') })
+/** The roster row naming a specific peer. Offline party members also render
+ *  (ADR 0029), so the proof is the name in a row, not a row count. */
+function peerRow(page: Page, name: string) {
+  return page.getByTestId('roster-member').filter({ hasText: name })
 }
 
 /** The banner's visible text, whitespace-normalised: who rolled, the numbers,
@@ -130,7 +134,7 @@ function probePresenceSocket(page: Page, path: string): Promise<SocketProbe> {
   }, path)
 }
 
-test('one roll lands in both windows without a reload', async ({ users }) => {
+test('one roll lands in both windows without a reload', async ({ users, request }) => {
   // The waits below are generous on purpose (presence connects asynchronously).
   // Their worst case is larger than the file's default budget, and a slow
   // machine should not read as a broken table.
@@ -154,7 +158,7 @@ test('one roll lands in both windows without a reload', async ({ users }) => {
 
   // Only used when the forge form is up: an account that already has a
   // character keeps its own name, which the sheet heading is read from below.
-  await Promise.all([
+  const [sheetA] = await Promise.all([
     ensureCharacter(a.page, 'Kaelen', 'vanguard'),
     ensureCharacter(b.page, 'Vesper', 'shadowblade'),
   ])
@@ -166,8 +170,6 @@ test('one roll lands in both windows without a reload', async ({ users }) => {
   // naming the *other's* character. That last part is the precondition for the
   // banner comparison below: the peer's name comes from its `characters` read,
   // so before this holds the peer banner can only say `No adventurer`.
-  await expect(a.page.getByTestId('roster-member')).toHaveCount(2, { timeout: 15_000 })
-  await expect(b.page.getByTestId('roster-member')).toHaveCount(2, { timeout: 15_000 })
   for (const page of [a.page, b.page]) {
     await expect(page.getByTestId('roster-self')).toHaveCount(1, { timeout: 15_000 })
   }
@@ -175,13 +177,21 @@ test('one roll lands in both windows without a reload', async ({ users }) => {
     [a.page, nameB],
     [b.page, nameA],
   ] as const) {
-    await expect(peerRow(page)).toHaveCount(1, { timeout: 15_000 })
-    await expect(peerRow(page)).toContainText(peerName, { timeout: 15_000 })
-    await expect(peerRow(page)).not.toContainText('No adventurer')
+    await expect(peerRow(page, peerName)).toBeVisible({ timeout: 15_000 })
+    await expect(peerRow(page, peerName)).not.toContainText('No adventurer')
+    // Offline party members are roster rows by design (ADR 0029).
+    expect(await page.getByTestId('roster-member').count()).toBeGreaterThanOrEqual(2)
   }
 
   // A rolls. Nothing is drawn in the browser: the card calls the action and
-  // renders the server's payload (ADR 0005).
+  // renders the server's payload (ADR 0005). The engine first has to ask for a
+  // check (ADR 0028/0030) — the owner-only writer is the only door members do
+  // not have, so the test uses it instead of waiting on the live model.
+  if (!sheetA.characterId) throw new Error('the forged sheet carried no character id')
+  await requestCheck(request, { characterId: sheetA.characterId, stat: 'dex', dc: 12 })
+  await expect(a.page.getByTestId('stat-card-dex')).toHaveAttribute('data-pending', 'true', {
+    timeout: 20_000,
+  })
   await a.page.getByTestId('stat-card-dex').click()
   const fromRoller = await bannerText(a.page)
   expect(fromRoller).toMatch(ROLL_LINE)
@@ -241,7 +251,7 @@ test('the campaign presence scope refuses an anonymous socket', async ({ page, r
   expect(forgedPreview.status()).toBe(401)
 })
 
-test('the roll banner reaches a signed-out window', async ({ users, browser }) => {
+test('the roll banner reaches a signed-out window', async ({ users, browser, request }) => {
   // The reader's complaint that made this test: a signed-out incognito window
   // saw the feed update but never the banner. Presence stays membership-gated
   // (ADR 0006) and no socket is opened here; the banner is the `roll-logs` row
@@ -249,7 +259,12 @@ test('the roll banner reaches a signed-out window', async ({ users, browser }) =
   const [a] = await users(1)
   await a.page.goto('/home')
   await expect(a.page.getByTestId('workspace-shell')).toBeVisible({ timeout: 20_000 })
-  await ensureCharacter(a.page, 'Kaelen', 'vanguard')
+  const sheetA = await ensureCharacter(a.page, 'Kaelen', 'vanguard')
+  if (!sheetA.characterId) throw new Error('the forged sheet carried no character id')
+  await requestCheck(request, { characterId: sheetA.characterId, stat: 'dex', dc: 12 })
+  await expect(a.page.getByTestId('stat-card-dex')).toHaveAttribute('data-pending', 'true', {
+    timeout: 20_000,
+  })
 
   const anonymous = await browser.newContext()
   const watcher = await anonymous.newPage()

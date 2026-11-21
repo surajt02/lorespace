@@ -211,11 +211,13 @@ function FeedReadError() {
 /** Ready and empty — a real table with no rolls in it yet, not a failed read. */
 function FeedEmpty() {
   return (
-    <EmptyState
-      icon={<Dices />}
-      title="No rolls yet"
-      description="Rolls land here as the party makes them."
-      className="px-3 py-10"
-    />
+    <div data-testid="feed-empty">
+      <EmptyState
+        icon={<Dices />}
+        title="No rolls yet"
+        description="Rolls land here as the party makes them."
+        className="px-3 py-10"
+      />
+    </div>
   )
 }

@@ -248,6 +248,7 @@ export function CharacterSheetPanel({
   return (
     <SheetBody
       character={character.data}
+      characterId={live ? character.recordId : undefined}
       carried={items.length}
       pending={pending}
       fallbackStat={fallbackStat}
@@ -329,6 +330,7 @@ function SheetSkeleton() {
  *  stay display-only (signed-out preview, or a sheet that is not the viewer's). */
 function SheetBody({
   character,
+  characterId,
   carried,
   pending,
   fallbackStat,
@@ -337,6 +339,9 @@ function SheetBody({
   rollingStat,
 }: {
   character: CharacterRow
+  /** The record id, live only. A test hook for owner-scoped cleanup; preview
+   *  rows have no record behind them, so they expose nothing. */
+  characterId?: string
   carried: number
   pending: PendingCheck | null
   fallbackStat: AbilityScoreKey | null
@@ -361,7 +366,11 @@ function SheetBody({
   const hasCheckLine = pending !== null || fallbackStat !== null || owedElsewhere !== null
 
   return (
-    <section data-testid="character-sheet" className="pixel-frame bg-card p-3">
+    <section
+      data-testid="character-sheet"
+      data-character-id={characterId}
+      className="pixel-frame bg-card p-3"
+    >
       <header className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h2 className="truncate text-base font-semibold text-foreground">{character.name}</h2>

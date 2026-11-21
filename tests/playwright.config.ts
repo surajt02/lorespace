@@ -22,6 +22,10 @@ export default defineConfig({
   testMatch: '**/*.spec.ts',
   timeout: 30_000,
   retries: 0,
+  // Every spec writes the one default campaign (characters, roll-logs,
+  // gm-messages). Parallel files would race on the same rows, so the suite is
+  // serial: correctness first for a demo that is read by hand afterwards.
+  workers: 1,
   use: {
     baseURL: BASE_URL,
     headless: true,

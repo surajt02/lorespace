@@ -1229,6 +1229,11 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
 - [ ] `P6.8` Rehearse the eight beats three times end to end, on the deployed
       URL, signed out then signed in, watching for console errors. Time it: the
       whole path must land inside five minutes.
+- [ ] `P6.9` Deterministic e2e check gate: `tests/helpers/check-gate.ts`
+      (`requestCheck` via the owner JWT in `.dev.vars`, `callAsPlayer`), a real
+      `feed-empty` test id in `ActionFeed`, and `workers: 1` so specs sharing the
+      default campaign do not race. Needed because stat cards are inert until a
+      check is requested (ADR 0028/0030) and no member-facing writer exists.
 
 ---
 

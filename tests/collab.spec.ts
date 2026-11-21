@@ -1,28 +1,26 @@
 /**
- * Multi-user collaboration spec — verifies two users sign in into
- * separate browser contexts and the app distinguishes them.
+ * Multi-user collaboration spec — the app contract, not the auth template.
  *
- * `users(2)` takes any two accounts from your pool, so this spec passes on a
- * fresh app with no setup beyond having two test accounts:
- *   npx deepspace test accounts list
- *   npx deepspace test accounts create --email a@deepspace.test --name "A" --password-stdin
+ * `presence.spec.ts` proves the presence gate and the banner path. This file
+ * proves the *table*: two distinct accounts, two forged adventurers, the roster
+ * showing the other player without a reload, one engine-requested check rolled
+ * in both windows, and the shared feed carrying the result.
  *
- * Ask for accounts *by name* (`users(['Alice', 'Bob'])`) only when the
- * behaviour under test depends on which identity acts — otherwise naming them
- * couples the spec to one machine's pool.
+ * The check is requested through the owner-only `applyGmMutation` action (the
+ * same writer the GM tool uses) because stat cards are inert until the engine
+ * records a check (ADR 0028/0030) and no member can write that column. That is
+ * test control, not a second product path; see `tests/helpers/check-gate.ts`.
  *
- * The `users` fixture handles sign-in caching (per-account storageState
- * persisted to `~/.deepspace/playwright-states/`), context creation, and
- * cleanup. No need to manage browser contexts manually.
+ * `users(2)` takes any two accounts from the pool, so the spec passes on a
+ * fresh app with two test accounts. Characters are created through the real
+ * Forge form and deleted through the real `deleteCharacter` action; roll-log
+ * rows are append-only evidence and remain after the run.
  */
 import { test, expect, loadAllTestAccounts } from 'deepspace/testing'
+import type { Page } from '@playwright/test'
+import { captureConsoleErrors } from './helpers/errors'
+import { callAsPlayer, requestCheck } from './helpers/check-gate'
 
-// A machine that has never created test accounts is the normal state of a
-// fresh checkout, and there `users()` throws — turning "you have no pool yet"
-// into three red tests about the app, which it is not. Skip the file instead
-// and say what creates the pool. The count is of accounts usable HERE: the
-// pool is global per developer, but passwords live only on the machine that
-// created the account.
 const usableTestAccounts = loadAllTestAccounts().length
 test.skip(
   usableTestAccounts < 2,
@@ -31,103 +29,150 @@ test.skip(
     '--password-stdin`, or fetch existing pool accounts with `npx deepspace test accounts recover --all`.',
 )
 
-test('each browser renders its own signed-in account', async ({ users }) => {
+/** `d20(14) + 3 = 17 vs DC 12` — banner and feed both spell it this way. */
+const ROLL_LINE = /d20\(\d+\) [+-] ?\d+ = \d+ vs DC \d+/
+
+function normalise(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+interface ForgedSheet {
+  created: boolean
+  characterId: string | null
+  name: string
+}
+
+/**
+ * Ensure this browser has a sheet and report whether this run made it, so the
+ * `finally` block deletes only test-created characters. Old accounts keep
+ * whichever adventurer they already have.
+ */
+async function ensureCharacter(
+  page: Page,
+  name: string,
+  preset: 'vanguard' | 'shadowblade',
+): Promise<ForgedSheet> {
+  const forge = page.getByTestId('character-forge')
+  const sheet = page.getByTestId('character-sheet')
+  await expect(forge.or(sheet)).toBeVisible({ timeout: 20_000 })
+
+  const created = await forge.isVisible()
+  if (created) {
+    await page.locator('#forge-name').fill(name)
+    await page.getByTestId(`forge-preset-${preset}`).click()
+  }
+  await expect(sheet).toBeVisible({ timeout: 20_000 })
+  await expect(sheet.locator('h2')).toHaveText(/\S/, { timeout: 20_000 })
+
+  return {
+    created,
+    characterId: await sheet.getAttribute('data-character-id'),
+    name: normalise(await sheet.locator('h2').innerText()),
+  }
+}
+
+async function deleteIfCreated(page: Page, sheet: ForgedSheet): Promise<void> {
+  if (!sheet.created || !sheet.characterId) return
+  await callAsPlayer(page, 'deleteCharacter', { characterId: sheet.characterId })
+}
+
+test('two players have separate adventurers and see each other in the roster', async ({
+  users,
+}) => {
   const [a, b] = await users(2)
+  const errorsA = captureConsoleErrors(a.page)
+  const errorsB = captureConsoleErrors(b.page)
+  const stamp = Date.now()
+  let sheetA: ForgedSheet | null = null
+  let sheetB: ForgedSheet | null = null
 
-  // /home is dynamic (under src/pages/(app)/), so it mounts the nav shell;
-  // '/' is the static landing and has no navigation.
-  await Promise.all([a.page.goto('/home'), b.page.goto('/home')])
+  try {
+    await Promise.all([a.page.goto('/home'), b.page.goto('/home')])
+    await Promise.all([
+      expect(a.page.getByTestId('app-navigation')).toBeVisible({ timeout: 20_000 }),
+      expect(b.page.getByTestId('app-navigation')).toBeVisible({ timeout: 20_000 }),
+    ])
 
-  // Email, not name. The page renders the *session's* `name || email`, while
-  // `user.name` here comes from the LOCAL account registry — and the two are
-  // not the same fact: a display name is optional, and an account recovered on
-  // another machine has none stored locally at all. The email is the credential
-  // the context signed in with, so it is the one identity both sides agree on,
-  // and asserting it proves the page is showing THIS browser's account.
-  // The two accounts are distinct, so two exact matches is also the proof that
-  // the contexts are not sharing one session.
-  for (const user of [a, b]) {
-    await expect(user.page.getByTestId('app-navigation')).toBeVisible({ timeout: 15_000 })
+    sheetA = await ensureCharacter(a.page, `__test-${stamp}__Kaelen`, 'vanguard')
+    sheetB = await ensureCharacter(b.page, `__test-${stamp}__Vesper`, 'shadowblade')
 
-    // The identity chip shows `name || email`. Its text is not predictable, but
-    // its presence is: something must be there once the profile has loaded.
-    // (It is `hidden sm:inline` in some templates, so assert text, not
-    // visibility.)
-    await expect(user.page.getByTestId('nav-user-name')).toHaveText(/\S/, { timeout: 15_000 })
+    // One character per account (ADR 0019); the party also carries offline
+    // members from earlier sessions (ADR 0029), so the proof is both names, not
+    // an exact roster size.
+    for (const [self, peer] of [
+      [a.page, sheetB.name],
+      [b.page, sheetA.name],
+    ] as const) {
+      await expect(self.getByTestId('roster-self')).toHaveCount(1)
+      await expect(self.getByTestId('roster-member').filter({ hasText: peer })).toBeVisible({
+        timeout: 20_000,
+      })
+      expect(await self.getByTestId('roster-member').count()).toBeGreaterThanOrEqual(2)
+    }
 
-    await user.page.getByRole('button', { name: 'Account menu' }).click()
-    await expect(user.page.getByTestId('nav-user-email')).toHaveText(user.email, {
-      timeout: 15_000,
-    })
+    expect(errorsA, 'window A console').toEqual([])
+    expect(errorsB, 'window B console').toEqual([])
+  } finally {
+    if (sheetA) await deleteIfCreated(a.page, sheetA).catch(() => {})
+    if (sheetB) await deleteIfCreated(b.page, sheetB).catch(() => {})
   }
 })
 
-test('API status page renders loading success and error states', async ({ users }) => {
-  const [user] = await users(1)
-  let shouldFail = false
-  let requestCount = 0
+test('a requested check rolls in both windows and lands in the shared feed', async ({
+  users,
+  request,
+}) => {
+  const [a, b] = await users(2)
+  const errorsA = captureConsoleErrors(a.page)
+  const errorsB = captureConsoleErrors(b.page)
+  const stamp = Date.now()
+  let sheetA: ForgedSheet | null = null
+  let sheetB: ForgedSheet | null = null
 
-  await user.page.route('**/api/integrations', async (route) => {
-    requestCount += 1
-    if (shouldFail) {
-      await route.fulfill({
-        status: 502,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: false, error: 'Catalog unavailable' }),
-      })
-      return
-    }
+  try {
+    await Promise.all([a.page.goto('/home'), b.page.goto('/home')])
+    await Promise.all([
+      expect(a.page.getByTestId('app-navigation')).toBeVisible({ timeout: 20_000 }),
+      expect(b.page.getByTestId('app-navigation')).toBeVisible({ timeout: 20_000 }),
+    ])
 
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ success: true, data: { integrations: { openai: {}, wikipedia: {} } } }),
+    sheetA = await ensureCharacter(a.page, `__test-${stamp}__Kaelen`, 'vanguard')
+    sheetB = await ensureCharacter(b.page, `__test-${stamp}__Vesper`, 'shadowblade')
+    if (!sheetA.characterId) throw new Error('the forged sheet carried no character id')
+
+    // The engine asks for DEX; only that card is live (ADR 0030).
+    await requestCheck(request, { characterId: sheetA.characterId, stat: 'dex', dc: 12 })
+    await expect(a.page.getByTestId('stat-card-dex')).toHaveAttribute('data-pending', 'true', {
+      timeout: 20_000,
     })
-  })
+    await expect(a.page.getByTestId('stat-card-dex')).toBeEnabled()
+    await expect(a.page.getByTestId('stat-card-str')).toBeDisabled()
 
-  await user.page.goto('/api-status')
-  await expect(user.page.getByText('Loading integration catalog...')).toBeVisible()
-  await expect(user.page.getByText('Integration catalog ready')).toBeVisible()
-  await expect(user.page.getByText('2 integrations available.')).toBeVisible()
+    await a.page.getByTestId('stat-card-dex').click()
 
-  shouldFail = true
-  await user.page.getByRole('button', { name: 'Refresh' }).click()
-  await expect(user.page.getByText('Catalog unavailable')).toBeVisible()
-  await expect(user.page.getByText('Showing the last loaded catalog')).toBeVisible()
-  await expect(user.page.getByText('Integration catalog ready')).toBeVisible()
+    const bannerA = a.page.getByTestId('roll-banner')
+    const bannerB = b.page.getByTestId('roll-banner')
+    await Promise.all([
+      expect(bannerA).toBeVisible({ timeout: 20_000 }),
+      expect(bannerB).toBeVisible({ timeout: 20_000 }),
+    ])
+    const lineA = normalise(await bannerA.innerText())
+    const lineB = normalise(await bannerB.innerText())
+    expect(lineA).toMatch(ROLL_LINE)
+    expect(lineA).toContain(sheetA.name)
+    expect(lineB).toBe(lineA)
 
-  const urlAfterFailure = user.page.url()
-  const requestsAfterFailure = requestCount
-  await user.page.getByRole('button', { name: 'Refresh' }).click()
-  await expect.poll(() => requestCount).toBeGreaterThan(requestsAfterFailure)
-  expect(user.page.url()).toBe(urlAfterFailure)
-})
+    // Bob's feed is the durable path (ADR 0021): the newest row names the
+    // roller and carries the same engine-computed line.
+    const firstEntry = b.page.getByTestId('feed-entry').first()
+    await expect(firstEntry).toBeVisible({ timeout: 20_000 })
+    await expect(firstEntry).toContainText(sheetA.name, { timeout: 20_000 })
+    await expect(firstEntry).toContainText(ROLL_LINE, { timeout: 20_000 })
 
-test('API status page shows local retry after first-load API failure', async ({ users }) => {
-  const [user] = await users(1)
-  let requestCount = 0
-
-  await user.page.route('**/api/integrations', async (route) => {
-    requestCount += 1
-    await route.fulfill({
-      status: 502,
-      contentType: 'application/json',
-      body: JSON.stringify({ success: false, error: 'Catalog unavailable' }),
-    })
-  })
-
-  await user.page.goto('/api-status')
-  await expect(user.page.getByText('Loading integration catalog...')).toBeVisible()
-  await expect(user.page.getByText('Could not load API data')).toBeVisible()
-  await expect(user.page.getByText('Retried 1 time automatically.')).toBeVisible()
-
-  const retryButton = user.page.getByRole('button', { name: 'Retry' })
-  await expect(retryButton).toBeVisible()
-
-  const urlAfterFailure = user.page.url()
-  const requestsAfterFailure = requestCount
-  await retryButton.click()
-  await expect.poll(() => requestCount).toBeGreaterThan(requestsAfterFailure)
-  expect(user.page.url()).toBe(urlAfterFailure)
+    expect(errorsA, 'window A console').toEqual([])
+    expect(errorsB, 'window B console').toEqual([])
+  } finally {
+    if (sheetA) await deleteIfCreated(a.page, sheetA).catch(() => {})
+    if (sheetB) await deleteIfCreated(b.page, sheetB).catch(() => {})
+  }
 })

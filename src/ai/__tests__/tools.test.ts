@@ -6,7 +6,7 @@ import { DEFAULT_CAMPAIGN_ID } from '../../constants'
 import type { Env } from '../../../worker.js'
 
 /**
- * The AI surface's tool set and prompt (`P5.2`, `P5.3`, `P5.5`, `P5.11`,
+ * The AI surface's tool set and prompt — `P5.2`, `P5.3`, `P5.5`, `P5.11`,
  * `P5.12`).
  *
  * Every tool `buildTools` returns is also auto-exposed over `/_deepspace/agent/*`

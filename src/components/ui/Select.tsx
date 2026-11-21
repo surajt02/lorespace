@@ -14,7 +14,7 @@ const SelectGroup = SelectPrimitive.Group
  * id/code. Deriving `items` here keeps every call site's Radix-style markup
  * unchanged while fixing the label.
  *
- * ⚠️ LIMITATION — SelectItems must be rendered INLINE: direct children,
+ * LIMITATION — SelectItems must be rendered INLINE: direct children,
  * `.map(...)` arrays, and fragments all work, but React cannot see inside
  * another component before it renders, so SelectItems produced by your own
  * wrapper (e.g. a `<StatusOptions/>` that returns them) are INVISIBLE to

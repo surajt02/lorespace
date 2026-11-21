@@ -57,6 +57,37 @@ test.describe('Smoke tests', () => {
     await expect(page.getByTestId('app-navigation')).toBeVisible({ timeout: 15000 })
   })
 
+  test('signed-out /home shows the campaign title and the preview table', async ({ page }) => {
+    // The product-preview contract (`home pattern:`, ADR 0014): this page is a
+    // full table before anyone signs in, not an empty shell behind an auth wall.
+    await page.goto('/home')
+    await expect(page.getByTestId('app-navigation')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('signed-out-banner')).toBeVisible({ timeout: 15000 })
+
+    // The page's <h1> lives in the scene banner and is the campaign title.
+    await expect(
+      page.getByTestId('scene-banner').getByRole('heading', { level: 1 }),
+    ).toHaveText('Chronicles of the Obsidian Vault')
+
+    const preview = page.getByTestId('preview-table')
+    await expect(preview).toBeVisible({ timeout: 15000 })
+    for (const panel of [
+      'party-roster',
+      'action-feed',
+      'character-sheet',
+      'inventory-panel',
+      'gm-stream',
+    ]) {
+      await expect(preview.getByTestId(panel)).toBeVisible()
+    }
+
+    // Content counts are deliberately not asserted: live characters switch the
+    // signed-out branch from fixtures to live rows (home.tsx `previewFromLiveRows`).
+    await expect(page).toHaveTitle(/LoreSpace/)
+    await expect(page.getByTestId('stat-card-dex')).toHaveCount(0)
+    await expect(page.getByTestId('start-campaign')).toHaveCount(0)
+  })
+
   test('sign-in button visible when logged out', async ({ page }) => {
     await page.goto('/home')
     await expect(page.getByTestId('nav-sign-in-button')).toBeVisible({ timeout: 15000 })

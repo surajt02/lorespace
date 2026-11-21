@@ -228,7 +228,7 @@ export function ChatPanel({
 
   const canSend = input.trim().length > 0 && !isLoading && !disabled
 
-  // Parent-queued prompt (`P5.7`): the chips and the automatic roll turn reach
+  // Parent-queued prompt — task `P5.7`: the chips and the automatic roll turn reach
   // the panel through this and nothing else, so the composer below stays the
   // SDK's own. The ref holds the last id sent, so a re-render with the same
   // prop — or a remount-less repeat — never sends twice; while a turn is in
