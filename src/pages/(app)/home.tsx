@@ -64,7 +64,8 @@ import { progressLabel } from '@/lib/campaign-arc'
 import { DEFAULT_CAMPAIGN_SEED, type CampaignRow } from '@/lib/campaign-seed'
 import { dcDisplay, owedElsewhere, pendingOf } from '@/lib/pending-check'
 import { requestsRoll, statNamedInText } from '@/lib/gm-prompts'
-import { awaitingMyMove } from '@/lib/turn-status'
+import { moveDue } from '@/lib/turn-status'
+import { useCompactViewport } from '@/lib/use-compact-viewport'
 import type { AbilityScoreKey } from '@/lib/party-presence'
 import {
   PREVIEW_CAMPAIGN,
@@ -133,6 +134,9 @@ export default function HomePage() {
   // True while the viewer is composing a GM message; `PartyPresenceBar`
   // broadcasts it as `isTypingAction` for the other windows' rosters (`P5.9`).
   const [gmComposing, setGmComposing] = useState(false)
+  // Tablet/short viewports show two feed rows and a compact scene header
+  // (`P5.38`, `P5.45`) — one query so the two decisions cannot disagree.
+  const compactViewport = useCompactViewport()
   // The characters actually playing (`P5.28`): reported by the presence bar and
   // handed to each GM turn, so the GM plays with who is here and nobody else.
   const [onlineCharacterNames, setOnlineCharacterNames] = useState<string[]>([])
@@ -241,12 +245,11 @@ export default function HomePage() {
     ? owedElsewhere(characterRecords, myCharacter?.recordId ?? '')
     : null
   // Whose move it is (ADR 0031, amended 2026-11-20): the console says it, so the
-  // GM does not have to name the players who owe one. "It is your move" means the
-  // table is blocked on you — someone else has moved since the GM last spoke and
-  // you have not — which is read from the thread (`awaitingMyMove`), so it clears
-  // the moment you send and never shows on a solo table.
+  // GM does not have to name the players who owe one. "Your move is due" means the
+  // GM has spoken since your last move (`moveDue`), so the line clears the moment
+  // you send and returns when the GM answers — including on a solo table.
   const awaitingMove = isSignedIn
-    ? awaitingMyMove({ events: gmRecords, myName: myCharacter?.data.name })
+    ? moveDue({ events: gmRecords, myName: myCharacter?.data.name })
     : false
   // Whether anybody at the table owes a check. The console's corrective beat for
   // a narrated-but-unregistered roll is suppressed while one exists, so it cannot
@@ -466,6 +469,7 @@ export default function HomePage() {
                   entries={feedEntries}
                   status={feedStatus}
                   expanded={feedExpanded}
+                  recentCount={compactViewport ? 2 : 4}
                   onToggleExpanded={() => {
                     setFeedExpanded((open) => !open)
                   }}

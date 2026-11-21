@@ -55,6 +55,7 @@ export function ActionFeed({
   status,
   expanded,
   onToggleExpanded,
+  recentCount = RECENT_COUNT,
 }: {
   entries: RecordData<RollLogRow>[]
   status: QueryStatus
@@ -63,9 +64,11 @@ export function ActionFeed({
    *  feed takes the column and scrolls (`P4.14`, `P4.19`). */
   expanded: boolean
   onToggleExpanded: () => void
+  /** Rows shown while minimised: 4 on a desktop, 2 on a tablet (`P5.45`). */
+  recentCount?: number
 }) {
-  const collapsible = entries.length > RECENT_COUNT
-  const visible = collapsible && !expanded ? entries.slice(0, RECENT_COUNT) : entries
+  const collapsible = entries.length > recentCount
+  const visible = collapsible && !expanded ? entries.slice(0, recentCount) : entries
 
   return (
     <section

@@ -1157,6 +1157,17 @@ Phase 2; RBAC hardening and the GM actions stay in Phase 2.
       requested `wis` 12 on joeblo. — 2026-11-21 (rewritten opening tests, 351
       total)
 
+- [x] `P5.45` The minimised feed shows **two** rows on a tablet (four on desktop):
+      `ActionFeed` takes `recentCount` and `/home` picks it from
+      `useCompactViewport()` — the same query the scene header uses
+      (`max-width:1023px` or `max-height:899px`), so the two responsive decisions
+      cannot disagree. — 2026-11-21
+- [x] `P5.34` amended: the awaiting line and the `CONTINUE` button now share one
+      predicate (`moveDue`): a move is due when the GM has spoken since your last
+      move. Requiring *another player* to have moved first hid the line exactly
+      when you owed a move; the round-counter reading re-lit it permanently. —
+      2026-11-21 (screenshot: line visible on the waiting window only)
+
 ## Phase 6 — Gates, tests, deploy
 
 - [ ] `P6.1` Mechanical grep gates (plan §Phase 6) all green; emoji sweep clean.

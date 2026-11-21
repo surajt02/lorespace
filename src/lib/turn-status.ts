@@ -41,13 +41,20 @@ function speaker(event: TurnEvent): string {
 }
 
 /**
- * True when the table is blocked on this player: an assistant turn has happened,
- * another character has moved since it, and this character has not.
+ * Is this player's move outstanding? (`P5.34` amended, `P5.43`)
  *
- * `myName` is required: without it there is no "you" to wait on, so the line
- * stays hidden rather than showing to everybody.
+ * "Your move is due" means the GM has spoken since your last move — or the story
+ * has not started and you have not moved yet. The line above the composer and the
+ * CONTINUE button are the same condition, from two sides: the line says you owe a
+ * move, the button lets you pass it.
+ *
+ * Read from the thread rather than the round counters, because the thread is the
+ * event the player performed: the line clears the moment you send (your row is
+ * newer than the GM's) and returns when the GM answers. The earlier reading — "you
+ * are behind the round" — re-lit it on every rollover and read as permanently on;
+ * requiring another player to have moved first hid it exactly when you were due.
  */
-export function awaitingMyMove({
+export function moveDue({
   events,
   myName,
 }: {
@@ -59,8 +66,6 @@ export function awaitingMyMove({
 
   let lastGmAt = 0
   let myLastMoveAt = 0
-  let othersLastMoveAt = 0
-
   for (const event of events) {
     const when = at(event)
     if (when === 0) continue
@@ -72,15 +77,11 @@ export function awaitingMyMove({
     const who = speaker(event)
     // A beat is the engine talking to itself, never a player's move.
     if (who === '' || who === BEAT_SENTINEL) continue
-    if (who === me) {
-      if (when > myLastMoveAt) myLastMoveAt = when
-    } else if (when > othersLastMoveAt) {
-      othersLastMoveAt = when
-    }
+    if (who === me && when > myLastMoveAt) myLastMoveAt = when
   }
 
-  // Someone else moved after the GM's last word, and I have not moved since it.
-  return othersLastMoveAt > lastGmAt && myLastMoveAt < othersLastMoveAt
+  // Due unless the viewer has already taken a move since the GM's last word.
+  return myLastMoveAt === 0 || myLastMoveAt < lastGmAt
 }
 
 /**
@@ -115,38 +116,12 @@ export function ownsRollTurn({
 }
 
 /**
- * May this viewer pass their turn with one click? (`P5.43`)
- *
- * Hidden once their move is already in for this round — "I hold back and watch"
- * is a real action, and two of them would be two actions in one round. The rule
- * mirrors `awaitingMyMove` from the other side: a move is outstanding when the GM
- * has not spoken since the viewer last did.
+ * The CONTINUE button uses `moveDue` (`P5.43`): a pass is offered exactly while a
+ * move is outstanding, and hides once the viewer's move is in for the round — two
+ * passes would be two actions in one round.
  */
-export function canContinue({
-  events,
-  myName,
-}: {
-  events: readonly TurnEvent[]
-  myName: string | undefined
-}): boolean {
-  const me = myName?.trim() ?? ''
-  if (me === '') return false
 
-  let lastGmAt = 0
-  let myLastMoveAt = 0
-  for (const event of events) {
-    const when = at(event)
-    if (when === 0) continue
-    if (event.role === 'assistant') {
-      if (when > lastGmAt) lastGmAt = when
-      continue
-    }
-    if (event.role !== 'user') continue
-    const who = speaker(event)
-    if (who === '' || who === BEAT_SENTINEL) continue
-    if (who === me && when > myLastMoveAt) myLastMoveAt = when
-  }
-
-  // A move is due unless the viewer has already taken one since the GM's word.
-  return myLastMoveAt === 0 || myLastMoveAt < lastGmAt
-}
+/**
+ * The line itself, lowercase; the panel uppercases it with CSS like every other
+ * pixel-font label, so the string and the markup never disagree about case.
+ */

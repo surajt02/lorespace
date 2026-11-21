@@ -39,7 +39,7 @@ import {
   unresolvedRolls,
 } from '@/lib/gm-prompts'
 import { useGmStream } from '@/lib/gm-stream'
-import { canContinue, ownsRollTurn } from '@/lib/turn-status'
+import { moveDue, ownsRollTurn } from '@/lib/turn-status'
 import type { RollLogRow } from '@/lib/preview-data'
 import { cn } from '@/lib/utils'
 
@@ -423,7 +423,7 @@ export function GmConsolePanel({
   // two actions in one round.
   const canPassTurn =
     signedIn &&
-    canContinue({
+    moveDue({
       events: threadRows.map((row) => ({
         role: row.data.role,
         characterName: row.data.characterName,
