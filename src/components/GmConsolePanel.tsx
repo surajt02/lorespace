@@ -515,6 +515,14 @@ export function GmConsolePanel({
         </div>
       )}
 
+      {/* Whose move it is (ADR 0031, amended): the interface says it once, above
+          the composer, instead of the GM restating the table in prose. */}
+      {signedIn && awaitingMove && (
+        <p data-testid="awaiting-move" className="px-3 pt-1.5 font-pixel text-[10px] uppercase text-primary">
+          awaiting your move…
+        </p>
+      )}
+
       {/* One click for "I wait and watch" (`P5.43`): a real player turn, so the
           round closes and the GM answers the batch without anyone typing it. */}
       {canPassTurn && (
@@ -529,14 +537,6 @@ export function GmConsolePanel({
             continue
           </button>
         </div>
-      )}
-
-      {/* Whose move it is (ADR 0031, amended): the interface says it once, above
-          the composer, instead of the GM restating the table in prose. */}
-      {signedIn && awaitingMove && (
-        <p data-testid="awaiting-move" className="px-3 pt-1.5 font-pixel text-[10px] uppercase text-primary">
-          awaiting your move…
-        </p>
       )}
 
       {signedIn ? (
