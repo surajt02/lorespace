@@ -59,6 +59,9 @@ async function ensureCharacter(
   const created = await forge.isVisible()
   if (created) {
     await page.locator('#forge-name').fill(name)
+    // The Forge button submits React state, not the DOM value; wait for the
+    // controlled input to hold the name so a fast click cannot submit empty.
+    await expect(page.locator('#forge-name')).toHaveValue(name)
     await page.getByTestId(`forge-preset-${preset}`).click()
   }
   await expect(sheet).toBeVisible({ timeout: 20_000 })
@@ -104,9 +107,11 @@ test('two players have separate adventurers and see each other in the roster', a
       [b.page, sheetA.name],
     ] as const) {
       await expect(self.getByTestId('roster-self')).toHaveCount(1)
-      await expect(self.getByTestId('roster-member').filter({ hasText: peer })).toBeVisible({
-        timeout: 20_000,
-      })
+      // `.first()`: a stale row with the same name can coexist for a frame
+      // while a delete lands; the proof is that the peer's name appears.
+      await expect(
+        self.getByTestId('roster-member').filter({ hasText: peer }).first(),
+      ).toBeVisible({ timeout: 20_000 })
       expect(await self.getByTestId('roster-member').count()).toBeGreaterThanOrEqual(2)
     }
 

@@ -36,6 +36,7 @@ const REHEARSAL_BUDGET_S = 300
 
 const argv = process.argv.slice(2)
 const capture = argv.includes('--capture')
+const captureOnly = argv.includes('--capture-only')
 const rehearsalIndex = argv.indexOf('--rehearse')
 const rehearsals = rehearsalIndex >= 0 ? Number(argv[rehearsalIndex + 1] ?? 1) : 1
 
@@ -89,29 +90,68 @@ async function feedTotal(page) {
   return Number(text.split('/')[1] ?? 0)
 }
 
-async function sendGmTurn(page, message) {
-  const input = page.getByTestId('gm-input')
-  await input.waitFor({ state: 'visible', timeout: 30_000 })
-  const gmTurns = page.locator('[data-testid="gm-turn"][data-role="gm"]')
-  const before = await gmTurns.count()
-  await input.fill(message)
-  await page.getByTestId('gm-send').click()
+async function gmTurnCount(page) {
+  return page.locator('[data-testid="gm-turn"][data-role="gm"]').count()
+}
 
-  // A turn is done when a new GM row exists and nothing is still streaming.
-  // Waiting on the stop button alone races a fast first token.
+async function busy(page) {
+  const parts = await Promise.all([
+    page.getByTestId('gm-stop').count(),
+    page.getByTestId('gm-thinking').count(),
+    page.locator('[data-streaming="true"]').count(),
+  ])
+  return parts.reduce((total, count) => total + count, 0) > 0
+}
+
+/** Wait for a turn already running to finish, or (with waitForStart) for one to
+ *  begin and finish. Returns whether any activity was seen. */
+async function waitForIdle(page, waitForStartMs = 0) {
+  const started = Date.now()
+  let sawBusy = await busy(page)
   const deadline = Date.now() + 150_000
   while (Date.now() < deadline) {
-    const count = await gmTurns.count()
-    const streaming = await page.locator('[data-streaming="true"]').count()
-    if (count > before && streaming === 0) return
-    await page.waitForTimeout(500)
+    const nowBusy = await busy(page)
+    if (nowBusy) sawBusy = true
+    if (sawBusy && !nowBusy) return true
+    if (!sawBusy && waitForStartMs > 0 && Date.now() - started > waitForStartMs) return false
+    if (!sawBusy && waitForStartMs === 0 && Date.now() - started > 2_000) return false
+    await page.waitForTimeout(300)
+  }
+  throw new Error('the GM stayed busy for 150s')
+}
+
+/** Wait for a new persisted GM row and no streaming (fast turns can start and
+ *  finish between polls, so the row count is the fallback signal). */
+async function waitForTurn(page, before, waitForStartMs = 15_000) {
+  const started = Date.now()
+  const deadline = Date.now() + 150_000
+  while (Date.now() < deadline) {
+    const count = await gmTurnCount(page)
+    const nowBusy = await busy(page)
+    if (count > before && !nowBusy) return true
+    if (!nowBusy && Date.now() - started > waitForStartMs) return false
+    await page.waitForTimeout(300)
   }
   throw new Error('the GM turn did not finish within 150s')
 }
 
-/** Wait for a feed row written by the turn; narration alone changes nothing. */
+async function sendGmTurn(page, message) {
+  // Never click while the auto roll turn is still streaming.
+  await waitForIdle(page, 15_000)
+  const input = page.getByTestId('gm-input')
+  await input.waitFor({ state: 'visible', timeout: 30_000 })
+  const send = page.getByTestId('gm-send')
+  const before = await gmTurnCount(page)
+  await input.fill(message)
+  await send.waitFor({ state: 'visible', timeout: 30_000 })
+  if (await send.isDisabled()) await waitForIdle(page)
+  await send.click()
+  await waitForTurn(page, before)
+}
+
+/** Wait for a feed row written by a turn; narration alone changes nothing. */
 async function waitForMutation(page, before) {
-  const deadline = Date.now() + 30_000
+  const deadline = Date.now() + 45_000
   while (Date.now() < deadline) {
     const after = await feedTotal(page)
     if (after > before) {
@@ -138,9 +178,29 @@ async function runOnce(browser, accounts, options = {}) {
     page.on('websocket', (ws) => {
       ws.on('socketerror', (error) => errors.push(`${tag}: ws: ${String(error)}`))
     })
+    page.on('response', (response) => {
+      if (response.url().includes('/api/gm/chat') && response.status() >= 400) {
+        errors.push(`${tag}: gm-chat HTTP ${response.status()}`)
+      }
+    })
   }
 
   try {
+    // Beats 1-2: the landing and the signed-out table, before any sign-in.
+    const anonContext = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      deviceScaleFactor: 1,
+    })
+    contexts.push(anonContext)
+    const landing = await anonContext.newPage()
+    watch(landing, 'signed out')
+    await landing.goto(`${BASE}/`)
+    await landing.getByTestId('static-landing').waitFor({ state: 'visible', timeout: 30_000 })
+    await landing.getByRole('link', { name: 'Enter the table' }).click()
+    await landing.getByTestId('signed-out-banner').waitFor({ state: 'visible', timeout: 30_000 })
+    await landing.getByTestId('preview-table').waitFor({ state: 'visible', timeout: 30_000 })
+    await landing.close()
+
     const [aContext, bContext] = await Promise.all(
       accounts.slice(0, 2).map((account) => newSignedInContext(browser, account, BASE)),
     )
@@ -173,10 +233,17 @@ async function runOnce(browser, accounts, options = {}) {
         .waitFor({ state: 'visible', timeout: 30_000 })
     }
 
+    // The demo's order: the player acts, the engine asks for the check, the
+    // player rolls, and the console's own auto turn resolves that roll (ADR 0031).
+    // Racing it with a typed prompt is what makes a live pass flaky.
+    await sendGmTurn(a, 'Kaelen sets his shoulder to the obsidian door and heaves.')
+
     await requestCheck(aContext, sheetA.characterId, 'dex', 12)
     await a
       .getByTestId('stat-card-dex')
       .waitFor({ state: 'visible', timeout: 30_000 })
+    const before = await feedTotal(a)
+    const gmBefore = await gmTurnCount(a)
     await a.getByTestId('stat-card-dex').click()
 
     const bannerA = a.getByTestId('roll-banner')
@@ -191,23 +258,22 @@ async function runOnce(browser, accounts, options = {}) {
     if (lineB !== lineA) throw new Error(`windows disagree: "${lineA}" vs "${lineB}"`)
     if (!lineA.includes(sheetA.name)) throw new Error('roll banner does not name the roller')
 
-    // One GM turn that must leave a record write, not just prose (ADR 0009).
-    const before = await feedTotal(a)
-    const prompts = [
-      'Kaelen heaves the obsidian door open. The Sentinel’s blade catches his shoulder for 4 damage.',
-      'Kaelen takes 4 damage from the Sentinel’s blade. Record the wound and describe the pain.',
-    ]
-    let mutation = null
-    for (const prompt of prompts) {
-      await sendGmTurn(a, prompt)
+    // The roll turn: queued by the roller's console, not by this script.
+    await waitForTurn(a, gmBefore, 20_000).catch(() => {})
+    let mutation = await waitForMutation(a, before)
+    if (!mutation) {
+      await sendGmTurn(
+        a,
+        'Kaelen takes 4 damage from the Sentinel’s blade. Record the wound.',
+      )
       mutation = await waitForMutation(a, before)
-      if (mutation) break
     }
     if (!mutation) {
       throw new Error('the GM narrated but wrote no combat/loot row after two turns')
     }
 
     if (options.capture) {
+      await waitForIdle(a)
       await a.getByTestId('gm-stream').waitFor({ state: 'visible', timeout: 30_000 })
       await a.screenshot({ path: 'docs/assets/table-signed-in.png' })
     }
@@ -238,6 +304,20 @@ async function captureSignedOut(browser) {
   }
 }
 
+async function captureSignedIn(browser, account) {
+  const context = await newSignedInContext(browser, account, BASE)
+  try {
+    const page = await context.newPage()
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(`${BASE}/home`)
+    await page.getByTestId('app-navigation').waitFor({ state: 'visible', timeout: 30_000 })
+    await page.getByTestId('gm-stream').waitFor({ state: 'visible', timeout: 30_000 })
+    await page.screenshot({ path: 'docs/assets/table-signed-in.png' })
+  } finally {
+    await context.close()
+  }
+}
+
 async function main() {
   const accounts = loadAllTestAccounts()
   if (accounts.length < 2) {
@@ -246,6 +326,13 @@ async function main() {
 
   const browser = await chromium.launch({ ...chromiumLaunchOptions(), headless: true })
   try {
+    if (captureOnly) {
+      await captureSignedOut(browser)
+      await captureSignedIn(browser, accounts[0])
+      console.log(`[live] screenshots refreshed from ${BASE}`)
+      return
+    }
+
     const runs = []
     for (let index = 0; index < rehearsals; index += 1) {
       const result = await runOnce(browser, accounts, { capture: capture && index === 0 })

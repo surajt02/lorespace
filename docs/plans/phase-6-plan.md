@@ -1,6 +1,6 @@
 # Phase 6 — Gates, Tests, Deploy
 
-- **Status:** Active
+- **Status:** Done
 - **Session:** 2026-11-20, orchestrator + read-only scouts
 - **Governing tasks:** `P6.1`–`P6.9` in [`../tasks.md`](../tasks.md)
 - **ADRs in force:** [0005](../adr/0005-dice-roll-authority.md),
@@ -27,19 +27,19 @@ three timed rehearsals of the eight-beat demo under five minutes.
 
 ## Definition of done
 
-- [ ] The five Phase 6 grep gates return the required 0 / valid hits; the strict
+- [x] The five Phase 6 grep gates return the required 0 / valid hits; the strict
       emoji sweep over `src/**` returns no emoji codepoints.
-- [ ] `npm run type-check` checks `tests/**` (P6.5), `npm run lint` passes,
+- [x] `npm run type-check` checks `tests/**` (P6.5), `npm run lint` passes,
       `npm run test:unit` passes.
-- [ ] `npm run test:e2e` passes: smoke (including `/home` H1 + preview table),
+- [x] `npm run test:e2e` passes: smoke (including `/home` H1 + preview table),
       api, presence, and the rewritten `collab.spec.ts` (two accounts, character,
       roster, requested check, roll in both windows).
-- [ ] `npx deepspace deploy` serves the phase-6 commit at
+- [x] `npx deepspace deploy` serves the phase-6 commit at
       `https://lorespace.app.space`; the live smoke script exits 0 with zero
       console/WebSocket errors and at least one GM-driven HP/loot mutation.
-- [ ] `README.md` carries the live URL, three screenshots, three sentences on
+- [x] `README.md` carries the live URL, three screenshots, three sentences on
       what the app is, how sync works, and ADR 0005 / 0009 / 0014 links.
-- [ ] Three timed live rehearsals of the eight beats each finish under five
+- [x] Three timed live rehearsals of the eight beats each finish under five
       minutes with zero console errors.
 
 ## Scope
@@ -55,6 +55,8 @@ three timed rehearsals of the eight-beat demo under five minutes.
   `tests/playwright.config.ts`.
 - `src/components/vtt/ActionFeed.tsx` — `data-testid="feed-empty"` on the empty
   state (the current spec references a dead id).
+- `src/components/CharacterSheetPanel.tsx` — live `data-character-id` (the
+  test-only hook cleanup needs; preview rows expose nothing).
 - `scripts/live-smoke.mjs` — live deploy smoke + screenshot capture + timed
   rehearsal, run against `https://lorespace.app.space`.
 - `README.md`, `docs/assets/*.png`, `docs/tasks.md`, this plan.
@@ -83,7 +85,7 @@ three timed rehearsals of the eight-beat demo under five minutes.
 | Signed-out fixtures | Roster 2, feed 4, GM turns 3, inventory 3; live rows replace them once any character exists | `src/lib/preview-data.ts:96,190,278`, `home.tsx:291` |
 | `feed-empty` | Referenced by `presence.spec.ts:265` but does not exist in `src/` | `tests/presence.spec.ts`, `ActionFeed.tsx:212` |
 | Check gate | `characters.pendingStat` + `pendingDc`; stat card rollable only for the requested stat (or a GM-prose fallback); `rollSkillCheck` still permits a free roll when nothing is pending | `src/schemas/characters-schema.ts:46-53`, `src/lib/pending-check.ts:143`, `src/actions/index.ts:1236` |
-| Deterministic `request_check` | No member-facing writer; `applyGmMutation` is owner-only and `request_check` writes the two columns. Owner JWT is emitted to `.dev.vars` by `deepspace test run` as `APP_OWNER_JWT` | `src/actions/index.ts:475,654`, `.dev.vars` |
+| Deterministic `request_check` | No member-facing writer; `applyGmMutation` is owner-only and `request_check` writes the two columns. `.dev.vars`' `APP_OWNER_JWT` is an **app** token and the action route refuses it; the local CLI session can mint a 15-minute owner user token | `src/actions/index.ts:475,654`, `~/.deepspace/session` |
 | E2E specs | `presence.spec.ts` 3 tests (one two-window roll proof whose bare `stat-card-dex` click is now inert); `collab.spec.ts` 3 identity/`/api-status` tests, zero campaign coverage; `smoke.spec.ts` 6 tests, no `/home` H1/table assertions | `tests/` |
 | Accounts | 2 cached (`lorespace-alice`, `lorespace-bob`) with passwords; 64 Playwright state files | `~/.deepspace/test-accounts.json`, `~/.deepspace/playwright-states/` |
 | Type check | `tsconfig.json` `include` is `["src","worker.ts"]`; `tests/**` and root `prerender.test.ts` unchecked; no `@types/node` installed | `tsconfig.json` |
@@ -107,9 +109,9 @@ GM tools are untouched. The only shipped source change is a test id.
   `requestCheck(request: APIRequestContext, input: { characterId: string; stat: AbilityKey; dc: number }): Promise<void>`.
   Posts `/api/actions/applyGmMutation` with
   `{ mutation: { kind: 'request_check', characterId, stat, dc } }` and
-  `Authorization: Bearer <owner JWT>`; reads the JWT from
-  `process.env.APP_OWNER_JWT`, else from `.dev.vars`. Throws an actionable error
-  on a missing token or non-`success` result; never prints the token.
+  `Authorization: Bearer <owner token>`, minting that token from
+  `~/.deepspace/session` (cached for its 15-minute life). Throws an actionable
+  error on a missing login or non-`success` result; never prints the token.
 - **Test helper — `callAsPlayer`** (`tests/helpers/check-gate.ts`):
   `callAsPlayer(page: Page, name: string, params: Record<string, unknown>): Promise<unknown>`
   obtains the member bearer from `GET /api/auth/token` inside the page and
@@ -166,9 +168,9 @@ GM tools are untouched. The only shipped source change is a test id.
 - Change: implement `requestCheck` and `callAsPlayer` as specified in
   Contracts; set `workers: 1`; add `data-testid="feed-empty"` to the feed empty
   state and use it instead of the dead `.or()`.
-- Watch out: `.dev.vars` is written by `deepspace test run`, not by a bare
-  `npx playwright test`; the helper's error must say to run `npm run test:e2e`.
-  Never log or commit the token.
+- Watch out: the helper needs `~/.deepspace/session` (a CLI login), not
+  `.dev.vars`; the error must say to run `npx deepspace auth login`. Never log or
+  commit the token.
 - Proof: a focused spec assertion that `requestCheck` makes
   `stat-card-dex[data-pending="true"]` appear for a forged character, and that
   an un-requested stat is disabled (`npm run test:e2e -- presence --grep …` or
@@ -176,7 +178,8 @@ GM tools are untouched. The only shipped source change is a test id.
 
 ### Step 4 — Rewrite `collab.spec.ts`; fix `presence.spec.ts` (`P6.2`)
 
-- Files: `tests/collab.spec.ts`, `tests/presence.spec.ts`.
+- Files: `tests/collab.spec.ts`, `tests/presence.spec.ts`,
+  `src/components/CharacterSheetPanel.tsx`.
 - Change: replace the three identity/`/api-status` tests with:
   1. *two accounts forge two adventurers and see each other's roster row* —
      `users(2)`, `ensureCharacter` (reuse the presence helper shape,
@@ -300,7 +303,7 @@ Manual, signed in and signed out, on the live URL:
 | Live GM turn does not call a write tool | model choice, billing refusal | explicit damage prompt, one retry; if still absent, report a Phase 5 defect and do not claim P6.6 |
 | Test accounts already have characters or stale storage | repeated runs | `ensureCharacter` reuses; cleanup deletes only this run's characters; `test accounts recover --all` if the registry is lost |
 | Parallel spec files mutate the one campaign | Playwright default workers | `workers: 1` in `tests/playwright.config.ts` |
-| `.dev.vars` missing/expired for `request_check` | bare `playwright test` or stale CLI output | helper prefers `APP_OWNER_JWT`, else parses `.dev.vars`; error names `npm run test:e2e` |
+| CLI session missing/expired for `request_check` | a bare `playwright test` on a logged-out machine | helper mints from `~/.deepspace/session` and its error names `npx deepspace auth login` |
 | e2e leaves append-only roll-log rows | no delete action for `roll-logs`; ADR 0026 only clears via new-game reset | accepted; characters are deleted, rows name them; live state is reset separately if needed |
 | Deploy ships uncommitted bytes (GitHub latch) | `deepspace deploy` after edits | commit first; verify `deepspace status` and that the live page serves the new build |
 | Live smoke pollutes the demo table | forging/rolling as test accounts | use presentable names and leave them as the populated table, or delete characters + new-game reset after capture; decide before screenshots |
@@ -310,19 +313,77 @@ Manual, signed in and signed out, on the live URL:
 
 - [x] P5.13 model default — resolved in code: `GmConsolePanel.tsx:75` pins
       `claude-haiku-5-5`; this phase verifies the live turn, no new decision.
-- [x] Deterministic `request_check` for tests — resolved: owner JWT from
-      `.dev.vars` via a test helper; no production route added.
-- [ ] Live table state after rehearsal (leave populated vs reset) — decide at
-      Step 8 from the screenshots; either is reversible with the owner reset
-      action.
+- [x] Deterministic `request_check` for tests — resolved: an owner token minted
+      from `~/.deepspace/session` by a test helper; no production route added.
+- [x] Live table state after rehearsal — left populated (Kaelen/Vesper and the
+      real roll/combat rows) so the signed-out table shows live rows; reversible
+      with Start New Campaign. Flagged for taste in § Outcome.
 
 ## Outcome
 
-Filled in at the end of the phase, never rewritten afterwards.
+- **Shipped:** mechanical gates clean (five greps + emoji/purple sweep); `tests/**`
+  type-checked (`@types/node`, widened `include`); a deterministic owner-minted
+  check request and a serial e2e suite; rewritten `collab` spec (two accounts,
+  roster, requested check, roll in both windows, `finally` cleanup); gated
+  `presence` spec; `/home` H1 + preview-table smoke assertions; release #10 live
+  at <https://lorespace.app.space>; `scripts/live-smoke.mjs` with capture and
+  rehearsal modes; README front door with three live screenshots; three timed
+  live rehearsals of the full path (42.0 s / 40.9 s / 41.8 s, zero console errors,
+  each with a real GM write: two `combat` rows and one scene advance).
+- **Slipped:** nothing. The `P6.6` live smoke needed a second pass after the
+  first live GM turn exceeded the script's 150 s ceiling; the corrected sequence
+  waits for the console's own auto roll turn (ADR 0031) instead of racing it.
+- **Deviations:** none from an accepted ADR. New work was tracked as `P6.9`
+  (test-only check gate, `feed-empty` id, serial workers). The owner credential
+  is minted from `~/.deepspace/session` because `.dev.vars`' `APP_OWNER_JWT` is
+  an app credential and the action route refuses app tokens.
+- **Inherited by the next phase:** there is no Phase 7. A later session may
+  assume the 14-test e2e suite is green on a machine with two test accounts and
+  a CLI login, that `scripts/live-smoke.mjs` proves the deployed GM write path,
+  and that the live campaign carries Kaelen/Vesper plus test roll rows.
 
-- **Shipped:**
-- **Slipped:**
-- **Deviations:**
-- **Inherited by the next phase:**
-- **Feature inventory:** the close-out's sections 1-5, pasted verbatim
-- **Next:**
+### Feature inventory
+
+#### 1. Shipped, by feature
+
+| Feature | State | Files | Evidence |
+| --- | --- | --- | --- |
+| Owner-minted check request for e2e (`requestCheck`) | e2e | `tests/helpers/check-gate.ts` | `tests/collab.spec.ts` "a requested check rolls in both windows"; server log `applyGmMutation caller=<owner>` then `rollSkillCheck caller=<Alice>` |
+| Player-bearer action caller (`callAsPlayer`) | e2e | `tests/helpers/check-gate.ts` | `deleteCharacter caller=<Alice>` in the `collab` and `presence` runs; 14/14 e2e |
+| Two-window table spec (character, roster, requested check, roll, feed) | e2e | `tests/collab.spec.ts` | `collab` 2/2 in `test run e2e`; unique names avoid the `P5.15` duplicate-name refusal |
+| Gated two-window roll in the presence spec | e2e | `tests/presence.spec.ts` | `presence` 3/3; "the campaign presence scope refuses an anonymous socket" |
+| Signed-out `/home` H1 + preview-table contract | e2e | `tests/smoke.spec.ts` | "signed-out /home shows the campaign title and the preview table"; smoke 7/7 |
+| `tests/**` inside the type-check boundary | read (tsc) | `tsconfig.json`, `package.json` | `npm run type-check`; a scratch type error in `tests/` was reported and removed |
+| Character id on the live sheet | read (e2e cleanup) | `src/components/CharacterSheetPanel.tsx` | `data-character-id` read by both specs; deletion test above |
+| Real empty-feed state id | read (presence spec) | `src/components/vtt/ActionFeed.tsx` | `feed-empty` used by `tests/presence.spec.ts:265` |
+| Serial e2e across one campaign | read (Playwright config) | `tests/playwright.config.ts` | `workers: 1`; 14/14 pass in one worker |
+| Live smoke/capture/rehearsal runner | e2e (live) | `scripts/live-smoke.mjs` | three full-path passes 42.0/40.9/41.8 s, zero console errors, GM writes incl. `combat` 24→20 |
+| README front door | read (human) | `README.md`, `docs/assets/landing.png`, `docs/assets/table-signed-out.png`, `docs/assets/table-signed-in.png` | live URL, 3 resolving image links, ADR 0005/0009/0014 links |
+
+#### 2. Not real yet
+
+| What you see | Actually | Becomes real in |
+| --- | --- | --- |
+| Signed-out party roster with two adventurers | `PREVIEW_CHARACTERS` in `src/lib/preview-data.ts`, rendered only when the campaign has no character rows | Already implemented (Phases 3-5) — live `characters` rows replace it; the fixture is ADR 0014's empty-table fallback |
+| Signed-out table feed with four roll rows | `PREVIEW_ROLLS` in `src/lib/preview-data.ts` | Already implemented (Phases 4-5) — live `roll-logs` rows replace it once a character exists; `feed-empty` is the no-rolls state |
+| Signed-out GM thread with three turns | `PREVIEW_GM_MESSAGES` in `src/lib/preview-data.ts` | Already implemented (Phase 5) — live `gm-messages` rows replace it once a character exists |
+| Signed-out sheet and pack (Kaelen, two items) | `PREVIEW_CHARACTERS[0]` + `PREVIEW_INVENTORY` in `src/lib/preview-data.ts` | Already implemented (Phases 3-5) — the first live `characters` row and its `inventory` rows replace it |
+
+#### 3. Persistence check
+
+Phase 6 added no schema or write path; it exercised the existing ones. Local e2e
+wrote `characters` (forged, then deleted through `deleteCharacter`) and
+`roll-logs` (the roll plus GM `combat`/`gm_event` rows). The live smoke wrote
+`characters` (Kaelen/Vesper forged or reused, `pendingStat`/`pendingDc` via
+`applyGmMutation`) and `roll-logs` (roll + `combat` rows). The live campaign now
+carries those two adventurers and their append-only roll rows.
+
+#### 5. Worth your eyes
+
+| Tier | Item | Why a human | What to check | Files |
+| --- | --- | --- | --- | --- |
+| blocks | Live GM turn reliability | First live pass hung past 150 s; the three rehearsals then took 41-42 s. A demo cannot depend on a cold turn landing. | Confirm Haiku-on-owner-billing is the intended demo model and that a 150 s ceiling is the right trade-off for a timed rehearsal. | `scripts/live-smoke.mjs`, `src/components/GmConsolePanel.tsx` |
+| blocks | Test control uses the developer's CLI session | `requestCheck` reads `~/.deepspace/session` and mints a 15-minute owner token to write pending checks. It never logs the token, but it is a real credential read in committed test code. | Confirm this is acceptable for a repo an interviewer reads, versus a test-only route or a model-driven check. | `tests/helpers/check-gate.ts`, `scripts/live-smoke.mjs` |
+| taste | Live campaign now contains test data | Kaelen/Vesper, repeated combat rows and the developer's own characters are on the deployed table; first impression is this state. | Leave it as a populated demo table, or delete the test sheets / start a new campaign before the interview. | live `characters`, `roll-logs`; `src/pages/(app)/home.tsx` |
+| taste | Screenshot and README framing | The signed-out shot shows the two test adventurers; the landing shot carries deliberate empty space. | Say if the live-data screenshot is the story you want, or capture a cleaner table. | `README.md`, `docs/assets/*.png` |
+| taste | GM prose styling inside pixel chrome | The console's prose block is squared but its typography is not the Silkscreen/pixel register of the rest of the table. | Decide whether the console should be chrome-styled before the interview. | `src/components/ChatPanel.messages.tsx` |

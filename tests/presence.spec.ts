@@ -20,7 +20,7 @@
 import { test, expect, loadAllTestAccounts } from 'deepspace/testing'
 import type { Page } from '@playwright/test'
 import { captureConsoleErrors } from './helpers/errors'
-import { requestCheck } from './helpers/check-gate'
+import { callAsPlayer, requestCheck } from './helpers/check-gate'
 
 // Same skip as `collab.spec.ts`: a machine with no account pool is a normal
 // fresh checkout, and `users()` throws there — turning "you have no pool yet"
@@ -53,20 +53,33 @@ async function ensureCharacter(
   page: Page,
   name: string,
   preset: 'vanguard' | 'shadowblade',
-): Promise<{ characterId: string | null }> {
+): Promise<{ characterId: string | null; created: boolean }> {
   const forge = page.getByTestId('character-forge')
   const sheet = page.getByTestId('character-sheet')
   await expect(forge.or(sheet)).toBeVisible({ timeout: 20_000 })
 
-  if (await forge.isVisible()) {
+  const created = await forge.isVisible()
+  if (created) {
     await page.locator('#forge-name').fill(name)
+    // Names are unique (the action refuses duplicates, `P5.15`) and the preset
+    // button submits React state, so wait for the controlled input to hold it.
+    await expect(page.locator('#forge-name')).toHaveValue(name)
     await page.getByTestId(`forge-preset-${preset}`).click()
   }
 
   // Forged through the server action and rendered from the record it returns,
   // so this is also the wait for the row to be readable by the other window.
   await expect(sheet).toBeVisible({ timeout: 20_000 })
-  return { characterId: await sheet.getAttribute('data-character-id') }
+  return { characterId: await sheet.getAttribute('data-character-id'), created }
+}
+
+/** Delete only the sheet this run forged; roll-log evidence stays. */
+async function deleteIfCreated(
+  page: Page,
+  sheet: { characterId: string | null; created: boolean },
+): Promise<void> {
+  if (!sheet.created || !sheet.characterId) return
+  await callAsPlayer(page, 'deleteCharacter', { characterId: sheet.characterId })
 }
 
 /** The account this browser is signed in as: the nav chip shows `name ||
@@ -90,7 +103,8 @@ async function sheetName(page: Page): Promise<string> {
 /** The roster row naming a specific peer. Offline party members also render
  *  (ADR 0029), so the proof is the name in a row, not a row count. */
 function peerRow(page: Page, name: string) {
-  return page.getByTestId('roster-member').filter({ hasText: name })
+  // `.first()`: duplicate/stale rows can coexist for a frame during cleanup.
+  return page.getByTestId('roster-member').filter({ hasText: name }).first()
 }
 
 /** The banner's visible text, whitespace-normalised: who rolled, the numbers,
@@ -158,9 +172,11 @@ test('one roll lands in both windows without a reload', async ({ users, request 
 
   // Only used when the forge form is up: an account that already has a
   // character keeps its own name, which the sheet heading is read from below.
-  const [sheetA] = await Promise.all([
-    ensureCharacter(a.page, 'Kaelen', 'vanguard'),
-    ensureCharacter(b.page, 'Vesper', 'shadowblade'),
+  // Unique names avoid `P5.15`'s duplicate-name refusal from earlier runs.
+  const stamp = Date.now()
+  const [sheetA, sheetB] = await Promise.all([
+    ensureCharacter(a.page, `__test-${stamp}__Kaelen`, 'vanguard'),
+    ensureCharacter(b.page, `__test-${stamp}__Vesper`, 'shadowblade'),
   ])
 
   const [nameA, nameB] = await Promise.all([sheetName(a.page), sheetName(b.page)])
@@ -219,6 +235,8 @@ test('one roll lands in both windows without a reload', async ({ users, request 
 
   expect(errorsA).toEqual([])
   expect(errorsB).toEqual([])
+  await deleteIfCreated(a.page, sheetA)
+  await deleteIfCreated(b.page, sheetB)
 })
 
 test('the campaign presence scope refuses an anonymous socket', async ({ page, request }) => {
@@ -259,7 +277,7 @@ test('the roll banner reaches a signed-out window', async ({ users, browser, req
   const [a] = await users(1)
   await a.page.goto('/home')
   await expect(a.page.getByTestId('workspace-shell')).toBeVisible({ timeout: 20_000 })
-  const sheetA = await ensureCharacter(a.page, 'Kaelen', 'vanguard')
+  const sheetA = await ensureCharacter(a.page, `__test-${Date.now()}__Kaelen`, 'vanguard')
   if (!sheetA.characterId) throw new Error('the forged sheet carried no character id')
   await requestCheck(request, { characterId: sheetA.characterId, stat: 'dex', dc: 12 })
   await expect(a.page.getByTestId('stat-card-dex')).toHaveAttribute('data-pending', 'true', {
@@ -295,6 +313,7 @@ test('the roll banner reaches a signed-out window', async ({ users, browser, req
     )
     expect(errors).toEqual([])
   } finally {
+    await deleteIfCreated(a.page, sheetA).catch(() => {})
     await anonymous.close()
   }
 })
